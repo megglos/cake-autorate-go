@@ -20,7 +20,7 @@ Go was chosen because:
 
 ### Benchmark: Bash vs Go
 
-Measured on a real OpenWrt router over 60 seconds per version, sampled every 5 seconds using [`benchmark.sh`](benchmark.sh).
+Measured on a **GL.iNet GL-MT6000** running OpenWrt, 60 seconds per version, sampled every 5 seconds using [`benchmark.sh`](benchmark.sh).
 
 #### Steady-State Resource Usage
 
