@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,21 +29,8 @@ const (
 
 	tcHRoot = 0xFFFFFFFF // TC_H_ROOT
 
-	nlaFNested  = (1 << 15) // NLA_F_NESTED
-	nlaHdrLen   = 4         // sizeof(struct nlattr)
-	nlaAlignTo  = 4
-	sizeofTcMsg = int(unsafe.Sizeof(tcMsg{}))
+	nlaFNested = (1 << 15) // NLA_F_NESTED
 )
-
-// tcMsg mirrors the kernel's struct tcmsg.
-type tcMsg struct {
-	Family  uint8
-	Pad     [3]byte
-	Ifindex int32
-	Handle  uint32
-	Parent  uint32
-	Info    uint32
-}
 
 // Shaper controls CAKE qdisc bandwidth settings via netlink.
 // Falls back to the tc command for operations not supported via netlink.
@@ -55,6 +41,8 @@ type Shaper struct {
 	seq       uint32
 	ifIndices map[string]int32 // cached interface indices
 	lastRates map[string]int   // last applied rate per interface, to skip no-ops
+	msgBuf    []byte           // reusable buffer for building netlink messages
+	recvBuf   []byte           // reusable buffer for receiving netlink responses
 }
 
 // NewShaper creates a new Shaper with a persistent netlink socket.
@@ -64,6 +52,8 @@ func NewShaper(logger *Logger) *Shaper {
 		fd:        -1,
 		ifIndices: make(map[string]int32),
 		lastRates: make(map[string]int),
+		msgBuf:    make([]byte, 64), // pre-allocate for netlink messages (exact size)
+		recvBuf:   make([]byte, 4096),   // pre-allocate for netlink responses
 	}
 
 	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
@@ -117,74 +107,76 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 }
 
 // setRateNetlink sets the CAKE bandwidth via a raw netlink RTM_NEWQDISC message.
+// Reuses pre-allocated buffers to avoid allocations on the hot path.
 func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 	ifindex, err := s.getIfindex(iface)
 	if err != nil {
 		return err
 	}
 
-	// Build the netlink message:
-	//   nlmsghdr + tcmsg + TCA_KIND("cake") + TCA_OPTIONS{ TCA_CAKE_BASE_RATE64 }
+	// Build the netlink message into the reusable buffer:
+	//   nlmsghdr + tcmsg + TCA_KIND("cake\0") + TCA_OPTIONS{ TCA_CAKE_BASE_RATE64 }
+	//
+	// Layout (all sizes fixed):
+	//   nlmsghdr:          16 bytes
+	//   tcmsg:             20 bytes
+	//   TCA_KIND nla:       4 (hdr) + 5 ("cake\0") + 3 (pad) = 12 bytes
+	//   TCA_OPTIONS nla:    4 (hdr) + [TCA_CAKE_BASE_RATE64: 4 (hdr) + 8 (u64)] = 16 bytes
+	//   Total:             64 bytes
+	const msgSize = 64
+
 	s.seq++
-	seq := s.seq
+	buf := s.msgBuf[:msgSize]
 
-	// TCA_CAKE_BASE_RATE64: rate in bytes/sec (uint64)
-	bytesPerSec := uint64(rateKbps) * 125 // kbit/s -> bytes/s: *1000/8 = *125
-	rateNla := buildNla(tcaCakeBaseRate64, uint64ToBytes(bytesPerSec))
+	// nlmsghdr (16 bytes)
+	binary.LittleEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
+	binary.LittleEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
+	binary.LittleEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK)            // nlmsg_flags
+	binary.LittleEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
+	binary.LittleEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
 
-	// TCA_OPTIONS (nested) containing the rate attribute
-	optionsNla := buildNla(tcaOptions|nlaFNested, rateNla)
+	// tcmsg (20 bytes at offset 16)
+	buf[16] = 0                                                                            // tcm_family
+	buf[17] = 0; buf[18] = 0; buf[19] = 0                                                 // pad
+	binary.LittleEndian.PutUint32(buf[20:24], uint32(ifindex))                             // tcm_ifindex
+	binary.LittleEndian.PutUint32(buf[24:28], 0)                                          // tcm_handle
+	binary.LittleEndian.PutUint32(buf[28:32], tcHRoot)                                    // tcm_parent
+	binary.LittleEndian.PutUint32(buf[32:36], 0)                                          // tcm_info
 
-	// TCA_KIND = "cake\0"
-	kindNla := buildNla(tcaKind, append([]byte("cake"), 0))
+	// TCA_KIND nla (12 bytes at offset 36): "cake\0" padded to 8 bytes
+	binary.LittleEndian.PutUint16(buf[36:38], 9)                                          // nla_len = 4 + 5
+	binary.LittleEndian.PutUint16(buf[38:40], tcaKind)                                    // nla_type
+	buf[40] = 'c'; buf[41] = 'a'; buf[42] = 'k'; buf[43] = 'e'; buf[44] = 0             // "cake\0"
+	buf[45] = 0; buf[46] = 0; buf[47] = 0                                                 // alignment padding
 
-	// tcmsg
-	tc := tcMsg{
-		Ifindex: ifindex,
-		Parent:  tcHRoot,
-	}
-	tcBytes := (*(*[sizeofTcMsg]byte)(unsafe.Pointer(&tc)))[:]
+	// TCA_OPTIONS nla (16 bytes at offset 48): nested, contains TCA_CAKE_BASE_RATE64
+	binary.LittleEndian.PutUint16(buf[48:50], 16)                                         // nla_len = 4 + 12
+	binary.LittleEndian.PutUint16(buf[50:52], tcaOptions|nlaFNested)                      // nla_type
 
-	// Assemble payload: tcmsg + kind + options
-	payload := make([]byte, 0, len(tcBytes)+len(kindNla)+len(optionsNla))
-	payload = append(payload, tcBytes...)
-	payload = append(payload, kindNla...)
-	payload = append(payload, optionsNla...)
-
-	// nlmsghdr
-	msgLen := uint32(unix.SizeofNlMsghdr + len(payload))
-	hdr := unix.NlMsghdr{
-		Len:   msgLen,
-		Type:  unix.RTM_NEWQDISC,
-		Flags: unix.NLM_F_REQUEST | unix.NLM_F_ACK,
-		Seq:   seq,
-	}
-	hdrBytes := (*(*[unix.SizeofNlMsghdr]byte)(unsafe.Pointer(&hdr)))[:]
-
-	msg := make([]byte, 0, msgLen)
-	msg = append(msg, hdrBytes...)
-	msg = append(msg, payload...)
+	// TCA_CAKE_BASE_RATE64 nla (12 bytes at offset 52)
+	binary.LittleEndian.PutUint16(buf[52:54], 12)                                         // nla_len = 4 + 8
+	binary.LittleEndian.PutUint16(buf[54:56], tcaCakeBaseRate64)                           // nla_type
+	bytesPerSec := uint64(rateKbps) * 125                                                  // kbit/s -> bytes/s
+	binary.LittleEndian.PutUint64(buf[56:64], bytesPerSec)                                // rate value
 
 	// Send
-	if err := unix.Sendto(s.fd, msg, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
+	if err := unix.Sendto(s.fd, buf, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
 		return fmt.Errorf("netlink send on %s: %w", iface, err)
 	}
 
-	// Receive ACK
-	buf := make([]byte, 4096)
-	n, _, err := unix.Recvfrom(s.fd, buf, 0)
+	// Receive ACK using pre-allocated buffer
+	n, _, err := unix.Recvfrom(s.fd, s.recvBuf, 0)
 	if err != nil {
 		return fmt.Errorf("netlink recv on %s: %w", iface, err)
 	}
 
-	msgs, err := syscall.ParseNetlinkMessage(buf[:n])
+	msgs, err := syscall.ParseNetlinkMessage(s.recvBuf[:n])
 	if err != nil {
 		return fmt.Errorf("netlink parse on %s: %w", iface, err)
 	}
 
 	for _, m := range msgs {
 		if m.Header.Type == syscall.NLMSG_ERROR {
-			// Error payload is a 4-byte errno followed by the original header
 			if len(m.Data) >= 4 {
 				errno := int32(binary.LittleEndian.Uint32(m.Data[:4]))
 				if errno == 0 {
@@ -288,23 +280,6 @@ func WirePacketCompensationUs(mtuBytes int, rateKbps int) float64 {
 	}
 	mtuBits := float64(mtuBytes) * 8.0
 	return (1000.0 * mtuBits) / float64(rateKbps)
-}
-
-// buildNla constructs a netlink attribute (struct nlattr + payload), 4-byte aligned.
-func buildNla(attrType int, data []byte) []byte {
-	nlaLen := nlaHdrLen + len(data)
-	aligned := (nlaLen + nlaAlignTo - 1) &^ (nlaAlignTo - 1)
-	buf := make([]byte, aligned)
-	binary.LittleEndian.PutUint16(buf[0:2], uint16(nlaLen))
-	binary.LittleEndian.PutUint16(buf[2:4], uint16(attrType))
-	copy(buf[nlaHdrLen:], data)
-	return buf
-}
-
-func uint64ToBytes(v uint64) []byte {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, v)
-	return b
 }
 
 // execCommand runs an external command and returns combined output.
