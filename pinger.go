@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -121,27 +122,16 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 		}
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			pm.sendPing(ctx, reflector, deadline, resultCh)
-		}
-	}
-}
-
-func (pm *PingerManager) sendPing(ctx context.Context, reflector string, deadline time.Duration, resultCh chan<- PingResult) {
+	// Create a single long-running pinger instead of a new one per ping.
+	// This avoids per-ping DNS resolution, socket creation, and object allocation.
 	pinger, err := probing.NewPinger(reflector)
 	if err != nil {
-		pm.logger.Debugf("creating pinger for %s: %v", reflector, err)
+		pm.logger.Errorf("creating pinger for %s: %v", reflector, err)
 		return
 	}
-	pinger.Count = 1
-	pinger.Timeout = deadline
+	pinger.Count = -1 // continuous
+	pinger.Interval = interval
+	pinger.Timeout = time.Duration(math.MaxInt64) // context controls lifetime
 	pinger.SetPrivileged(true)
 
 	if pm.link.PingInterfaceName != "" {
@@ -151,34 +141,101 @@ func (pm *PingerManager) sendPing(ctx context.Context, reflector string, deadlin
 		pinger.Source = pm.link.PingSourceAddr
 	}
 
-	var result PingResult
-	result.Reflector = reflector
-	result.Timestamp = time.Now()
-	result.Timeout = true
+	// Track in-flight pings for timeout detection.
+	// With deadline (1s) > interval (300ms), up to ~3 pings can be in flight.
+	var mu sync.Mutex
+	pending := make(map[int]time.Time) // seq -> send time
+
+	pinger.OnSend = func(pkt *probing.Packet) {
+		mu.Lock()
+		pending[pkt.Seq] = time.Now()
+		mu.Unlock()
+	}
 
 	pinger.OnRecv = func(pkt *probing.Packet) {
-		result.RTT = pkt.Rtt
-		result.Timeout = false
+		mu.Lock()
+		sendTime, ok := pending[pkt.Seq]
+		if ok {
+			delete(pending, pkt.Seq)
+		}
+		mu.Unlock()
+		if !ok {
+			return // unexpected reply, ignore
+		}
+
+		pm.recordHealth(reflector, false)
+
+		select {
+		case resultCh <- PingResult{
+			Reflector: reflector,
+			RTT:       pkt.Rtt,
+			Timestamp: sendTime,
+			Timeout:   false,
+		}:
+		case <-ctx.Done():
+		}
 	}
+
+	// Sweep for timed-out pings
+	go func() {
+		sweepInterval := deadline / 2
+		if sweepInterval < 100*time.Millisecond {
+			sweepInterval = 100 * time.Millisecond
+		}
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				mu.Lock()
+				var expired []int
+				for seq, sent := range pending {
+					if now.Sub(sent) > deadline {
+						expired = append(expired, seq)
+					}
+				}
+				for _, seq := range expired {
+					delete(pending, seq)
+				}
+				mu.Unlock()
+
+				// Send timeout results outside the lock
+				for range expired {
+					pm.recordHealth(reflector, true)
+					select {
+					case resultCh <- PingResult{
+						Reflector: reflector,
+						Timestamp: now,
+						Timeout:   true,
+					}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+	}()
 
 	err = pinger.RunWithContext(ctx)
 	if err != nil && ctx.Err() == nil {
-		pm.logger.Debugf("ping %s: %v", reflector, err)
+		pm.logger.Debugf("pinger %s: %v", reflector, err)
 	}
+}
 
-	// Record missed/received for health tracking
+// recordHealth updates the missed/received sliding window for a reflector.
+func (pm *PingerManager) recordHealth(reflector string, missed bool) {
 	state := pm.GetState(reflector)
-	if state != nil {
-		state.mu.Lock()
-		state.MissedWindow[state.MissedIdx] = result.Timeout
-		state.MissedIdx = (state.MissedIdx + 1) % len(state.MissedWindow)
-		state.mu.Unlock()
+	if state == nil {
+		return
 	}
-
-	select {
-	case resultCh <- result:
-	case <-ctx.Done():
-	}
+	state.mu.Lock()
+	state.MissedWindow[state.MissedIdx] = missed
+	state.MissedIdx = (state.MissedIdx + 1) % len(state.MissedWindow)
+	state.mu.Unlock()
 }
 
 // ReplaceUnhealthy checks reflector health and replaces misbehaving ones
