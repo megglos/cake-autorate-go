@@ -55,8 +55,8 @@ Measured on the same OpenWrt router with **two WAN interfaces** configured, 60 s
 | Metric | Bash | Go | Improvement |
 |---|---|---|---|
 | **Processes** | 11 (peak 11) | 1 | **11x fewer** |
-| **Memory (RSS)** | 21,389 KB (peak 21,480 KB) | 10,546 KB (peak 10,808 KB) | **2x less** |
-| **CPU** | 11.76% (peak 13.8%) | 11.00% (peak 11.4%) | ~1.1x less |
+| **Memory (RSS)** | 21,580 KB (peak 21,752 KB) | 10,539 KB (peak 10,932 KB) | **2x less** |
+| **CPU** | 12.20% (peak 13.8%) | 5.06% (peak 5.4%) | **2.4x less** |
 
 The bash version spawns a **full process tree per interface** — each WAN link gets its own set of bash, fping, awk, and monitor subprocesses. Resource usage scales linearly with the number of interfaces. The Go version handles all interfaces within a single process using goroutines, so adding a second WAN link adds negligible overhead.
 
@@ -68,7 +68,8 @@ On a resource-constrained router with 128–256 MB of RAM, the difference betwee
 |---|---|---|
 | Memory (1 WAN) | Tie | ~10 MB each |
 | Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
-| CPU | Tie | ~7-11% depending on interface count |
+| CPU (1 WAN) | Tie | ~7-8% each |
+| CPU (2 WAN) | **Go (2.4x)** | 5% vs 12% — native netlink eliminates per-adjustment subprocess overhead |
 | Responsiveness | **Go (4x)** | 1.1s vs 4.6s ramp-up |
 | Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
 | Multi-WAN scaling | **Go** | Goroutines vs full process trees per interface |
