@@ -102,6 +102,18 @@ go build -o cake-autorate .
 GOOS=linux GOARCH=arm64 go build -o cake-autorate .
 ```
 
+## OpenWrt Service Installation
+
+Run [`setup.sh`](setup.sh) on your router to install the binary, generate a default config, and create a procd service:
+
+```bash
+# Copy the binary and script to the router, then:
+chmod +x setup.sh
+./setup.sh ./cake-autorate-go
+```
+
+This installs the binary to `/usr/sbin/cake-autorate-go`, creates a default config at `/etc/cake-autorate/config.yaml`, and registers the `cake-autorate-go` procd service. Follow the on-screen instructions to configure, enable, and start the service.
+
 ## Configuration
 
 Generate a default configuration file:
