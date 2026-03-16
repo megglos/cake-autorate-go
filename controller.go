@@ -44,6 +44,7 @@ type dirState struct {
 	loadPercent       float64
 	delayWindow       []bool // true = delay exceeded threshold
 	delayWindowIdx    int
+	delayWindowCount  int    // running count of true entries (avoids O(n) scan)
 	bbDetected        bool
 	lastBBTime        time.Time
 	lastDecayTime     time.Time
@@ -296,18 +297,19 @@ func (c *LinkController) processDelay(dir Direction, deltaUs float64) {
 	compensationUs := WirePacketCompensationUs(mtuBytes, int(ds.shaperRateKbps))
 	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
 
-	// Record in sliding window
+	// Record in sliding window with O(1) running count
 	exceeded := deltaUs > thresholdUs
+	old := ds.delayWindow[ds.delayWindowIdx]
 	ds.delayWindow[ds.delayWindowIdx] = exceeded
 	ds.delayWindowIdx = (ds.delayWindowIdx + 1) % len(ds.delayWindow)
 
-	// Count bufferbloat detections in window
-	bbCount := 0
-	for _, v := range ds.delayWindow {
-		if v {
-			bbCount++
-		}
+	// Update running count: subtract evicted, add new
+	if old && !exceeded {
+		ds.delayWindowCount--
+	} else if !old && exceeded {
+		ds.delayWindowCount++
 	}
+	bbCount := ds.delayWindowCount
 
 	now := time.Now()
 	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
