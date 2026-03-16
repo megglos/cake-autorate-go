@@ -1,0 +1,107 @@
+# cake-autorate-go configuration
+#
+# This is a Go rewrite of cake-autorate:
+#   https://github.com/lynxthecat/cake-autorate
+#
+# Adjust these values to match your network setup.
+# Run `cake-autorate --defaults` to see all defaults.
+
+# ── Interface Configuration ──────────────────────────────────────────────────
+# These must match the interfaces where CAKE qdisc is configured.
+
+download:
+  interface: ifb-wan        # Download interface (often ifb-wan on OpenWrt)
+  adjust: true              # Enable dynamic download rate adjustment
+  min_rate_kbps: 5000       # Minimum download bandwidth (kbit/s)
+  base_rate_kbps: 20000     # Steady-state download bandwidth (kbit/s)
+  max_rate_kbps: 80000      # Maximum download bandwidth (kbit/s)
+  owd_delta_delay_thr_ms: 30.0               # OWD delta threshold for bufferbloat detection (ms)
+  avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Max avg delta to still increase rate (ms)
+  avg_owd_delta_max_adjust_down_thr_ms: 60.0 # Max avg delta for maximum rate decrease (ms)
+
+upload:
+  interface: wan            # Upload interface
+  adjust: true              # Enable dynamic upload rate adjustment
+  min_rate_kbps: 5000       # Minimum upload bandwidth (kbit/s)
+  base_rate_kbps: 20000     # Steady-state upload bandwidth (kbit/s)
+  max_rate_kbps: 35000      # Maximum upload bandwidth (kbit/s)
+  owd_delta_delay_thr_ms: 30.0
+  avg_owd_delta_max_adjust_up_thr_ms: 10.0
+  avg_owd_delta_max_adjust_down_thr_ms: 60.0
+
+# ── Reflectors ───────────────────────────────────────────────────────────────
+# Public DNS servers used for latency measurement via ICMP ping.
+# The more reflectors, the better the measurement quality.
+# At least pinger_count reflectors are needed; extras serve as spares.
+
+reflectors:
+  - 1.1.1.1
+  - 1.0.0.1
+  - 8.8.8.8
+  - 8.8.4.4
+  - 9.9.9.9
+  - 149.112.112.112
+  - 208.67.222.222
+  - 208.67.220.220
+
+pinger_count: 6             # Number of reflectors to ping simultaneously
+ping_interval_ms: 300       # Interval between pings per reflector (ms)
+
+# ── Idle/Sleep Settings ──────────────────────────────────────────────────────
+
+enable_sleep_function: true
+connection_active_thr_kbps: 2000  # Below this, connection is considered idle
+sustained_idle_sleep_thr_s: 60.0  # Seconds of idle before entering sleep state
+
+# ── Bufferbloat Detection ────────────────────────────────────────────────────
+
+bufferbloat_detection_window: 6   # Number of samples in detection window
+bufferbloat_detection_thr: 3      # Samples exceeding threshold to trigger detection
+
+# ── EWMA Parameters ─────────────────────────────────────────────────────────
+# These control how quickly baselines and averages respond to changes.
+
+alpha_baseline_increase: 0.001    # Baseline moves slowly when delay increases
+alpha_baseline_decrease: 0.9      # Baseline tracks quickly when delay decreases
+alpha_delta_ewma: 0.095           # Smoothing factor for delay delta EWMA
+
+# ── Rate Adjustment Factors ──────────────────────────────────────────────────
+
+shaper_rate_min_adjust_down_bufferbloat: 0.99  # Minimum rate decrease on bufferbloat
+shaper_rate_max_adjust_down_bufferbloat: 0.75  # Maximum rate decrease on bufferbloat
+shaper_rate_min_adjust_up_load_high: 1.0       # Minimum rate increase on high load
+shaper_rate_max_adjust_up_load_high: 1.04      # Maximum rate increase on high load
+shaper_rate_adjust_down_load_low: 0.99         # Rate decay factor (rate > base)
+shaper_rate_adjust_up_load_low: 1.01           # Rate recovery factor (rate < base)
+
+high_load_thr: 0.75               # Load threshold considered "high" (0.0-1.0)
+
+# ── Timing ───────────────────────────────────────────────────────────────────
+
+monitor_interval_ms: 200                  # How often to check interface throughput
+bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases after BB
+decay_refractory_period_ms: 1000          # Minimum time between decay adjustments
+
+# ── Reflector Health ─────────────────────────────────────────────────────────
+
+reflector_response_deadline_s: 1.0
+reflector_misbehaving_detection_window: 60
+reflector_misbehaving_detection_thr: 3
+
+# ── Stall Detection ─────────────────────────────────────────────────────────
+
+stall_detection_thr: 5
+connection_stall_thr_kbps: 10
+global_ping_response_timeout_s: 10.0
+
+# ── Miscellaneous ────────────────────────────────────────────────────────────
+
+min_shaper_rates_enforcement: false   # Enforce min rates during idle/stall
+startup_wait_s: 0.0                   # Delay before starting (seconds)
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+
+log_to_file: true
+log_file_path: /var/log/cake-autorate.log
+log_file_max_size_kb: 2000
+debug: false
