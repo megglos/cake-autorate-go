@@ -91,7 +91,8 @@ log "Stopping any running cake-autorate instances..."
 killall cake-autorate-go 2>/dev/null || true
 # The bash version uses cake-autorate.sh or run_cake_autorate.sh
 if [ -f "$BASH_DIR/cake-autorate.sh" ]; then
-    "$BASH_DIR/cake-autorate.sh" stop 2>/dev/null || true
+    cd "$BASH_DIR" && ./cake-autorate.sh stop 2>/dev/null || true
+    cd - >/dev/null
 fi
 killall -g cake-autorate 2>/dev/null || true
 sleep 2
@@ -120,7 +121,7 @@ sleep 3
 log "Starting bash version for ${DURATION}s..."
 if [ -f "$BASH_DIR/cake-autorate.sh" ]; then
     cd "$BASH_DIR"
-    ./cake-autorate.sh start "$BASH_CONFIG" &
+    ./cake-autorate.sh &
     BASH_PID=$!
     cd - >/dev/null
 else
@@ -143,7 +144,7 @@ collect_samples "bash" "$RESULTS_DIR/bash_samples.csv" "cake.autorate|fping"
 
 log "Stopping bash version..."
 cd "$BASH_DIR"
-./cake-autorate.sh stop "$BASH_CONFIG" 2>/dev/null || true
+./cake-autorate.sh stop 2>/dev/null || true
 cd - >/dev/null
 killall -g cake-autorate 2>/dev/null || true
 sleep 2
