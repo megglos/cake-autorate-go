@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -21,6 +20,45 @@ type RateStats struct {
 	DlRateKbps float64
 	UlRateKbps float64
 	Timestamp  time.Time
+}
+
+// sysfsCounter holds a persistent file descriptor for a sysfs statistics file.
+// Using pread avoids the open/read/close cycle on every sample.
+type sysfsCounter struct {
+	file *os.File
+	buf  [32]byte // sysfs counters are at most ~20 digits
+}
+
+// openSysfsCounter opens a sysfs statistics file for persistent reading.
+func openSysfsCounter(iface, stat string) (*sysfsCounter, error) {
+	path := fmt.Sprintf("/sys/class/net/%s/statistics/%s", iface, stat)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return &sysfsCounter{file: f}, nil
+}
+
+// read returns the current counter value using pread (no seek needed).
+func (sc *sysfsCounter) read() (int64, error) {
+	n, err := sc.file.ReadAt(sc.buf[:], 0)
+	if n == 0 {
+		if err != nil {
+			return 0, err
+		}
+		return 0, fmt.Errorf("empty read from %s", sc.file.Name())
+	}
+	// Trim trailing whitespace (newline)
+	end := n
+	for end > 0 && (sc.buf[end-1] == '\n' || sc.buf[end-1] == ' ') {
+		end--
+	}
+	return strconv.ParseInt(string(sc.buf[:end]), 10, 64)
+}
+
+// close releases the file descriptor.
+func (sc *sysfsCounter) close() {
+	sc.file.Close()
 }
 
 // Monitor reads interface statistics and calculates achieved throughput.
@@ -42,13 +80,28 @@ func NewMonitor(dlIface, ulIface string, intervalMs int, logger *Logger) *Monito
 }
 
 // Run starts the monitor loop, sending RateStats to the provided channel.
+// Opens persistent file descriptors to sysfs counters to avoid open/close overhead.
 func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
-	prevDlBytes, err := readIfaceBytes(m.dlIface, "rx")
+	dlCounter, err := openSysfsCounter(m.dlIface, "rx_bytes")
+	if err != nil {
+		m.logger.Errorf("opening dl counter: %v", err)
+		return
+	}
+	defer dlCounter.close()
+
+	ulCounter, err := openSysfsCounter(m.ulIface, "tx_bytes")
+	if err != nil {
+		m.logger.Errorf("opening ul counter: %v", err)
+		return
+	}
+	defer ulCounter.close()
+
+	prevDlBytes, err := dlCounter.read()
 	if err != nil {
 		m.logger.Errorf("reading initial dl bytes: %v", err)
 		return
 	}
-	prevUlBytes, err := readIfaceBytes(m.ulIface, "tx")
+	prevUlBytes, err := ulCounter.read()
 	if err != nil {
 		m.logger.Errorf("reading initial ul bytes: %v", err)
 		return
@@ -69,12 +122,12 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 				continue
 			}
 
-			dlBytes, err := readIfaceBytes(m.dlIface, "rx")
+			dlBytes, err := dlCounter.read()
 			if err != nil {
 				m.logger.Debugf("reading dl bytes: %v", err)
 				continue
 			}
-			ulBytes, err := readIfaceBytes(m.ulIface, "tx")
+			ulBytes, err := ulCounter.read()
 			if err != nil {
 				m.logger.Debugf("reading ul bytes: %v", err)
 				continue
@@ -108,19 +161,4 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 			}
 		}
 	}
-}
-
-// readIfaceBytes reads the byte counter for an interface from sysfs.
-// direction is "rx" or "tx".
-func readIfaceBytes(iface, direction string) (int64, error) {
-	path := fmt.Sprintf("/sys/class/net/%s/statistics/%s_bytes", iface, direction)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	val, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parsing %s: %w", path, err)
-	}
-	return val, nil
 }
