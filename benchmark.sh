@@ -15,8 +15,7 @@ DURATION="${1:-120}"
 SAMPLE_INTERVAL=5
 GO_BIN="${GO_BIN:-/tmp/cake-autorate-go}"
 GO_CONFIG="${GO_CONFIG:-/etc/cake-autorate/config.yaml}"
-BASH_DIR="${BASH_DIR:-/root/cake-autorate}"
-BASH_CONFIG="${BASH_CONFIG:-config.primary.sh}"
+BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
 
 mkdir -p "$RESULTS_DIR"
@@ -89,12 +88,7 @@ summarize() {
 
 log "Stopping any running cake-autorate instances..."
 killall cake-autorate-go 2>/dev/null || true
-# The bash version uses cake-autorate.sh or run_cake_autorate.sh
-if [ -f "$BASH_DIR/cake-autorate.sh" ]; then
-    cd "$BASH_DIR" && ./cake-autorate.sh stop 2>/dev/null || true
-    cd - >/dev/null
-fi
-killall -g cake-autorate 2>/dev/null || true
+service "$BASH_SERVICE" stop 2>/dev/null || true
 sleep 2
 
 # ── Benchmark Go version ───────────────────────────────────────────────────
@@ -118,19 +112,15 @@ sleep 3
 
 # ── Benchmark Bash version ─────────────────────────────────────────────────
 
-log "Starting bash version for ${DURATION}s..."
-if [ -f "$BASH_DIR/cake-autorate.sh" ]; then
-    cd "$BASH_DIR"
-    ./cake-autorate.sh &
-    BASH_PID=$!
-    cd - >/dev/null
-else
-    log "ERROR: Bash version not found at $BASH_DIR/cake-autorate.sh"
-    log "Set BASH_DIR to the correct path"
+log "Starting bash version (service $BASH_SERVICE) for ${DURATION}s..."
+service "$BASH_SERVICE" start 2>/dev/null
+if [ $? -ne 0 ]; then
+    log "ERROR: 'service $BASH_SERVICE start' failed"
+    log "Ensure the $BASH_SERVICE init script is installed"
     # Still print Go results
     echo ""
     echo "============================================================"
-    echo "  BENCHMARK RESULTS (Go only — bash version not found)"
+    echo "  BENCHMARK RESULTS (Go only — bash service not available)"
     echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL}s"
     echo "============================================================"
     summarize "cake-autorate-go" "$RESULTS_DIR/go_samples.csv"
@@ -143,10 +133,7 @@ sleep 5
 collect_samples "bash" "$RESULTS_DIR/bash_samples.csv" "cake.autorate|fping"
 
 log "Stopping bash version..."
-cd "$BASH_DIR"
-./cake-autorate.sh stop 2>/dev/null || true
-cd - >/dev/null
-killall -g cake-autorate 2>/dev/null || true
+service "$BASH_SERVICE" stop 2>/dev/null || true
 sleep 2
 
 # ── Results ─────────────────────────────────────────────────────────────────
