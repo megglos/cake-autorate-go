@@ -46,14 +46,32 @@ The Go version reacts to each ping result and adjusts the shaper in ~35-70 ms, b
 
 **Why this matters:** For a latency-sensitive traffic shaper, reaching full bandwidth in 1 second vs 5 seconds means noticeably less bufferbloat during load transitions (e.g., starting a download, joining a video call).
 
+#### Multi-WAN Scaling
+
+The single-interface benchmark above shows rough parity on memory and CPU. However, routers often manage **multiple WAN interfaces** (dual-WAN failover, load balancing, or separate uplinks). This is where the architectural differences become decisive.
+
+Measured on the same OpenWrt router with **two WAN interfaces** configured, 60 seconds per version:
+
+| Metric | Bash | Go | Improvement |
+|---|---|---|---|
+| **Processes** | 11 (peak 11) | 1 | **11x fewer** |
+| **Memory (RSS)** | 21,389 KB (peak 21,480 KB) | 10,546 KB (peak 10,808 KB) | **2x less** |
+| **CPU** | 11.76% (peak 13.8%) | 11.00% (peak 11.4%) | ~1.1x less |
+
+The bash version spawns a **full process tree per interface** — each WAN link gets its own set of bash, fping, awk, and monitor subprocesses. Resource usage scales linearly with the number of interfaces. The Go version handles all interfaces within a single process using goroutines, so adding a second WAN link adds negligible overhead.
+
+On a resource-constrained router with 128–256 MB of RAM, the difference between 21 MB and 10 MB for a single daemon is significant — especially when running alongside other services (dnsmasq, firewall, VPN).
+
 #### Summary
 
 | Aspect | Winner | Details |
 |---|---|---|
-| Memory | Tie | ~10 MB each |
-| CPU | Tie | ~7-8% each |
+| Memory (1 WAN) | Tie | ~10 MB each |
+| Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
+| CPU | Tie | ~7-11% depending on interface count |
 | Responsiveness | **Go (4x)** | 1.1s vs 4.6s ramp-up |
-| Process count | **Go** | 1 vs 5 processes |
+| Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
+| Multi-WAN scaling | **Go** | Goroutines vs full process trees per interface |
 | Deployment | **Go** | Single static binary, no bash/awk/fping dependencies |
 | Maturity | **Bash** | Battle-tested with a large user community |
 
