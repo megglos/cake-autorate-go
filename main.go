@@ -74,8 +74,9 @@ func main() {
 		cancel()
 	}()
 
-	// Shared shaper — stateless, safe for concurrent use
+	// Shared shaper — uses a persistent netlink socket, safe for concurrent use
 	shaper := NewShaper(logger)
+	defer shaper.Close()
 
 	// Launch a LinkController per configured link
 	var wg sync.WaitGroup
