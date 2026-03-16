@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 // LogLevel represents the severity of a log message.
@@ -27,7 +28,7 @@ const (
 // Logger provides structured logging to file and stderr.
 type Logger struct {
 	mu       sync.Mutex
-	debug    bool
+	debugOn  atomic.Bool // lock-free check for debug fast path
 	file     *os.File
 	logger   *log.Logger
 	maxBytes int64
@@ -37,9 +38,9 @@ type Logger struct {
 // written to that file. maxSizeKB controls log file rotation (0 = no limit).
 func NewLogger(debug bool, filePath string, maxSizeKB int) (*Logger, error) {
 	l := &Logger{
-		debug:    debug,
 		maxBytes: int64(maxSizeKB) * 1024,
 	}
+	l.debugOn.Store(debug)
 
 	writers := []io.Writer{os.Stderr}
 
@@ -66,8 +67,9 @@ func (l *Logger) Close() {
 }
 
 // Debugf logs a debug message (only if debug mode is enabled).
+// Uses an atomic check to avoid mutex contention when debug is disabled.
 func (l *Logger) Debugf(format string, args ...interface{}) {
-	if !l.debug {
+	if !l.debugOn.Load() {
 		return
 	}
 	l.logf("DEBUG", format, args...)
