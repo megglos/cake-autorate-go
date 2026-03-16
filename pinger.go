@@ -37,17 +37,18 @@ type ReflectorState struct {
 // PingerManager manages ICMP pingers to multiple reflectors.
 type PingerManager struct {
 	cfg        *Config
+	link       *LinkConfig
 	logger     *Logger
 	reflectors []string
 	states     map[string]*ReflectorState
 	mu         sync.RWMutex
 }
 
-// NewPingerManager creates a new pinger manager.
-func NewPingerManager(cfg *Config, logger *Logger) *PingerManager {
+// NewPingerManager creates a new pinger manager for a specific link.
+func NewPingerManager(link *LinkConfig, cfg *Config, logger *Logger) *PingerManager {
 	// Shuffle reflectors for randomization
-	reflectors := make([]string, len(cfg.Reflectors))
-	copy(reflectors, cfg.Reflectors)
+	reflectors := make([]string, len(link.Reflectors))
+	copy(reflectors, link.Reflectors)
 	rand.Shuffle(len(reflectors), func(i, j int) {
 		reflectors[i], reflectors[j] = reflectors[j], reflectors[i]
 	})
@@ -62,6 +63,7 @@ func NewPingerManager(cfg *Config, logger *Logger) *PingerManager {
 
 	return &PingerManager{
 		cfg:        cfg,
+		link:       link,
 		logger:     logger,
 		reflectors: reflectors,
 		states:     states,
@@ -94,7 +96,7 @@ func (pm *PingerManager) Run(ctx context.Context, resultCh chan<- PingResult) {
 	stagger := interval / time.Duration(len(active))
 	deadline := time.Duration(pm.cfg.ReflectorResponseDeadlineS * float64(time.Second))
 
-	pm.logger.Infof("starting %d pingers with %v interval", len(active), interval)
+	pm.logger.Infof("[%s] starting %d pingers with %v interval", pm.link.Name, len(active), interval)
 
 	for i, reflector := range active {
 		state := pm.GetState(reflector)
@@ -142,11 +144,11 @@ func (pm *PingerManager) sendPing(ctx context.Context, reflector string, deadlin
 	pinger.Timeout = deadline
 	pinger.SetPrivileged(true)
 
-	if pm.cfg.PingInterfaceName != "" {
-		pinger.InterfaceName = pm.cfg.PingInterfaceName
+	if pm.link.PingInterfaceName != "" {
+		pinger.InterfaceName = pm.link.PingInterfaceName
 	}
-	if pm.cfg.PingSourceAddr != "" {
-		pinger.Source = pm.cfg.PingSourceAddr
+	if pm.link.PingSourceAddr != "" {
+		pinger.Source = pm.link.PingSourceAddr
 	}
 
 	var result PingResult
@@ -205,8 +207,8 @@ func (pm *PingerManager) ReplaceUnhealthy() {
 		state.mu.Unlock()
 
 		if missed >= pm.cfg.ReflectorMisbehavingDetectionThr && len(pm.reflectors) > activeCount {
-			pm.logger.Infof("replacing misbehaving reflector %s (missed %d/%d)",
-				pm.reflectors[i], missed, len(state.MissedWindow))
+			pm.logger.Infof("[%s] replacing misbehaving reflector %s (missed %d/%d)",
+				pm.link.Name, pm.reflectors[i], missed, len(state.MissedWindow))
 
 			// Move misbehaving reflector to end, shift spare up
 			bad := pm.reflectors[i]

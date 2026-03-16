@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
@@ -59,7 +60,7 @@ func main() {
 	}
 	defer logger.Close()
 
-	logger.Infof("cake-autorate-go %s starting", version)
+	logger.Infof("cake-autorate-go %s starting (%d link(s))", version, len(cfg.Links))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -73,12 +74,25 @@ func main() {
 		cancel()
 	}()
 
-	controller := NewController(cfg, logger)
-	if err := controller.Run(ctx); err != nil && ctx.Err() == nil {
-		logger.Errorf("controller error: %v", err)
-		os.Exit(1)
+	// Shared shaper — stateless, safe for concurrent use
+	shaper := NewShaper(logger)
+
+	// Launch a LinkController per configured link
+	var wg sync.WaitGroup
+	for i := range cfg.Links {
+		link := &cfg.Links[i]
+		lc := NewLinkController(link, cfg, shaper, logger)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := lc.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Errorf("[%s] controller error: %v", link.Name, err)
+			}
+		}()
 	}
 
+	wg.Wait()
 	logger.Infof("cake-autorate-go stopped")
 }
 
@@ -87,31 +101,43 @@ func printDefaults() {
 	fmt.Println("# cake-autorate-go default configuration")
 	fmt.Println("# Save this to /etc/cake-autorate/config.yaml and adjust as needed")
 	fmt.Println()
-
-	// Simple manual YAML output to avoid importing yaml just for this
-	fmt.Printf("download:\n")
-	fmt.Printf("  interface: %s\n", cfg.Download.Interface)
-	fmt.Printf("  adjust: %t\n", cfg.Download.Adjust)
-	fmt.Printf("  min_rate_kbps: %d\n", cfg.Download.MinRateKbps)
-	fmt.Printf("  base_rate_kbps: %d\n", cfg.Download.BaseRateKbps)
-	fmt.Printf("  max_rate_kbps: %d\n", cfg.Download.MaxRateKbps)
-	fmt.Printf("  owd_delta_delay_thr_ms: %.1f\n", cfg.Download.OWDDeltaDelayThrMs)
-	fmt.Printf("  avg_owd_delta_max_adjust_up_thr_ms: %.1f\n", cfg.Download.AvgOWDDeltaMaxAdjUpThrMs)
-	fmt.Printf("  avg_owd_delta_max_adjust_down_thr_ms: %.1f\n", cfg.Download.AvgOWDDeltaMaxAdjDownThrMs)
-	fmt.Printf("\nupload:\n")
-	fmt.Printf("  interface: %s\n", cfg.Upload.Interface)
-	fmt.Printf("  adjust: %t\n", cfg.Upload.Adjust)
-	fmt.Printf("  min_rate_kbps: %d\n", cfg.Upload.MinRateKbps)
-	fmt.Printf("  base_rate_kbps: %d\n", cfg.Upload.BaseRateKbps)
-	fmt.Printf("  max_rate_kbps: %d\n", cfg.Upload.MaxRateKbps)
-	fmt.Printf("  owd_delta_delay_thr_ms: %.1f\n", cfg.Upload.OWDDeltaDelayThrMs)
-	fmt.Printf("  avg_owd_delta_max_adjust_up_thr_ms: %.1f\n", cfg.Upload.AvgOWDDeltaMaxAdjUpThrMs)
-	fmt.Printf("  avg_owd_delta_max_adjust_down_thr_ms: %.1f\n", cfg.Upload.AvgOWDDeltaMaxAdjDownThrMs)
-	fmt.Printf("\nreflectors:\n")
+	fmt.Println("# ── Link Configuration ─────────────────────────────────────────────────────")
+	fmt.Println("# Each link represents a WAN connection with its own download/upload interfaces")
+	fmt.Println("# and reflectors. Multiple links run concurrently in a single process.")
+	fmt.Println("#")
+	fmt.Println("# For a single WAN, you can also use the legacy flat format (download:/upload:")
+	fmt.Println("# at top level) — it will be auto-migrated to a single link named 'default'.")
+	fmt.Println()
+	fmt.Println("links:")
+	fmt.Println("  - name: primary")
+	fmt.Printf("    download:\n")
+	fmt.Printf("      interface: %s\n", cfg.Download.Interface)
+	fmt.Printf("      adjust: %t\n", cfg.Download.Adjust)
+	fmt.Printf("      min_rate_kbps: %d\n", cfg.Download.MinRateKbps)
+	fmt.Printf("      base_rate_kbps: %d\n", cfg.Download.BaseRateKbps)
+	fmt.Printf("      max_rate_kbps: %d\n", cfg.Download.MaxRateKbps)
+	fmt.Printf("      owd_delta_delay_thr_ms: %.1f\n", cfg.Download.OWDDeltaDelayThrMs)
+	fmt.Printf("      avg_owd_delta_max_adjust_up_thr_ms: %.1f\n", cfg.Download.AvgOWDDeltaMaxAdjUpThrMs)
+	fmt.Printf("      avg_owd_delta_max_adjust_down_thr_ms: %.1f\n", cfg.Download.AvgOWDDeltaMaxAdjDownThrMs)
+	fmt.Printf("    upload:\n")
+	fmt.Printf("      interface: %s\n", cfg.Upload.Interface)
+	fmt.Printf("      adjust: %t\n", cfg.Upload.Adjust)
+	fmt.Printf("      min_rate_kbps: %d\n", cfg.Upload.MinRateKbps)
+	fmt.Printf("      base_rate_kbps: %d\n", cfg.Upload.BaseRateKbps)
+	fmt.Printf("      max_rate_kbps: %d\n", cfg.Upload.MaxRateKbps)
+	fmt.Printf("      owd_delta_delay_thr_ms: %.1f\n", cfg.Upload.OWDDeltaDelayThrMs)
+	fmt.Printf("      avg_owd_delta_max_adjust_up_thr_ms: %.1f\n", cfg.Upload.AvgOWDDeltaMaxAdjUpThrMs)
+	fmt.Printf("      avg_owd_delta_max_adjust_down_thr_ms: %.1f\n", cfg.Upload.AvgOWDDeltaMaxAdjDownThrMs)
+	fmt.Printf("    reflectors:\n")
 	for _, r := range cfg.Reflectors {
-		fmt.Printf("  - %s\n", r)
+		fmt.Printf("      - %s\n", r)
 	}
-	fmt.Printf("\npinger_count: %d\n", cfg.PingerCount)
+	fmt.Printf("    # ping_interface: wan         # Bind ICMP socket to this interface\n")
+	fmt.Printf("    # ping_source_addr: 0.0.0.0  # Source IP for ICMP packets\n")
+
+	fmt.Printf("\n# ── Shared Settings ────────────────────────────────────────────────────────\n")
+	fmt.Printf("# These apply to all links.\n\n")
+	fmt.Printf("pinger_count: %d\n", cfg.PingerCount)
 	fmt.Printf("ping_interval_ms: %d\n", cfg.PingIntervalMs)
 	fmt.Printf("\nenable_sleep_function: %t\n", cfg.EnableSleepFunction)
 	fmt.Printf("connection_active_thr_kbps: %d\n", cfg.ConnectionActiveThrKbps)

@@ -50,8 +50,10 @@ type dirState struct {
 	avgDeltaUs        float64 // average delta across active reflectors
 }
 
-// Controller implements the main cake-autorate control loop.
-type Controller struct {
+// LinkController implements the cake-autorate control loop for a single WAN link.
+type LinkController struct {
+	name          string
+	link          *LinkConfig
 	cfg           *Config
 	shaper        *Shaper
 	pingerMgr     *PingerManager
@@ -74,13 +76,14 @@ type Controller struct {
 	pingerCancel  context.CancelFunc
 }
 
-// NewController creates a new Controller.
-func NewController(cfg *Config, logger *Logger) *Controller {
-	shaper := NewShaper(logger)
-	pingerMgr := NewPingerManager(cfg, logger)
-	monitor := NewMonitor(cfg.Download.Interface, cfg.Upload.Interface, cfg.MonitorIntervalMs, logger)
+// NewLinkController creates a new LinkController for a single WAN link.
+func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, logger *Logger) *LinkController {
+	pingerMgr := NewPingerManager(link, cfg, logger)
+	monitor := NewMonitor(link.Download.Interface, link.Upload.Interface, cfg.MonitorIntervalMs, logger)
 
-	c := &Controller{
+	c := &LinkController{
+		name:      link.Name,
+		link:      link,
 		cfg:       cfg,
 		shaper:    shaper,
 		pingerMgr: pingerMgr,
@@ -92,11 +95,11 @@ func NewController(cfg *Config, logger *Logger) *Controller {
 	}
 
 	c.dl = dirState{
-		shaperRateKbps: float64(cfg.Download.BaseRateKbps),
+		shaperRateKbps: float64(link.Download.BaseRateKbps),
 		delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
 	}
 	c.ul = dirState{
-		shaperRateKbps: float64(cfg.Upload.BaseRateKbps),
+		shaperRateKbps: float64(link.Upload.BaseRateKbps),
 		delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
 	}
 
@@ -104,9 +107,9 @@ func NewController(cfg *Config, logger *Logger) *Controller {
 }
 
 // Run starts the controller. Blocks until ctx is cancelled.
-func (c *Controller) Run(ctx context.Context) error {
+func (c *LinkController) Run(ctx context.Context) error {
 	if c.cfg.StartupWaitS > 0 {
-		c.logger.Infof("waiting %.1fs before starting", c.cfg.StartupWaitS)
+		c.logger.Infof("[%s] waiting %.1fs before starting", c.name, c.cfg.StartupWaitS)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -128,16 +131,17 @@ func (c *Controller) Run(ctx context.Context) error {
 	healthTicker := time.NewTicker(time.Duration(c.cfg.ReflectorResponseDeadlineS * float64(time.Second)))
 	defer healthTicker.Stop()
 
-	c.logger.Infof("controller started in %s state", c.state)
-	c.logger.Infof("dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps",
-		c.cfg.Download.Interface, c.cfg.Download.MinRateKbps, c.cfg.Download.BaseRateKbps, c.cfg.Download.MaxRateKbps,
-		c.cfg.Upload.Interface, c.cfg.Upload.MinRateKbps, c.cfg.Upload.BaseRateKbps, c.cfg.Upload.MaxRateKbps)
+	c.logger.Infof("[%s] controller started in %s state", c.name, c.state)
+	c.logger.Infof("[%s] dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps",
+		c.name,
+		c.link.Download.Interface, c.link.Download.MinRateKbps, c.link.Download.BaseRateKbps, c.link.Download.MaxRateKbps,
+		c.link.Upload.Interface, c.link.Upload.MinRateKbps, c.link.Upload.BaseRateKbps, c.link.Upload.MaxRateKbps)
 
 	for {
 		select {
 		case <-ctx.Done():
 			c.stopPingers()
-			c.logger.Infof("controller stopped")
+			c.logger.Infof("[%s] controller stopped", c.name)
 			return ctx.Err()
 
 		case stats := <-c.rateCh:
@@ -152,20 +156,20 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
-func (c *Controller) startPingers(ctx context.Context) {
+func (c *LinkController) startPingers(ctx context.Context) {
 	pingerCtx, cancel := context.WithCancel(ctx)
 	c.pingerCancel = cancel
 	go c.pingerMgr.Run(pingerCtx, c.pingCh)
 }
 
-func (c *Controller) stopPingers() {
+func (c *LinkController) stopPingers() {
 	if c.pingerCancel != nil {
 		c.pingerCancel()
 		c.pingerCancel = nil
 	}
 }
 
-func (c *Controller) handleRateStats(ctx context.Context, stats RateStats) {
+func (c *LinkController) handleRateStats(ctx context.Context, stats RateStats) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -189,8 +193,8 @@ func (c *Controller) handleRateStats(ctx context.Context, stats RateStats) {
 				c.transitionTo(StateIdle)
 				c.stopPingers()
 				if c.cfg.MinShaperRatesEnforcement {
-					c.dl.shaperRateKbps = float64(c.cfg.Download.MinRateKbps)
-					c.ul.shaperRateKbps = float64(c.cfg.Upload.MinRateKbps)
+					c.dl.shaperRateKbps = float64(c.link.Download.MinRateKbps)
+					c.ul.shaperRateKbps = float64(c.link.Upload.MinRateKbps)
 					c.applyRate(DL)
 					c.applyRate(UL)
 				}
@@ -205,8 +209,8 @@ func (c *Controller) handleRateStats(ctx context.Context, stats RateStats) {
 			stats.UlRateKbps >= float64(c.cfg.ConnectionActiveThrKbps) {
 			c.transitionTo(StateRunning)
 			c.idleSince = time.Time{}
-			c.dl.shaperRateKbps = float64(c.cfg.Download.BaseRateKbps)
-			c.ul.shaperRateKbps = float64(c.cfg.Upload.BaseRateKbps)
+			c.dl.shaperRateKbps = float64(c.link.Download.BaseRateKbps)
+			c.ul.shaperRateKbps = float64(c.link.Upload.BaseRateKbps)
 			c.applyRate(DL)
 			c.applyRate(UL)
 			c.startPingers(ctx)
@@ -222,7 +226,7 @@ func (c *Controller) handleRateStats(ctx context.Context, stats RateStats) {
 	}
 }
 
-func (c *Controller) handlePingResult(result PingResult) {
+func (c *LinkController) handlePingResult(result PingResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -269,24 +273,24 @@ func (c *Controller) handlePingResult(result PingResult) {
 	c.processDelay(UL, deltaUs)
 }
 
-func (c *Controller) handleTimeout(result PingResult) {
+func (c *LinkController) handleTimeout(result PingResult) {
 	// Check for stall condition
 	if !c.lastPingTime.IsZero() &&
 		time.Since(c.lastPingTime).Seconds() > c.cfg.GlobalPingResponseTimeoutS {
 		c.transitionTo(StateStall)
 		c.stopPingers()
 		if c.cfg.MinShaperRatesEnforcement {
-			c.dl.shaperRateKbps = float64(c.cfg.Download.MinRateKbps)
-			c.ul.shaperRateKbps = float64(c.cfg.Upload.MinRateKbps)
+			c.dl.shaperRateKbps = float64(c.link.Download.MinRateKbps)
+			c.ul.shaperRateKbps = float64(c.link.Upload.MinRateKbps)
 			c.applyRate(DL)
 			c.applyRate(UL)
 		}
 	}
 }
 
-func (c *Controller) processDelay(dir Direction, deltaUs float64) {
+func (c *LinkController) processDelay(dir Direction, deltaUs float64) {
 	ds := c.getDirState(dir)
-	dc := c.cfg.DirConfig(dir)
+	dc := c.link.DirConfig(dir)
 
 	// Calculate compensated delay threshold
 	compensationUs := WirePacketCompensationUs(mtuBytes, int(ds.shaperRateKbps))
@@ -331,9 +335,9 @@ func (c *Controller) processDelay(dir Direction, deltaUs float64) {
 }
 
 // adjustRateBufferbloat reduces the shaper rate when bufferbloat is detected.
-func (c *Controller) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64) {
+func (c *LinkController) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64) {
 	ds := c.getDirState(dir)
-	dc := c.cfg.DirConfig(dir)
+	dc := c.link.DirConfig(dir)
 
 	// Calculate how far delta exceeds threshold relative to max threshold
 	maxThrUs := dc.AvgOWDDeltaMaxAdjDownThrMs * 1000.0
@@ -353,17 +357,17 @@ func (c *Controller) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs f
 	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
 
 	if newRate != ds.shaperRateKbps {
-		c.logger.Debugf("[%s] bufferbloat: rate %.0f -> %.0f kbps (delta=%.0fus thr=%.0fus factor=%.2f)",
-			dir, ds.shaperRateKbps, newRate, deltaUs, thresholdUs, factor)
+		c.logger.Debugf("[%s] [%s] bufferbloat: rate %.0f -> %.0f kbps (delta=%.0fus thr=%.0fus factor=%.2f)",
+			c.name, dir, ds.shaperRateKbps, newRate, deltaUs, thresholdUs, factor)
 		ds.shaperRateKbps = newRate
 		c.applyRate(dir)
 	}
 }
 
 // adjustRateHighLoad increases the shaper rate during high load without bufferbloat.
-func (c *Controller) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
+func (c *LinkController) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	ds := c.getDirState(dir)
-	dc := c.cfg.DirConfig(dir)
+	dc := c.link.DirConfig(dir)
 
 	// Factor based on how much headroom remains before hitting delay threshold
 	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
@@ -382,17 +386,17 @@ func (c *Controller) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs floa
 	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
 
 	if newRate != ds.shaperRateKbps {
-		c.logger.Debugf("[%s] high load: rate %.0f -> %.0f kbps (factor=%.2f)",
-			dir, ds.shaperRateKbps, newRate, factor)
+		c.logger.Debugf("[%s] [%s] high load: rate %.0f -> %.0f kbps (factor=%.2f)",
+			c.name, dir, ds.shaperRateKbps, newRate, factor)
 		ds.shaperRateKbps = newRate
 		c.applyRate(dir)
 	}
 }
 
 // adjustRateDecay moves the shaper rate toward the base rate during low load.
-func (c *Controller) adjustRateDecay(dir Direction) {
+func (c *LinkController) adjustRateDecay(dir Direction) {
 	ds := c.getDirState(dir)
-	dc := c.cfg.DirConfig(dir)
+	dc := c.link.DirConfig(dir)
 
 	baseRate := float64(dc.BaseRateKbps)
 	var newRate float64
@@ -410,15 +414,15 @@ func (c *Controller) adjustRateDecay(dir Direction) {
 	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
 
 	if newRate != ds.shaperRateKbps {
-		c.logger.Debugf("[%s] decay: rate %.0f -> %.0f kbps (base=%.0f)",
-			dir, ds.shaperRateKbps, newRate, baseRate)
+		c.logger.Debugf("[%s] [%s] decay: rate %.0f -> %.0f kbps (base=%.0f)",
+			c.name, dir, ds.shaperRateKbps, newRate, baseRate)
 		ds.shaperRateKbps = newRate
 		c.applyRate(dir)
 	}
 }
 
-func (c *Controller) applyRate(dir Direction) {
-	dc := c.cfg.DirConfig(dir)
+func (c *LinkController) applyRate(dir Direction) {
+	dc := c.link.DirConfig(dir)
 	ds := c.getDirState(dir)
 
 	if !dc.Adjust {
@@ -427,19 +431,19 @@ func (c *Controller) applyRate(dir Direction) {
 
 	rateKbps := int(math.Round(ds.shaperRateKbps))
 	if err := c.shaper.SetRate(dc.Interface, rateKbps); err != nil {
-		c.logger.Errorf("[%s] setting rate to %d kbps: %v", dir, rateKbps, err)
+		c.logger.Errorf("[%s] [%s] setting rate to %d kbps: %v", c.name, dir, rateKbps, err)
 	}
 }
 
-func (c *Controller) getDirState(dir Direction) *dirState {
+func (c *LinkController) getDirState(dir Direction) *dirState {
 	if dir == DL {
 		return &c.dl
 	}
 	return &c.ul
 }
 
-func (c *Controller) transitionTo(newState State) {
-	c.logger.Infof("state: %s -> %s", c.state, newState)
+func (c *LinkController) transitionTo(newState State) {
+	c.logger.Infof("[%s] state: %s -> %s", c.name, c.state, newState)
 	c.state = newState
 }
 

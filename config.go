@@ -37,17 +37,39 @@ type DirectionConfig struct {
 	AvgOWDDeltaMaxAdjDownThrMs float64 `yaml:"avg_owd_delta_max_adjust_down_thr_ms"`
 }
 
+// LinkConfig holds the per-link configuration for a single WAN interface pair.
+type LinkConfig struct {
+	Name              string          `yaml:"name"`
+	Download          DirectionConfig `yaml:"download"`
+	Upload            DirectionConfig `yaml:"upload"`
+	Reflectors        []string        `yaml:"reflectors"`
+	PingSourceAddr    string          `yaml:"ping_source_addr"`
+	PingInterfaceName string          `yaml:"ping_interface"`
+}
+
+// DirConfig returns the DirectionConfig for the given direction.
+func (lc *LinkConfig) DirConfig(dir Direction) *DirectionConfig {
+	if dir == DL {
+		return &lc.Download
+	}
+	return &lc.Upload
+}
+
 // Config holds all configuration for cake-autorate.
 type Config struct {
+	// Multi-link configuration (preferred)
+	Links []LinkConfig `yaml:"links"`
+
+	// Legacy single-link fields (for backward compatibility)
 	Download DirectionConfig `yaml:"download"`
 	Upload   DirectionConfig `yaml:"upload"`
+	Reflectors        []string `yaml:"reflectors"`
+	PingSourceAddr    string   `yaml:"ping_source_addr"`
+	PingInterfaceName string   `yaml:"ping_interface"`
 
-	// Reflector/pinger settings
-	Reflectors           []string `yaml:"reflectors"`
-	PingerCount          int      `yaml:"pinger_count"`
-	PingIntervalMs       int      `yaml:"ping_interval_ms"`
-	PingSourceAddr       string   `yaml:"ping_source_addr"`
-	PingInterfaceName    string   `yaml:"ping_interface"`
+	// Shared pinger settings
+	PingerCount    int `yaml:"pinger_count"`
+	PingIntervalMs int `yaml:"ping_interval_ms"`
 
 	// Idle/sleep settings
 	EnableSleepFunction     bool    `yaml:"enable_sleep_function"`
@@ -194,6 +216,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
+	// Migrate legacy single-link config to links list
+	cfg.migrateLinks()
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -201,36 +226,73 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// migrateLinks converts legacy top-level download/upload fields into a single
+// link entry when the links list is empty. This preserves backward compatibility
+// with existing single-link configs.
+func (c *Config) migrateLinks() {
+	if len(c.Links) > 0 {
+		// For links that don't specify reflectors, inherit from top-level
+		for i := range c.Links {
+			if len(c.Links[i].Reflectors) == 0 {
+				c.Links[i].Reflectors = c.Reflectors
+			}
+			if c.Links[i].Name == "" {
+				c.Links[i].Name = fmt.Sprintf("link%d", i)
+			}
+		}
+		return
+	}
+
+	// No links defined — migrate from legacy fields
+	if c.Download.Interface != "" {
+		c.Links = []LinkConfig{{
+			Name:              "default",
+			Download:          c.Download,
+			Upload:            c.Upload,
+			Reflectors:        c.Reflectors,
+			PingSourceAddr:    c.PingSourceAddr,
+			PingInterfaceName: c.PingInterfaceName,
+		}}
+	}
+}
+
 // Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
-	for _, dc := range []struct {
-		name string
-		dir  DirectionConfig
-	}{
-		{"download", c.Download},
-		{"upload", c.Upload},
-	} {
-		if dc.dir.Interface == "" {
-			return fmt.Errorf("%s interface must be set", dc.name)
+	if len(c.Links) == 0 {
+		return fmt.Errorf("at least one link must be configured")
+	}
+
+	for _, link := range c.Links {
+		if link.Name == "" {
+			return fmt.Errorf("each link must have a name")
 		}
-		if dc.dir.MinRateKbps <= 0 {
-			return fmt.Errorf("%s min_rate_kbps must be positive", dc.name)
+		for _, dc := range []struct {
+			name string
+			dir  DirectionConfig
+		}{
+			{link.Name + ".download", link.Download},
+			{link.Name + ".upload", link.Upload},
+		} {
+			if dc.dir.Interface == "" {
+				return fmt.Errorf("%s interface must be set", dc.name)
+			}
+			if dc.dir.MinRateKbps <= 0 {
+				return fmt.Errorf("%s min_rate_kbps must be positive", dc.name)
+			}
+			if dc.dir.BaseRateKbps < dc.dir.MinRateKbps {
+				return fmt.Errorf("%s base_rate_kbps must be >= min_rate_kbps", dc.name)
+			}
+			if dc.dir.MaxRateKbps < dc.dir.BaseRateKbps {
+				return fmt.Errorf("%s max_rate_kbps must be >= base_rate_kbps", dc.name)
+			}
 		}
-		if dc.dir.BaseRateKbps < dc.dir.MinRateKbps {
-			return fmt.Errorf("%s base_rate_kbps must be >= min_rate_kbps", dc.name)
-		}
-		if dc.dir.MaxRateKbps < dc.dir.BaseRateKbps {
-			return fmt.Errorf("%s max_rate_kbps must be >= base_rate_kbps", dc.name)
+		if len(link.Reflectors) == 0 {
+			return fmt.Errorf("link %q: at least one reflector must be configured", link.Name)
 		}
 	}
-	if len(c.Reflectors) == 0 {
-		return fmt.Errorf("at least one reflector must be configured")
-	}
+
 	if c.PingerCount <= 0 {
 		return fmt.Errorf("pinger_count must be positive")
-	}
-	if c.PingerCount > len(c.Reflectors) {
-		c.PingerCount = len(c.Reflectors)
 	}
 	if c.BufferbloatDetectionWindow <= 0 {
 		return fmt.Errorf("bufferbloat_detection_window must be positive")
@@ -239,12 +301,4 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("bufferbloat_detection_thr must be between 1 and bufferbloat_detection_window")
 	}
 	return nil
-}
-
-// DirConfig returns the DirectionConfig for the given direction.
-func (c *Config) DirConfig(dir Direction) *DirectionConfig {
-	if dir == DL {
-		return &c.Download
-	}
-	return &c.Upload
 }

@@ -6,54 +6,80 @@
 # Adjust these values to match your network setup.
 # Run `cake-autorate --defaults` to see all defaults.
 
-# ── Interface Configuration ──────────────────────────────────────────────────
-# These must match the interfaces where CAKE qdisc is configured.
+# ── Link Configuration ──────────────────────────────────────────────────────
+# Each link represents a WAN connection with download/upload interface pair,
+# its own reflectors, and optional ping binding for multi-WAN routing.
+#
+# Multiple links run concurrently in a single process — no need to spawn
+# separate instances like the bash version requires.
+#
+# For backward compatibility, you can also use the legacy flat format
+# (download:/upload:/reflectors: at top level) for single-WAN setups.
 
-download:
-  interface: ifb-wan        # Download interface (often ifb-wan on OpenWrt)
-  adjust: true              # Enable dynamic download rate adjustment
-  min_rate_kbps: 5000       # Minimum download bandwidth (kbit/s)
-  base_rate_kbps: 20000     # Steady-state download bandwidth (kbit/s)
-  max_rate_kbps: 80000      # Maximum download bandwidth (kbit/s)
-  owd_delta_delay_thr_ms: 30.0               # OWD delta threshold for bufferbloat detection (ms)
-  avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Max avg delta to still increase rate (ms)
-  avg_owd_delta_max_adjust_down_thr_ms: 60.0 # Max avg delta for maximum rate decrease (ms)
+links:
+  - name: primary
+    download:
+      interface: ifb4eth1      # Download interface (often ifb-wan on OpenWrt)
+      adjust: true             # Enable dynamic download rate adjustment
+      min_rate_kbps: 25000     # Minimum download bandwidth (kbit/s)
+      base_rate_kbps: 200000   # Steady-state download bandwidth (kbit/s)
+      max_rate_kbps: 200000    # Maximum download bandwidth (kbit/s)
+      owd_delta_delay_thr_ms: 30.0               # OWD delta threshold for bufferbloat detection (ms)
+      avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Max avg delta to still increase rate (ms)
+      avg_owd_delta_max_adjust_down_thr_ms: 60.0 # Max avg delta for maximum rate decrease (ms)
+    upload:
+      interface: eth1          # Upload interface
+      adjust: true
+      min_rate_kbps: 25000
+      base_rate_kbps: 35000
+      max_rate_kbps: 35000
+      owd_delta_delay_thr_ms: 30.0
+      avg_owd_delta_max_adjust_up_thr_ms: 10.0
+      avg_owd_delta_max_adjust_down_thr_ms: 60.0
+    reflectors:
+      - 1.1.1.1
+      - 1.0.0.1
+      - 8.8.8.8
+      - 8.8.4.4
+      - 9.9.9.9
+      - 149.112.112.112
+      - 208.67.222.222
+      - 208.67.220.220
+    # ping_interface: wan       # Bind ICMP socket to this interface (SO_BINDTODEVICE)
+    # ping_source_addr: 0.0.0.0 # Source IP address for ICMP packets
 
-upload:
-  interface: wan            # Upload interface
-  adjust: true              # Enable dynamic upload rate adjustment
-  min_rate_kbps: 5000       # Minimum upload bandwidth (kbit/s)
-  base_rate_kbps: 20000     # Steady-state upload bandwidth (kbit/s)
-  max_rate_kbps: 35000      # Maximum upload bandwidth (kbit/s)
-  owd_delta_delay_thr_ms: 30.0
-  avg_owd_delta_max_adjust_up_thr_ms: 10.0
-  avg_owd_delta_max_adjust_down_thr_ms: 60.0
+  # ── Second WAN (uncomment to enable) ──────────────────────────────────────
+  # - name: secondary
+  #   download:
+  #     interface: ifb4eth2
+  #     adjust: true
+  #     min_rate_kbps: 5000
+  #     base_rate_kbps: 50000
+  #     max_rate_kbps: 100000
+  #     owd_delta_delay_thr_ms: 30.0
+  #     avg_owd_delta_max_adjust_up_thr_ms: 10.0
+  #     avg_owd_delta_max_adjust_down_thr_ms: 60.0
+  #   upload:
+  #     interface: eth2
+  #     adjust: true
+  #     min_rate_kbps: 5000
+  #     base_rate_kbps: 10000
+  #     max_rate_kbps: 20000
+  #     owd_delta_delay_thr_ms: 30.0
+  #     avg_owd_delta_max_adjust_up_thr_ms: 10.0
+  #     avg_owd_delta_max_adjust_down_thr_ms: 60.0
+  #   reflectors:
+  #     - 1.0.0.1
+  #     - 8.8.4.4
+  #     - 9.9.9.9
+  #   ping_interface: wan2
+  #   ping_source_addr: 0.0.0.0
 
-# ── Reflectors ───────────────────────────────────────────────────────────────
-# Public DNS servers used for latency measurement via ICMP ping.
-# The more reflectors, the better the measurement quality.
-# At least pinger_count reflectors are needed; extras serve as spares.
-
-reflectors:
-  - 1.1.1.1
-  - 1.0.0.1
-  - 8.8.8.8
-  - 8.8.4.4
-  - 9.9.9.9
-  - 149.112.112.112
-  - 208.67.222.222
-  - 208.67.220.220
+# ── Shared Settings ─────────────────────────────────────────────────────────
+# These apply to all links.
 
 pinger_count: 6             # Number of reflectors to ping simultaneously
 ping_interval_ms: 300       # Interval between pings per reflector (ms)
-
-# ── Multi-WAN / Source Binding ─────────────────────────────────────────────
-# For multi-WAN setups (e.g. mwan3 on OpenWrt), bind ICMP probes to a
-# specific interface or source address to ensure they traverse the correct
-# WAN link. These replace the bash version's ping_prefix_string.
-
-# ping_interface: wan         # Bind ICMP socket to this interface (SO_BINDTODEVICE)
-# ping_source_addr: 0.0.0.0  # Source IP address for ICMP packets
 
 # ── Idle/Sleep Settings ──────────────────────────────────────────────────────
 
