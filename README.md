@@ -20,17 +20,17 @@ Go was chosen because:
 
 ### Benchmark: Bash vs Go
 
-Measured on a real OpenWrt router over 120 seconds per version, sampled every 5 seconds using [`benchmark.sh`](benchmark.sh).
+Measured on a real OpenWrt router over 60 seconds per version, sampled every 5 seconds using [`benchmark.sh`](benchmark.sh).
 
 #### Steady-State Resource Usage
 
-| Metric | Bash | Go | Notes |
+| Metric | Bash | Go | Improvement |
 |---|---|---|---|
-| **Processes** | 5 (peak 6) | 1 | Bash runs bash + fping + awk + monitor subprocesses |
-| **Memory (RSS)** | 9,856 KB | 10,552 KB | Roughly equivalent; Go runtime baseline is ~8 MB |
-| **CPU** | 7.05% (peak 7.6%) | 8.11% (peak 8.3%) | Roughly equivalent at steady state |
+| **Processes** | 6 | 1 | **6x fewer** |
+| **Memory (RSS)** | 11,640 KB (peak 11,728 KB) | 10,457 KB (peak 10,860 KB) | ~10% less |
+| **CPU** | 6.15% (peak 6.7%) | 4.22% (peak 4.3%) | **1.5x less** |
 
-Steady-state resource usage is **roughly equivalent**. The Go runtime's baseline memory (~8 MB) offsets the per-process savings. For a lightweight, I/O-bound workload that mostly sleeps between ping cycles, bash is efficient at steady state.
+Even on a single WAN interface, the Go version is leaner across all metrics. The process count drops from 6 to 1, CPU usage is 1.5x lower, and memory is ~10% less. The savings are modest here because bash is reasonably efficient for a single I/O-bound workload — the real gains compound with multiple interfaces (see Multi-WAN below).
 
 #### Responsiveness (Rate Adjustment Speed)
 
@@ -66,9 +66,9 @@ On a resource-constrained router with 128–256 MB of RAM, the difference betwee
 
 | Aspect | Winner | Details |
 |---|---|---|
-| Memory (1 WAN) | Tie | ~10 MB each |
+| Memory (1 WAN) | **Go (~10%)** | 10.5 MB vs 11.6 MB |
 | Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
-| CPU (1 WAN) | Tie | ~7-8% each |
+| CPU (1 WAN) | **Go (1.5x)** | 4.2% vs 6.2% |
 | CPU (2 WAN) | **Go (2.6x)** | 4.7% vs 12% — native netlink + zero-alloc hot path |
 | Responsiveness | **Go (3.5–4x)** | 1.1s (1 WAN) / 1.3s (2 WANs) vs 4.6s ramp-up |
 | Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
