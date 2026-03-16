@@ -38,13 +38,13 @@ This is where the Go version significantly outperforms bash. During a load ramp-
 
 | Metric | Bash | Go (1 WAN) | Go (2 WANs) |
 |---|---|---|---|
-| **Time to full bandwidth** | ~4.6 seconds | ~1.1 seconds | ~1.3 seconds |
-| **Adjustment interval** | ~200-250 ms | ~35-70 ms | ~45-55 ms |
-| **Speedup** | — | **~4x faster** | **~3.5x faster** |
+| **Time to full bandwidth** | ~4.6 seconds | ~1.2 seconds | ~1.3 seconds |
+| **Adjustment interval** | ~200-250 ms | ~44-59 ms | ~45-55 ms |
+| **Speedup** | — | **~3.8x faster** | **~3.5x faster** |
 
-With native netlink for CAKE bandwidth adjustments, the Go version reacts to each ping result and adjusts the shaper in ~45-55 ms — even while managing two WAN interfaces concurrently. The tight interval range reflects the elimination of `tc` subprocess variance. In bash, each adjustment cycle requires multiple fork+exec calls (fping parsing, awk calculations, tc invocation), each costing ~5-20 ms on a router CPU, adding up to ~200-250 ms per cycle.
+With native netlink for CAKE bandwidth adjustments, the Go version reacts to each ping result and adjusts the shaper in ~45-59 ms — even while managing two WAN interfaces concurrently. The tight interval range reflects the elimination of `tc` subprocess variance. In bash, each adjustment cycle requires multiple fork+exec calls (fping parsing, awk calculations, tc invocation), each costing ~5-20 ms on a router CPU, adding up to ~200-250 ms per cycle.
 
-**Why this matters:** For a latency-sensitive traffic shaper, reaching full bandwidth in ~1 second vs ~5 seconds means noticeably less bufferbloat during load transitions (e.g., starting a download, joining a video call). The Go version maintains this responsiveness even with multiple WAN interfaces — both links reach full bandwidth within 1.3 seconds simultaneously.
+**Why this matters:** For a latency-sensitive traffic shaper, reaching full bandwidth in ~1.2 seconds vs ~4.6 seconds means noticeably less bufferbloat during load transitions (e.g., starting a download, joining a video call). The Go version maintains this responsiveness even with multiple WAN interfaces — both links reach full bandwidth within 1.3 seconds simultaneously.
 
 #### Multi-WAN Scaling
 
@@ -70,7 +70,7 @@ On a resource-constrained router with 128–256 MB of RAM, the difference betwee
 | Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
 | CPU (1 WAN) | **Go (1.5x)** | 4.2% vs 6.2% |
 | CPU (2 WAN) | **Go (2.6x)** | 4.7% vs 12% — native netlink + zero-alloc hot path |
-| Responsiveness | **Go (3.5–4x)** | 1.1s (1 WAN) / 1.3s (2 WANs) vs 4.6s ramp-up |
+| Responsiveness | **Go (3.5–3.8x)** | 1.2s (1 WAN) / 1.3s (2 WANs) vs 4.6s ramp-up |
 | Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
 | Multi-WAN scaling | **Go** | Goroutines vs full process trees per interface |
 | Deployment | **Go** | Single static binary, no bash/awk/fping dependencies |
