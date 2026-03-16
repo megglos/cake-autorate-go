@@ -47,6 +47,14 @@ reflectors:
 pinger_count: 6             # Number of reflectors to ping simultaneously
 ping_interval_ms: 300       # Interval between pings per reflector (ms)
 
+# ── Multi-WAN / Source Binding ─────────────────────────────────────────────
+# For multi-WAN setups (e.g. mwan3 on OpenWrt), bind ICMP probes to a
+# specific interface or source address to ensure they traverse the correct
+# WAN link. These replace the bash version's ping_prefix_string.
+
+# ping_interface: wan         # Bind ICMP socket to this interface (SO_BINDTODEVICE)
+# ping_source_addr: 0.0.0.0  # Source IP address for ICMP packets
+
 # ── Idle/Sleep Settings ──────────────────────────────────────────────────────
 
 enable_sleep_function: true

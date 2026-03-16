@@ -46,6 +46,8 @@ type Config struct {
 	Reflectors           []string `yaml:"reflectors"`
 	PingerCount          int      `yaml:"pinger_count"`
 	PingIntervalMs       int      `yaml:"ping_interval_ms"`
+	PingSourceAddr       string   `yaml:"ping_source_addr"`
+	PingInterfaceName    string   `yaml:"ping_interface"`
 
 	// Idle/sleep settings
 	EnableSleepFunction     bool    `yaml:"enable_sleep_function"`

@@ -142,6 +142,13 @@ func (pm *PingerManager) sendPing(ctx context.Context, reflector string, deadlin
 	pinger.Timeout = deadline
 	pinger.SetPrivileged(true)
 
+	if pm.cfg.PingInterfaceName != "" {
+		pinger.InterfaceName = pm.cfg.PingInterfaceName
+	}
+	if pm.cfg.PingSourceAddr != "" {
+		pinger.Source = pm.cfg.PingSourceAddr
+	}
+
 	var result PingResult
 	result.Reflector = reflector
 	result.Timestamp = time.Now()
