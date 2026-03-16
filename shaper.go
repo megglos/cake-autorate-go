@@ -97,6 +97,11 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 	var err error
 	if s.fd >= 0 {
 		err = s.setRateNetlink(iface, rateKbps)
+		if err != nil {
+			// Invalidate cached ifindex — interface may have been
+			// re-created with a different index (e.g. after replug).
+			delete(s.ifIndices, iface)
+		}
 	} else {
 		err = s.setRateTc(iface, rateKbps)
 	}

@@ -24,8 +24,10 @@ type RateStats struct {
 
 // sysfsCounter holds a persistent file descriptor for a sysfs statistics file.
 // Using pread avoids the open/read/close cycle on every sample.
+// If a read fails (e.g. interface removed), reopen() can refresh the fd.
 type sysfsCounter struct {
 	file *os.File
+	path string
 	buf  [32]byte // sysfs counters are at most ~20 digits
 }
 
@@ -36,7 +38,7 @@ func openSysfsCounter(iface, stat string) (*sysfsCounter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sysfsCounter{file: f}, nil
+	return &sysfsCounter{file: f, path: path}, nil
 }
 
 // read returns the current counter value using pread (no seek needed).
@@ -46,7 +48,7 @@ func (sc *sysfsCounter) read() (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		return 0, fmt.Errorf("empty read from %s", sc.file.Name())
+		return 0, fmt.Errorf("empty read from %s", sc.path)
 	}
 	// Trim trailing whitespace (newline)
 	end := n
@@ -54,6 +56,18 @@ func (sc *sysfsCounter) read() (int64, error) {
 		end--
 	}
 	return strconv.ParseInt(string(sc.buf[:end]), 10, 64)
+}
+
+// reopen closes the stale file descriptor and opens a fresh one.
+// Returns nil on success, allowing the caller to resume reading.
+func (sc *sysfsCounter) reopen() error {
+	sc.file.Close()
+	f, err := os.Open(sc.path)
+	if err != nil {
+		return err
+	}
+	sc.file = f
+	return nil
 }
 
 // close releases the file descriptor.
@@ -111,6 +125,10 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
+	// dlStale/ulStale track whether the fd needs reopening after a read error.
+	dlStale := false
+	ulStale := false
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -122,14 +140,51 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 				continue
 			}
 
+			// Attempt to reopen stale file descriptors (interface may have reappeared).
+			if dlStale {
+				if err := dlCounter.reopen(); err != nil {
+					m.logger.Debugf("reopening dl counter: %v", err)
+					continue
+				}
+				m.logger.Infof("dl counter reopened for %s", m.dlIface)
+				dlStale = false
+				// Reset baseline to avoid a spurious delta from stale prevDlBytes.
+				prevDlBytes, err = dlCounter.read()
+				if err != nil {
+					m.logger.Debugf("reading dl bytes after reopen: %v", err)
+					dlStale = true
+					continue
+				}
+				prevTime = now
+				continue
+			}
+			if ulStale {
+				if err := ulCounter.reopen(); err != nil {
+					m.logger.Debugf("reopening ul counter: %v", err)
+					continue
+				}
+				m.logger.Infof("ul counter reopened for %s", m.ulIface)
+				ulStale = false
+				prevUlBytes, err = ulCounter.read()
+				if err != nil {
+					m.logger.Debugf("reading ul bytes after reopen: %v", err)
+					ulStale = true
+					continue
+				}
+				prevTime = now
+				continue
+			}
+
 			dlBytes, err := dlCounter.read()
 			if err != nil {
 				m.logger.Debugf("reading dl bytes: %v", err)
+				dlStale = true
 				continue
 			}
 			ulBytes, err := ulCounter.read()
 			if err != nil {
 				m.logger.Debugf("reading ul bytes: %v", err)
+				ulStale = true
 				continue
 			}
 
