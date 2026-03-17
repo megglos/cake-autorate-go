@@ -300,5 +300,11 @@ func (c *Config) Validate() error {
 	if c.BufferbloatDetectionThr <= 0 || c.BufferbloatDetectionThr > c.BufferbloatDetectionWindow {
 		return fmt.Errorf("bufferbloat_detection_thr must be between 1 and bufferbloat_detection_window")
 	}
+	if c.ReflectorMisbehavingDetectionWindow <= 0 {
+		return fmt.Errorf("reflector_misbehaving_detection_window must be positive")
+	}
+	if c.ReflectorMisbehavingDetectionThr <= 0 || c.ReflectorMisbehavingDetectionThr > c.ReflectorMisbehavingDetectionWindow {
+		return fmt.Errorf("reflector_misbehaving_detection_thr must be between 1 and reflector_misbehaving_detection_window")
+	}
 	return nil
 }
