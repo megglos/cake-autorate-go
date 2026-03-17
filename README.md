@@ -102,10 +102,10 @@ Download the latest release for your platform from the [Releases](https://github
 
 ```bash
 # Native build
-go build -o cake-autorate .
+go build -o cake-autorate-go .
 
 # Cross-compile for ARMv8 (e.g., Raspberry Pi 4, modern OpenWrt routers)
-GOOS=linux GOARCH=arm64 go build -o cake-autorate .
+GOOS=linux GOARCH=arm64 go build -o cake-autorate-go .
 ```
 
 ## OpenWrt Service Installation
@@ -125,7 +125,7 @@ This installs the binary to `/usr/sbin/cake-autorate-go`, creates a default conf
 Generate a default configuration file:
 
 ```bash
-./cake-autorate --defaults > /etc/cake-autorate/config.yaml
+./cake-autorate-go --defaults > /etc/cake-autorate/config.yaml
 ```
 
 Edit the configuration to match your setup. At minimum, you must set:
@@ -140,16 +140,16 @@ See [config.example.yaml](config.example.yaml) for a fully documented example.
 
 ```bash
 # Run with default config path (/etc/cake-autorate/config.yaml)
-sudo ./cake-autorate
+sudo ./cake-autorate-go
 
 # Run with custom config
-sudo ./cake-autorate --config /path/to/config.yaml
+sudo ./cake-autorate-go --config /path/to/config.yaml
 
 # Enable debug logging
-sudo ./cake-autorate --debug
+sudo ./cake-autorate-go --debug
 
 # Print version
-./cake-autorate --version
+./cake-autorate-go --version
 ```
 
 Root privileges (or `CAP_NET_RAW` + `CAP_NET_ADMIN`) are required for ICMP pinging and `tc` commands.
