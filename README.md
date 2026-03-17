@@ -2,6 +2,12 @@
 
 **A Go rewrite of [cake-autorate](https://github.com/lynxthecat/cake-autorate) — an experiment to explore how much less resources a native implementation may occupy compared to the original bash scripts.**
 
+> **WARNING:** This project is experimental and largely vibe-coded. It is still
+> undergoing testing by the author. Use it at your own risk and with high
+> caution -- it may behave unexpectedly or misconfigure your traffic shaper.
+> If you need a proven solution, use the
+> [original cake-autorate](https://github.com/lynxthecat/cake-autorate) instead.
+
 ## Attribution
 
 This project is a Go reimplementation of the excellent [cake-autorate](https://github.com/lynxthecat/cake-autorate) by [lynxthecat](https://github.com/lynxthecat) and contributors. All credit for the original algorithm, design, and research goes to the original authors.
