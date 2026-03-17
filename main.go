@@ -53,7 +53,11 @@ func main() {
 		cfg.Debug = true
 	}
 
-	logger, err := NewLogger(cfg.Debug, cfg.LogFilePath, cfg.LogFileMaxSizeKB)
+	logFilePath := cfg.LogFilePath
+	if !cfg.LogToFile {
+		logFilePath = ""
+	}
+	logger, err := NewLogger(cfg.Debug, logFilePath, cfg.LogFileMaxSizeKB)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating logger: %v\n", err)
 		os.Exit(1)
