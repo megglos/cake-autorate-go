@@ -96,7 +96,7 @@ On a resource-constrained router with 128–256 MB of RAM, the difference betwee
 
 ### Pre-built binaries
 
-Download the latest release for your platform from the [Releases](https://github.com/megglos/cake-autorotate-go/releases) page.
+Download the latest release for your platform from the [Releases](https://github.com/megglos/cake-autorate-go/releases) page.
 
 ### Build from source
 
