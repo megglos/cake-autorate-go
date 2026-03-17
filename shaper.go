@@ -101,6 +101,12 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 			// Invalidate cached ifindex — interface may have been
 			// re-created with a different index (e.g. after replug).
 			delete(s.ifIndices, iface)
+			// Fall back to tc for this call; disable netlink for future
+			// calls to avoid retrying a permanently broken path.
+			s.logger.Infof("netlink failed on %s (%v), falling back to tc exec", iface, err)
+			unix.Close(s.fd)
+			s.fd = -1
+			err = s.setRateTc(iface, rateKbps)
 		}
 	} else {
 		err = s.setRateTc(iface, rateKbps)
