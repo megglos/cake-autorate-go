@@ -6,11 +6,11 @@
 # Adjust these values to match your network setup.
 # Run `cake-autorate --defaults` to see all defaults.
 
-# ── Link Configuration ──────────────────────────────────────────────────────
+# -- Link Configuration -------------------------------------------------------
 # Each link represents a WAN connection with download/upload interface pair,
 # its own reflectors, and optional ping binding for multi-WAN routing.
 #
-# Multiple links run concurrently in a single process — no need to spawn
+# Multiple links run concurrently in a single process -- no need to spawn
 # separate instances like the bash version requires.
 #
 # For backward compatibility, you can also use the legacy flat format
@@ -48,7 +48,7 @@ links:
     # ping_interface: wan       # Bind ICMP socket to this interface (SO_BINDTODEVICE)
     # ping_source_addr: 0.0.0.0 # Source IP address for ICMP packets
 
-  # ── Second WAN (uncomment to enable) ──────────────────────────────────────
+  # -- Second WAN (uncomment to enable) ----------------------------------------
   # - name: secondary
   #   download:
   #     interface: ifb4eth2
@@ -75,31 +75,31 @@ links:
   #   ping_interface: wan2
   #   ping_source_addr: 0.0.0.0
 
-# ── Shared Settings ─────────────────────────────────────────────────────────
+# -- Shared Settings ----------------------------------------------------------
 # These apply to all links.
 
 pinger_count: 6             # Number of reflectors to ping simultaneously
 ping_interval_ms: 300       # Interval between pings per reflector (ms)
 
-# ── Idle/Sleep Settings ──────────────────────────────────────────────────────
+# -- Idle/Sleep Settings ------------------------------------------------------
 
 enable_sleep_function: true
 connection_active_thr_kbps: 2000  # Below this, connection is considered idle
 sustained_idle_sleep_thr_s: 60.0  # Seconds of idle before entering sleep state
 
-# ── Bufferbloat Detection ────────────────────────────────────────────────────
+# -- Bufferbloat Detection ----------------------------------------------------
 
 bufferbloat_detection_window: 6   # Number of samples in detection window
 bufferbloat_detection_thr: 3      # Samples exceeding threshold to trigger detection
 
-# ── EWMA Parameters ─────────────────────────────────────────────────────────
+# -- EWMA Parameters ----------------------------------------------------------
 # These control how quickly baselines and averages respond to changes.
 
 alpha_baseline_increase: 0.001    # Baseline moves slowly when delay increases
 alpha_baseline_decrease: 0.9      # Baseline tracks quickly when delay decreases
 alpha_delta_ewma: 0.095           # Smoothing factor for delay delta EWMA
 
-# ── Rate Adjustment Factors ──────────────────────────────────────────────────
+# -- Rate Adjustment Factors ---------------------------------------------------
 
 shaper_rate_min_adjust_down_bufferbloat: 0.99  # Minimum rate decrease on bufferbloat
 shaper_rate_max_adjust_down_bufferbloat: 0.75  # Maximum rate decrease on bufferbloat
@@ -110,30 +110,30 @@ shaper_rate_adjust_up_load_low: 1.01           # Rate recovery factor (rate < ba
 
 high_load_thr: 0.75               # Load threshold considered "high" (0.0-1.0)
 
-# ── Timing ───────────────────────────────────────────────────────────────────
+# -- Timing -------------------------------------------------------------------
 
 monitor_interval_ms: 200                  # How often to check interface throughput
 bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases after BB
 decay_refractory_period_ms: 1000          # Minimum time between decay adjustments
 
-# ── Reflector Health ─────────────────────────────────────────────────────────
+# -- Reflector Health ---------------------------------------------------------
 
 reflector_response_deadline_s: 1.0
 reflector_misbehaving_detection_window: 60
 reflector_misbehaving_detection_thr: 3
 
-# ── Stall Detection ─────────────────────────────────────────────────────────
+# -- Stall Detection ----------------------------------------------------------
 
 stall_detection_thr: 5
 connection_stall_thr_kbps: 10
 global_ping_response_timeout_s: 10.0
 
-# ── Miscellaneous ────────────────────────────────────────────────────────────
+# -- Miscellaneous ------------------------------------------------------------
 
 min_shaper_rates_enforcement: false   # Enforce min rates during idle/stall
 startup_wait_s: 0.0                   # Delay before starting (seconds)
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# -- Logging ------------------------------------------------------------------
 
 log_to_file: true
 log_file_path: /var/log/cake-autorate.log
