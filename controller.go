@@ -235,12 +235,14 @@ func (c *LinkController) handlePingResult(result PingResult) {
 		return
 	}
 
-	c.lastPingTime = result.Timestamp
-
 	if result.Timeout {
 		c.handleTimeout(result)
 		return
 	}
+
+	// Only update lastPingTime on successful replies — timeouts are emitted
+	// by the sweeper and would mask stall detection if counted here.
+	c.lastPingTime = result.Timestamp
 
 	rttUs := float64(result.RTT.Microseconds())
 
