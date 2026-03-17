@@ -1,4 +1,4 @@
-module github.com/megglos/cake-autorotate-go
+module github.com/megglos/cake-autorate-go
 
 go 1.24.7
 
