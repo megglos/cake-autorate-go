@@ -4,7 +4,7 @@
 #   https://github.com/lynxthecat/cake-autorate
 #
 # Adjust these values to match your network setup.
-# Run `cake-autorate --defaults` to see all defaults.
+# Run `cake-autorate-go --defaults` to see all defaults.
 
 # -- Link Configuration -------------------------------------------------------
 # Each link represents a WAN connection with download/upload interface pair,
