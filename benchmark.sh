@@ -113,8 +113,7 @@ sleep 3
 # ── Benchmark Bash version ─────────────────────────────────────────────────
 
 log "Starting bash version (service $BASH_SERVICE) for ${DURATION}s..."
-service "$BASH_SERVICE" start 2>/dev/null
-if [ $? -ne 0 ]; then
+if ! service "$BASH_SERVICE" start 2>/dev/null; then
     log "ERROR: 'service $BASH_SERVICE start' failed"
     log "Ensure the $BASH_SERVICE init script is installed"
     # Still print Go results
