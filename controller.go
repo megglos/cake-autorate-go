@@ -152,7 +152,11 @@ func (c *LinkController) Run(ctx context.Context) error {
 			c.handlePingResult(result)
 
 		case <-healthTicker.C:
-			c.pingerMgr.ReplaceUnhealthy()
+			if c.pingerMgr.ReplaceUnhealthy() {
+				// Restart pingers to pick up the new active set
+				c.stopPingers()
+				c.startPingers(ctx)
+			}
 		}
 	}
 }

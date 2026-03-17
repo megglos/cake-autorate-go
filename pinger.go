@@ -239,8 +239,9 @@ func (pm *PingerManager) recordHealth(reflector string, missed bool) {
 }
 
 // ReplaceUnhealthy checks reflector health and replaces misbehaving ones
-// with spare reflectors from the pool.
-func (pm *PingerManager) ReplaceUnhealthy() {
+// with spare reflectors from the pool. Returns true if any replacements
+// were made (callers should restart pingers to pick up the new set).
+func (pm *PingerManager) ReplaceUnhealthy() bool {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -249,6 +250,7 @@ func (pm *PingerManager) ReplaceUnhealthy() {
 		activeCount = len(pm.reflectors)
 	}
 
+	replaced := false
 	for i := 0; i < activeCount; i++ {
 		state := pm.states[pm.reflectors[i]]
 		if state == nil {
@@ -267,6 +269,11 @@ func (pm *PingerManager) ReplaceUnhealthy() {
 			pm.logger.Infof("[%s] replacing misbehaving reflector %s (missed %d/%d)",
 				pm.link.Name, pm.reflectors[i], missed, len(state.MissedWindow))
 
+			// Mark old reflector inactive
+			state.mu.Lock()
+			state.Active = false
+			state.mu.Unlock()
+
 			// Move misbehaving reflector to end, shift spare up
 			bad := pm.reflectors[i]
 			pm.reflectors = append(pm.reflectors[:i], pm.reflectors[i+1:]...)
@@ -282,8 +289,10 @@ func (pm *PingerManager) ReplaceUnhealthy() {
 				newState.MissedIdx = 0
 				newState.mu.Unlock()
 			}
+			replaced = true
 		}
 	}
+	return replaced
 }
 
 // UpdateBaseline updates the baseline RTT for a reflector using EWMA.
