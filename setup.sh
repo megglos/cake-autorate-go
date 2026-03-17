@@ -43,7 +43,10 @@ fi
 
 BINARY_SRC="${1:-$(pwd)/${BINARY_NAME}}"
 
-[ -f "${BINARY_SRC}" ] || die "Binary not found: ${BINARY_SRC}\nUsage: $0 [path-to-binary]"
+if [ ! -f "${BINARY_SRC}" ]; then
+    printf "ERROR: Binary not found: %s\nUsage: %s [path-to-binary]\n" "${BINARY_SRC}" "$0" >&2
+    exit 1
+fi
 [ -x "${BINARY_SRC}" ] || chmod +x "${BINARY_SRC}"
 
 # --- install binary ---
