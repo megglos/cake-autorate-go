@@ -48,7 +48,6 @@ type dirState struct {
 	bbDetected        bool
 	lastBBTime        time.Time
 	lastDecayTime     time.Time
-	avgDeltaUs        float64 // average delta across active reflectors
 }
 
 // LinkController implements the cake-autorate control loop for a single WAN link.
