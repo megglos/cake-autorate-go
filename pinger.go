@@ -177,7 +177,12 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 		}
 	}
 
-	// Sweep for timed-out pings
+	// Sweep for timed-out pings. Use a local context so the sweeper stops
+	// when the pinger exits (e.g. on error), not just when the parent ctx
+	// is cancelled.
+	pingerCtx, pingerCancel := context.WithCancel(ctx)
+	defer pingerCancel()
+
 	go func() {
 		sweepInterval := deadline / 2
 		if sweepInterval < 100*time.Millisecond {
@@ -188,7 +193,7 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-pingerCtx.Done():
 				return
 			case <-ticker.C:
 				now := time.Now()
@@ -213,7 +218,7 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 						Timestamp: now,
 						Timeout:   true,
 					}:
-					case <-ctx.Done():
+					case <-pingerCtx.Done():
 						return
 					}
 				}
