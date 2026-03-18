@@ -25,7 +25,7 @@ const (
 	LogError
 )
 
-// Logger provides structured logging to file and stderr.
+// Logger provides leveled logging to file and stderr.
 type Logger struct {
 	mu       sync.Mutex
 	debugOn  atomic.Bool // lock-free check for debug fast path
