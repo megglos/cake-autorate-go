@@ -306,5 +306,14 @@ func (c *Config) Validate() error {
 	if c.ReflectorMisbehavingDetectionThr <= 0 || c.ReflectorMisbehavingDetectionThr > c.ReflectorMisbehavingDetectionWindow {
 		return fmt.Errorf("reflector_misbehaving_detection_thr must be between 1 and reflector_misbehaving_detection_window")
 	}
+	if c.MonitorIntervalMs <= 0 {
+		return fmt.Errorf("monitor_interval_ms must be positive")
+	}
+	if c.PingIntervalMs <= 0 {
+		return fmt.Errorf("ping_interval_ms must be positive")
+	}
+	if c.ReflectorResponseDeadlineS <= 0 {
+		return fmt.Errorf("reflector_response_deadline_s must be positive")
+	}
 	return nil
 }

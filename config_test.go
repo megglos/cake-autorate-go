@@ -137,6 +137,36 @@ func TestValidate_ReflectorMisbehavingThrZero(t *testing.T) {
 	}
 }
 
+func TestValidate_MonitorIntervalZero(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.MonitorIntervalMs = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "monitor_interval_ms") {
+		t.Errorf("expected monitor_interval_ms error, got: %v", err)
+	}
+}
+
+func TestValidate_PingIntervalZero(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.PingIntervalMs = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "ping_interval_ms") {
+		t.Errorf("expected ping_interval_ms error, got: %v", err)
+	}
+}
+
+func TestValidate_ReflectorResponseDeadlineZero(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.ReflectorResponseDeadlineS = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "reflector_response_deadline_s") {
+		t.Errorf("expected reflector_response_deadline_s error, got: %v", err)
+	}
+}
+
 func TestMigrateLinks_LegacyFormat(t *testing.T) {
 	cfg := DefaultConfig()
 	// DefaultConfig has Download/Upload set but no Links
