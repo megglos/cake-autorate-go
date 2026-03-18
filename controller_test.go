@@ -6,13 +6,10 @@ import (
 	"time"
 )
 
-// testLogger returns a silent logger for tests.
+// testLogger returns a silent logger for tests (all output discarded).
 func testLogger(t *testing.T) *Logger {
 	t.Helper()
-	l, err := NewLogger(false, "", 0)
-	if err != nil {
-		t.Fatalf("creating test logger: %v", err)
-	}
+	l := NewDiscardLogger()
 	t.Cleanup(func() { l.Close() })
 	return l
 }
