@@ -241,6 +241,17 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 	err = pinger.RunWithContext(ctx)
 	if err != nil && ctx.Err() == nil {
 		pm.logger.Debugf("pinger %s: %v", reflector, err)
+		// Record a miss and send a timeout so the controller notices the
+		// pinger died (rather than waiting for the next health tick).
+		pm.recordHealth(reflector, true)
+		select {
+		case resultCh <- PingResult{
+			Reflector: reflector,
+			Timestamp: time.Now(),
+			Timeout:   true,
+		}:
+		case <-ctx.Done():
+		}
 	}
 }
 
