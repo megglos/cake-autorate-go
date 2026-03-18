@@ -170,3 +170,20 @@ func TestLogger_CloseIdempotent(t *testing.T) {
 	l.Close()
 	l.Close() // should not panic
 }
+
+func TestNewDiscardLogger(t *testing.T) {
+	l := NewDiscardLogger()
+	if l == nil {
+		t.Fatal("NewDiscardLogger returned nil")
+	}
+	defer l.Close()
+
+	// Should not panic and should produce no output
+	l.Infof("discarded %s", "message")
+	l.Errorf("discarded error")
+	l.Debugf("discarded debug")
+
+	if l.file != nil {
+		t.Error("discard logger should have no file")
+	}
+}

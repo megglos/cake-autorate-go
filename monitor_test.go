@@ -175,6 +175,28 @@ func TestOpenSysfsCounter_InvalidInterface(t *testing.T) {
 	}
 }
 
+func TestSysfsCounter_ReadClosedFdReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("123\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc := &sysfsCounter{file: f, path: path}
+	// Close the fd to simulate a stale/broken fd
+	f.Close()
+
+	_, err = sc.read()
+	if err == nil {
+		t.Error("expected error when reading from closed fd")
+	}
+}
+
 func TestNewMonitor(t *testing.T) {
 	logger := testLogger(t)
 	m := NewMonitor("eth0", "eth0", 200, logger)

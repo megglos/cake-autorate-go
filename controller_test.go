@@ -259,6 +259,7 @@ func TestProcessDelay_BufferbloatDetection(t *testing.T) {
 	// Re-init direction state with new window size
 	c.dl = dirState{
 		shaperRateKbps: float64(c.link.Download.BaseRateKbps),
+		mtuBytes:       defaultMTU,
 		delayWindow:    make([]bool, 4),
 	}
 
@@ -280,6 +281,7 @@ func TestProcessDelay_NoFalsePositive(t *testing.T) {
 
 	c.dl = dirState{
 		shaperRateKbps: float64(c.link.Download.BaseRateKbps),
+		mtuBytes:       defaultMTU,
 		delayWindow:    make([]bool, 6),
 	}
 
@@ -444,6 +446,7 @@ func TestProcessDelay_HighLoadIncrease(t *testing.T) {
 
 	c.dl = dirState{
 		shaperRateKbps: 20000,
+		mtuBytes:       defaultMTU,
 		loadPercent:    0.9, // high load
 		delayWindow:    make([]bool, 4),
 	}
@@ -466,6 +469,7 @@ func TestProcessDelay_LowLoadDecay(t *testing.T) {
 	baseRate := float64(c.link.Download.BaseRateKbps)
 	c.dl = dirState{
 		shaperRateKbps: baseRate * 2, // above base
+		mtuBytes:       defaultMTU,
 		loadPercent:    0.1,          // low load
 		delayWindow:    make([]bool, 4),
 	}
@@ -590,6 +594,7 @@ func TestProcessDelay_SlidingWindowCorrectness(t *testing.T) {
 
 	c.dl = dirState{
 		shaperRateKbps: float64(c.link.Download.BaseRateKbps),
+		mtuBytes:       defaultMTU,
 		delayWindow:    make([]bool, 4),
 		loadPercent:    0.1,
 	}
@@ -656,5 +661,104 @@ func TestGetDirState(t *testing.T) {
 	}
 	if c.getDirState(UL).shaperRateKbps != 222 {
 		t.Error("getDirState(UL) returned wrong state")
+	}
+}
+
+// --- State transition reset tests ---
+
+func TestHandleRateStats_IdleToRunningResetsTimeouts(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateIdle
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.consecutiveTimeouts = 10 // stale value from before idle
+	c.lastPingTime = time.Now().Add(-1 * time.Hour)
+
+	ctx := context.Background()
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 5000, Timestamp: time.Now()})
+
+	if c.state != StateRunning {
+		t.Fatalf("expected StateRunning, got %s", c.state)
+	}
+	if c.consecutiveTimeouts != 0 {
+		t.Errorf("consecutiveTimeouts should be reset to 0, got %d", c.consecutiveTimeouts)
+	}
+	if time.Since(c.lastPingTime) > time.Second {
+		t.Error("lastPingTime should be refreshed on Idle→Running transition")
+	}
+}
+
+func TestHandleRateStats_StallToRunningResetsTimeouts(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateStall
+	c.cfg.ConnectionStallThrKbps = 10
+	c.consecutiveTimeouts = 15 // stale value from stall
+	c.lastPingTime = time.Now().Add(-1 * time.Hour)
+
+	ctx := context.Background()
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 100, Timestamp: time.Now()})
+
+	if c.state != StateRunning {
+		t.Fatalf("expected StateRunning, got %s", c.state)
+	}
+	if c.consecutiveTimeouts != 0 {
+		t.Errorf("consecutiveTimeouts should be reset to 0, got %d", c.consecutiveTimeouts)
+	}
+	if time.Since(c.lastPingTime) > time.Second {
+		t.Error("lastPingTime should be refreshed on Stall→Running transition")
+	}
+}
+
+// --- readInterfaceMTU tests ---
+
+func TestReadInterfaceMTU_LoopbackInterface(t *testing.T) {
+	logger := testLogger(t)
+	mtu := readInterfaceMTU("lo", logger)
+	// lo MTU is typically 65536 on Linux
+	if mtu <= 0 {
+		t.Errorf("expected positive MTU for lo, got %d", mtu)
+	}
+}
+
+func TestReadInterfaceMTU_NonexistentInterface(t *testing.T) {
+	logger := testLogger(t)
+	mtu := readInterfaceMTU("nonexistent_iface_xyz", logger)
+	if mtu != defaultMTU {
+		t.Errorf("expected fallback to %d for nonexistent iface, got %d", defaultMTU, mtu)
+	}
+}
+
+// --- processDelay uses MTU ---
+
+func TestProcessDelay_UsesMTUForCompensation(t *testing.T) {
+	c := newTestController(t)
+	c.cfg.BufferbloatDetectionWindow = 4
+	c.cfg.BufferbloatDetectionThr = 2
+
+	// With large MTU and low rate, compensation is high → higher effective threshold
+	c.dl = dirState{
+		shaperRateKbps: 1000, // low rate
+		mtuBytes:       9000, // jumbo frame
+		delayWindow:    make([]bool, 4),
+	}
+
+	// Wire packet compensation: 9000*8*1000/1000 = 72000us = 72ms
+	// Threshold = 30ms*1000 + 72000 = 102000us
+	// A delta of 50000us (50ms) should NOT exceed this threshold
+	c.processDelay(DL, 50000)
+	if c.dl.delayWindowCount != 0 {
+		t.Error("50ms delta should not exceed threshold with jumbo MTU compensation")
+	}
+
+	// With standard MTU, same rate: compensation = 1500*8*1000/1000 = 12000us
+	// Threshold = 30000 + 12000 = 42000us
+	// 50000us > 42000us → should exceed
+	c.dl = dirState{
+		shaperRateKbps: 1000,
+		mtuBytes:       1500,
+		delayWindow:    make([]bool, 4),
+	}
+	c.processDelay(DL, 50000)
+	if c.dl.delayWindowCount != 1 {
+		t.Error("50ms delta should exceed threshold with standard MTU compensation")
 	}
 }

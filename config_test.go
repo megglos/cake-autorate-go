@@ -284,3 +284,109 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+// --- Float tuning parameter validation tests ---
+
+func TestValidate_HighLoadThrOutOfRange(t *testing.T) {
+	for _, val := range []float64{-0.1, 1.1} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.HighLoadThr = val
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for high_load_thr=%v", val)
+		}
+	}
+}
+
+func TestValidate_AlphaBaselineIncreaseOutOfRange(t *testing.T) {
+	for _, val := range []float64{0, -0.1, 1.1} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.AlphaBaselineIncrease = val
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for alpha_baseline_increase=%v", val)
+		}
+	}
+}
+
+func TestValidate_AlphaBaselineDecreaseOutOfRange(t *testing.T) {
+	for _, val := range []float64{0, -0.1, 1.1} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.AlphaBaselineDecrease = val
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for alpha_baseline_decrease=%v", val)
+		}
+	}
+}
+
+func TestValidate_AlphaDeltaEWMAOutOfRange(t *testing.T) {
+	for _, val := range []float64{0, 1.1} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.AlphaDeltaEWMA = val
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for alpha_delta_ewma=%v", val)
+		}
+	}
+}
+
+func TestValidate_ShaperRateAdjustDownOrdering(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	// max > min is invalid (max should be the more aggressive reduction)
+	cfg.ShaperRateMaxAdjustDownBufferbloat = 0.99
+	cfg.ShaperRateMinAdjustDownBufferbloat = 0.75
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error when max_adjust_down > min_adjust_down")
+	}
+}
+
+func TestValidate_ShaperRateAdjustUpOrdering(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.ShaperRateMinAdjustUpLoadHigh = 1.05
+	cfg.ShaperRateMaxAdjustUpLoadHigh = 1.01 // less than min
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error when max_adjust_up < min_adjust_up")
+	}
+}
+
+func TestValidate_ShaperRateAdjustDownLoadLowOutOfRange(t *testing.T) {
+	for _, val := range []float64{0, 1.1} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.ShaperRateAdjustDownLoadLow = val
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for shaper_rate_adjust_down_load_low=%v", val)
+		}
+	}
+}
+
+func TestValidate_ShaperRateAdjustUpLoadLowTooLow(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.ShaperRateAdjustUpLoadLow = 0.9
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for shaper_rate_adjust_up_load_low < 1")
+	}
+}
+
+func TestValidate_FloatParamsAtBoundaries(t *testing.T) {
+	// All at valid boundaries — should pass
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.HighLoadThr = 0.0
+	cfg.AlphaBaselineIncrease = 1.0
+	cfg.AlphaBaselineDecrease = 1.0
+	cfg.AlphaDeltaEWMA = 1.0
+	cfg.ShaperRateMinAdjustDownBufferbloat = 1.0
+	cfg.ShaperRateMaxAdjustDownBufferbloat = 1.0
+	cfg.ShaperRateMinAdjustUpLoadHigh = 1.0
+	cfg.ShaperRateMaxAdjustUpLoadHigh = 1.0
+	cfg.ShaperRateAdjustDownLoadLow = 1.0
+	cfg.ShaperRateAdjustUpLoadLow = 1.0
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid boundary values should pass: %v", err)
+	}
+}
