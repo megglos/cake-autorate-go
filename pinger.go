@@ -114,6 +114,17 @@ func (pm *PingerManager) Run(ctx context.Context, resultCh chan<- PingResult) {
 }
 
 func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interval, deadline, initialDelay time.Duration, resultCh chan<- PingResult) {
+	// Ensure the reflector is marked inactive when this goroutine exits,
+	// regardless of the reason (error, context cancellation, etc.).
+	defer func() {
+		state := pm.GetState(reflector)
+		if state != nil {
+			state.mu.Lock()
+			state.Active = false
+			state.mu.Unlock()
+		}
+	}()
+
 	if initialDelay > 0 {
 		select {
 		case <-ctx.Done():
@@ -127,6 +138,7 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 	pinger, err := probing.NewPinger(reflector)
 	if err != nil {
 		pm.logger.Errorf("creating pinger for %s: %v", reflector, err)
+		pm.recordHealth(reflector, true) // record miss so health check can replace it
 		return
 	}
 	pinger.Count = -1 // continuous
