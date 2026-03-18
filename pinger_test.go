@@ -98,6 +98,53 @@ func TestReplaceUnhealthy_ReplacesWhenThresholdExceeded(t *testing.T) {
 	}
 }
 
+func TestReplaceUnhealthy_ConsecutiveMisbehaving(t *testing.T) {
+	// Regression test: when two consecutive active reflectors are both
+	// misbehaving, the second one should not be skipped after the first
+	// is replaced (forward iteration with slice mutation).
+	cfg := testConfig()
+	cfg.PingerCount = 2
+	cfg.ReflectorMisbehavingDetectionThr = 2
+	cfg.ReflectorMisbehavingDetectionWindow = 4
+	logger := testLogger(t)
+	pm := NewPingerManager(&cfg.Links[0], cfg, logger)
+
+	for addr := range pm.states {
+		pm.states[addr] = &ReflectorState{
+			MissedWindow: make([]bool, 4),
+		}
+	}
+
+	// Mark both active reflectors as misbehaving
+	first := pm.reflectors[0]
+	second := pm.reflectors[1]
+	pm.states[first].MissedWindow[0] = true
+	pm.states[first].MissedWindow[1] = true
+	pm.states[second].MissedWindow[0] = true
+	pm.states[second].MissedWindow[1] = true
+
+	replaced := pm.ReplaceUnhealthy()
+	if !replaced {
+		t.Fatal("expected replacements")
+	}
+
+	// Both misbehaving reflectors should be moved to the end
+	n := len(pm.reflectors)
+	tail := pm.reflectors[n-2:]
+	if !((tail[0] == first && tail[1] == second) || (tail[0] == second && tail[1] == first)) {
+		t.Errorf("both misbehaving reflectors should be at end, got tail: %v (first=%s, second=%s)",
+			tail, first, second)
+	}
+
+	// Both should be marked inactive
+	if pm.states[first].Active {
+		t.Errorf("first misbehaving reflector should be inactive")
+	}
+	if pm.states[second].Active {
+		t.Errorf("second misbehaving reflector should be inactive")
+	}
+}
+
 func TestReplaceUnhealthy_NoReplacementWhenNoSpares(t *testing.T) {
 	cfg := testConfig()
 	cfg.PingerCount = 4 // same as number of reflectors — no spares

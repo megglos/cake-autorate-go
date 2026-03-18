@@ -279,8 +279,9 @@ func (pm *PingerManager) ReplaceUnhealthy() bool {
 			pm.reflectors = append(pm.reflectors[:i], pm.reflectors[i+1:]...)
 			pm.reflectors = append(pm.reflectors, bad)
 
-			// Reset the new reflector's state
-			newState := pm.states[pm.reflectors[i]]
+			// Reset the promoted spare's state (it entered the active set
+			// at position activeCount-1 after the shift)
+			newState := pm.states[pm.reflectors[activeCount-1]]
 			if newState != nil {
 				newState.mu.Lock()
 				newState.BaselineRTT = 0
@@ -290,6 +291,7 @@ func (pm *PingerManager) ReplaceUnhealthy() bool {
 				newState.mu.Unlock()
 			}
 			replaced = true
+			i-- // re-evaluate this index since a new reflector shifted in
 		}
 	}
 	return replaced
