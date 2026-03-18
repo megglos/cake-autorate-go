@@ -113,32 +113,44 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// Skip if rate hasn't changed
 	if s.lastRates[iface] == rateKbps {
+		s.mu.Unlock()
 		return nil
 	}
 
-	var err error
-	if s.fd >= 0 {
-		err = s.setRateNetlink(iface, rateKbps)
+	useTc := s.fd < 0
+
+	if !useTc {
+		err := s.setRateNetlink(iface, rateKbps)
 		if err != nil {
 			// Invalidate cached ifindex — interface may have been
 			// re-created with a different index (e.g. after replug).
 			delete(s.ifIndices, iface)
-			// Fall back to tc for this call; disable netlink for future
-			// calls to avoid retrying a permanently broken path.
+			// Disable netlink for future calls to avoid retrying a
+			// permanently broken path.
 			s.logger.Infof("netlink failed on %s (%v), falling back to tc exec", iface, err)
 			unix.Close(s.fd)
 			s.fd = -1
-			err = s.setRateTc(iface, rateKbps)
+			useTc = true
+		} else {
+			s.lastRates[iface] = rateKbps
+			s.mu.Unlock()
+			return nil
 		}
-	} else {
-		err = s.setRateTc(iface, rateKbps)
 	}
+
+	// Release the lock before running tc exec, which can block up to
+	// tcExecTimeout (5s). This avoids serializing rate updates for all
+	// interfaces behind one slow tc invocation.
+	s.mu.Unlock()
+
+	err := s.setRateTc(iface, rateKbps)
 	if err == nil {
+		s.mu.Lock()
 		s.lastRates[iface] = rateKbps
+		s.mu.Unlock()
 	}
 	return err
 }
