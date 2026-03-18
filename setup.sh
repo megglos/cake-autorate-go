@@ -35,7 +35,7 @@ info() {
 [ -f /etc/openwrt_release ] || die "This script is intended for OpenWrt systems."
 
 # Check if the service is currently running
-if "${INIT_SCRIPT}" running >/dev/null 2>&1; then
+if [ -x "${INIT_SCRIPT}" ] && "${INIT_SCRIPT}" running >/dev/null 2>&1; then
     die "${SERVICE_NAME} is currently running. Stop it first: ${INIT_SCRIPT} stop"
 fi
 
