@@ -154,7 +154,7 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 
 	pinger.OnRecv = func(pkt *probing.Packet) {
 		mu.Lock()
-		sendTime, ok := pending[pkt.Seq]
+		_, ok := pending[pkt.Seq]
 		if ok {
 			delete(pending, pkt.Seq)
 		}
@@ -165,11 +165,12 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 
 		pm.recordHealth(reflector, false)
 
+		recvTime := time.Now()
 		select {
 		case resultCh <- PingResult{
 			Reflector: reflector,
 			RTT:       pkt.Rtt,
-			Timestamp: sendTime,
+			Timestamp: recvTime,
 			Timeout:   false,
 		}:
 		case <-ctx.Done():
