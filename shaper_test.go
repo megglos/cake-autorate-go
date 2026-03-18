@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/binary"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestWirePacketCompensationUs_Normal(t *testing.T) {
@@ -120,5 +123,132 @@ func TestShaper_FallbackToTc(t *testing.T) {
 	err := s.SetRate("nonexistent-iface", 10000)
 	if err == nil {
 		t.Error("expected error when tc fails on nonexistent interface")
+	}
+}
+
+// --- Netlink message builder tests ---
+
+func TestBuildCakeRateMsg_Size(t *testing.T) {
+	buf := make([]byte, cakeRateMsgSize)
+	buildCakeRateMsg(buf, 1, 42, 20000)
+
+	msgLen := binary.NativeEndian.Uint32(buf[offNlmsgLen:])
+	if msgLen != cakeRateMsgSize {
+		t.Errorf("nlmsg_len = %d, want %d", msgLen, cakeRateMsgSize)
+	}
+}
+
+func TestBuildCakeRateMsg_Header(t *testing.T) {
+	buf := make([]byte, cakeRateMsgSize)
+	buildCakeRateMsg(buf, 7, 3, 10000)
+
+	msgType := binary.NativeEndian.Uint16(buf[offNlmsgType:])
+	if msgType != unix.RTM_NEWQDISC {
+		t.Errorf("nlmsg_type = %d, want RTM_NEWQDISC(%d)", msgType, unix.RTM_NEWQDISC)
+	}
+
+	flags := binary.NativeEndian.Uint16(buf[offNlmsgFlags:])
+	wantFlags := uint16(unix.NLM_F_REQUEST | unix.NLM_F_ACK | unix.NLM_F_REPLACE)
+	if flags != wantFlags {
+		t.Errorf("nlmsg_flags = 0x%x, want 0x%x", flags, wantFlags)
+	}
+
+	seq := binary.NativeEndian.Uint32(buf[offNlmsgSeq:])
+	if seq != 7 {
+		t.Errorf("nlmsg_seq = %d, want 7", seq)
+	}
+
+	pid := binary.NativeEndian.Uint32(buf[offNlmsgPid:])
+	if pid != 0 {
+		t.Errorf("nlmsg_pid = %d, want 0", pid)
+	}
+}
+
+func TestBuildCakeRateMsg_Tcmsg(t *testing.T) {
+	buf := make([]byte, cakeRateMsgSize)
+	buildCakeRateMsg(buf, 1, 42, 10000)
+
+	if buf[offTcmFamily] != 0 {
+		t.Errorf("tcm_family = %d, want 0", buf[offTcmFamily])
+	}
+
+	ifindex := binary.NativeEndian.Uint32(buf[offTcmIfindex:])
+	if ifindex != 42 {
+		t.Errorf("tcm_ifindex = %d, want 42", ifindex)
+	}
+
+	parent := binary.NativeEndian.Uint32(buf[offTcmParent:])
+	if parent != tcHRoot {
+		t.Errorf("tcm_parent = 0x%x, want TC_H_ROOT(0x%x)", parent, tcHRoot)
+	}
+}
+
+func TestBuildCakeRateMsg_KindIsCake(t *testing.T) {
+	buf := make([]byte, cakeRateMsgSize)
+	buildCakeRateMsg(buf, 1, 1, 10000)
+
+	kindLen := binary.NativeEndian.Uint16(buf[offKindLen:])
+	if kindLen != 9 {
+		t.Errorf("TCA_KIND nla_len = %d, want 9", kindLen)
+	}
+
+	kindType := binary.NativeEndian.Uint16(buf[offKindType:])
+	if kindType != tcaKind {
+		t.Errorf("TCA_KIND nla_type = %d, want %d", kindType, tcaKind)
+	}
+
+	kind := string(buf[offKindVal : offKindVal+4])
+	if kind != "cake" {
+		t.Errorf("kind string = %q, want %q", kind, "cake")
+	}
+	if buf[offKindVal+4] != 0 {
+		t.Error("kind string missing null terminator")
+	}
+}
+
+func TestBuildCakeRateMsg_RateEncoding(t *testing.T) {
+	tests := []struct {
+		rateKbps    int
+		wantBytesPS uint64
+	}{
+		{10000, 1250000},  // 10 Mbit/s = 1,250,000 bytes/s
+		{100000, 12500000}, // 100 Mbit/s
+		{1000, 125000},     // 1 Mbit/s
+	}
+
+	for _, tc := range tests {
+		buf := make([]byte, cakeRateMsgSize)
+		buildCakeRateMsg(buf, 1, 1, tc.rateKbps)
+
+		got := binary.NativeEndian.Uint64(buf[offRateVal:])
+		if got != tc.wantBytesPS {
+			t.Errorf("rate for %d kbps: got %d bytes/s, want %d", tc.rateKbps, got, tc.wantBytesPS)
+		}
+	}
+}
+
+func TestBuildCakeRateMsg_NestedOptions(t *testing.T) {
+	buf := make([]byte, cakeRateMsgSize)
+	buildCakeRateMsg(buf, 1, 1, 10000)
+
+	optsLen := binary.NativeEndian.Uint16(buf[offOptsLen:])
+	if optsLen != 16 {
+		t.Errorf("TCA_OPTIONS nla_len = %d, want 16", optsLen)
+	}
+
+	optsType := binary.NativeEndian.Uint16(buf[offOptsType:])
+	wantType := uint16(tcaOptions | nlaFNested)
+	if optsType != wantType {
+		t.Errorf("TCA_OPTIONS nla_type = 0x%x, want 0x%x", optsType, wantType)
+	}
+
+	rateLen := binary.NativeEndian.Uint16(buf[offRateLen:])
+	if rateLen != 12 {
+		t.Errorf("TCA_CAKE_BASE_RATE64 nla_len = %d, want 12", rateLen)
+	}
+
+	rateType := binary.NativeEndian.Uint16(buf[offRateType:])
+	if rateType != tcaCakeBaseRate64 {
+		t.Errorf("TCA_CAKE_BASE_RATE64 nla_type = %d, want %d", rateType, tcaCakeBaseRate64)
 	}
 }

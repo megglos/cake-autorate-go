@@ -143,6 +143,72 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 	return err
 }
 
+// cakeRateMsg is the fixed size of a netlink RTM_NEWQDISC message for CAKE
+// bandwidth updates: nlmsghdr(16) + tcmsg(20) + TCA_KIND(12) + TCA_OPTIONS(16) = 64.
+const cakeRateMsgSize = 64
+
+// Named offsets into the netlink message buffer.
+const (
+	offNlmsgLen   = 0
+	offNlmsgType  = 4
+	offNlmsgFlags = 6
+	offNlmsgSeq   = 8
+	offNlmsgPid   = 12
+	offTcmFamily  = 16 // tcmsg starts at 16
+	offTcmIfindex = 20
+	offTcmHandle  = 24
+	offTcmParent  = 28
+	offTcmInfo    = 32
+	offKindLen    = 36 // TCA_KIND nla
+	offKindType   = 38
+	offKindVal    = 40 // "cake\0"
+	offOptsLen    = 48 // TCA_OPTIONS nla (nested)
+	offOptsType   = 50
+	offRateLen    = 52 // TCA_CAKE_BASE_RATE64 nla
+	offRateType   = 54
+	offRateVal    = 56
+)
+
+// buildCakeRateMsg writes a netlink RTM_NEWQDISC message for setting the CAKE
+// base rate into buf. buf must be at least cakeRateMsgSize bytes.
+// This is a pure function with no side effects, suitable for unit testing.
+func buildCakeRateMsg(buf []byte, seq uint32, ifindex int32, rateKbps int) {
+	// nlmsghdr (16 bytes)
+	binary.NativeEndian.PutUint32(buf[offNlmsgLen:], cakeRateMsgSize)
+	binary.NativeEndian.PutUint16(buf[offNlmsgType:], unix.RTM_NEWQDISC)
+	binary.NativeEndian.PutUint16(buf[offNlmsgFlags:], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE)
+	binary.NativeEndian.PutUint32(buf[offNlmsgSeq:], seq)
+	binary.NativeEndian.PutUint32(buf[offNlmsgPid:], 0)
+
+	// tcmsg (20 bytes)
+	buf[offTcmFamily] = 0
+	buf[offTcmFamily+1] = 0
+	buf[offTcmFamily+2] = 0
+	buf[offTcmFamily+3] = 0
+	binary.NativeEndian.PutUint32(buf[offTcmIfindex:], uint32(ifindex))
+	binary.NativeEndian.PutUint32(buf[offTcmHandle:], 0)
+	binary.NativeEndian.PutUint32(buf[offTcmParent:], tcHRoot)
+	binary.NativeEndian.PutUint32(buf[offTcmInfo:], 0)
+
+	// TCA_KIND nla: "cake\0" padded to 8 bytes
+	binary.NativeEndian.PutUint16(buf[offKindLen:], 9) // nla_len = 4 + 5
+	binary.NativeEndian.PutUint16(buf[offKindType:], tcaKind)
+	copy(buf[offKindVal:], "cake\x00")
+	buf[45] = 0 // alignment padding
+	buf[46] = 0
+	buf[47] = 0
+
+	// TCA_OPTIONS nla (nested): contains TCA_CAKE_BASE_RATE64
+	binary.NativeEndian.PutUint16(buf[offOptsLen:], 16) // nla_len = 4 + 12
+	binary.NativeEndian.PutUint16(buf[offOptsType:], tcaOptions|nlaFNested)
+
+	// TCA_CAKE_BASE_RATE64 nla
+	binary.NativeEndian.PutUint16(buf[offRateLen:], 12) // nla_len = 4 + 8
+	binary.NativeEndian.PutUint16(buf[offRateType:], tcaCakeBaseRate64)
+	bytesPerSec := uint64(rateKbps) * 125 // kbit/s -> bytes/s
+	binary.NativeEndian.PutUint64(buf[offRateVal:], bytesPerSec)
+}
+
 // setRateNetlink sets the CAKE bandwidth via a raw netlink RTM_NEWQDISC message.
 // Reuses pre-allocated buffers to avoid allocations on the hot path.
 func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
@@ -151,53 +217,11 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 		return err
 	}
 
-	// Build the netlink message into the reusable buffer:
-	//   nlmsghdr + tcmsg + TCA_KIND("cake\0") + TCA_OPTIONS{ TCA_CAKE_BASE_RATE64 }
-	//
-	// Layout (all sizes fixed):
-	//   nlmsghdr:          16 bytes
-	//   tcmsg:             20 bytes
-	//   TCA_KIND nla:       4 (hdr) + 5 ("cake\0") + 3 (pad) = 12 bytes
-	//   TCA_OPTIONS nla:    4 (hdr) + [TCA_CAKE_BASE_RATE64: 4 (hdr) + 8 (u64)] = 16 bytes
-	//   Total:             64 bytes
-	const msgSize = 64
-
 	s.seq++
-	buf := s.msgBuf[:msgSize]
-
-	// nlmsghdr (16 bytes)
-	binary.NativeEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
-	binary.NativeEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
-	binary.NativeEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE) // nlmsg_flags (replace existing qdisc params; no NLM_F_CREATE so it won't create from scratch)
-	binary.NativeEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
-	binary.NativeEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
-
-	// tcmsg (20 bytes at offset 16)
-	buf[16] = 0                                                                            // tcm_family
-	buf[17] = 0; buf[18] = 0; buf[19] = 0                                                 // pad
-	binary.NativeEndian.PutUint32(buf[20:24], uint32(ifindex))                             // tcm_ifindex
-	binary.NativeEndian.PutUint32(buf[24:28], 0)                                          // tcm_handle
-	binary.NativeEndian.PutUint32(buf[28:32], tcHRoot)                                    // tcm_parent
-	binary.NativeEndian.PutUint32(buf[32:36], 0)                                          // tcm_info
-
-	// TCA_KIND nla (12 bytes at offset 36): "cake\0" padded to 8 bytes
-	binary.NativeEndian.PutUint16(buf[36:38], 9)                                          // nla_len = 4 + 5
-	binary.NativeEndian.PutUint16(buf[38:40], tcaKind)                                    // nla_type
-	buf[40] = 'c'; buf[41] = 'a'; buf[42] = 'k'; buf[43] = 'e'; buf[44] = 0             // "cake\0"
-	buf[45] = 0; buf[46] = 0; buf[47] = 0                                                 // alignment padding
-
-	// TCA_OPTIONS nla (16 bytes at offset 48): nested, contains TCA_CAKE_BASE_RATE64
-	binary.NativeEndian.PutUint16(buf[48:50], 16)                                         // nla_len = 4 + 12
-	binary.NativeEndian.PutUint16(buf[50:52], tcaOptions|nlaFNested)                      // nla_type
-
-	// TCA_CAKE_BASE_RATE64 nla (12 bytes at offset 52)
-	binary.NativeEndian.PutUint16(buf[52:54], 12)                                         // nla_len = 4 + 8
-	binary.NativeEndian.PutUint16(buf[54:56], tcaCakeBaseRate64)                           // nla_type
-	bytesPerSec := uint64(rateKbps) * 125                                                  // kbit/s -> bytes/s
-	binary.NativeEndian.PutUint64(buf[56:64], bytesPerSec)                                // rate value
+	buildCakeRateMsg(s.msgBuf[:cakeRateMsgSize], s.seq, ifindex, rateKbps)
 
 	// Send
-	if err := unix.Sendto(s.fd, buf, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
+	if err := unix.Sendto(s.fd, s.msgBuf[:cakeRateMsgSize], 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
 		return fmt.Errorf("netlink send on %s: %w", iface, err)
 	}
 
