@@ -79,7 +79,7 @@ func (pm *PingerManager) ActiveReflectors() []string {
 	if count > len(pm.reflectors) {
 		count = len(pm.reflectors)
 	}
-	return pm.reflectors[:count]
+	return append([]string(nil), pm.reflectors[:count]...)
 }
 
 // GetState returns the state for a reflector.
