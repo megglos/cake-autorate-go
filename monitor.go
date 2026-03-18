@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -49,6 +50,11 @@ func (sc *sysfsCounter) read() (int64, error) {
 			return 0, err
 		}
 		return 0, fmt.Errorf("empty read from %s", sc.path)
+	}
+	// sysfs commonly returns io.EOF alongside valid data; any other
+	// error indicates a real problem (e.g. device removed mid-read).
+	if err != nil && err != io.EOF {
+		return 0, fmt.Errorf("reading %s: %w", sc.path, err)
 	}
 	// Trim trailing whitespace (newline)
 	end := n
