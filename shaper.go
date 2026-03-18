@@ -83,6 +83,16 @@ func (s *Shaper) Close() {
 	}
 }
 
+// InvalidateCache clears cached rate and interface index for the given
+// interface, forcing the next SetRate to re-apply unconditionally. Call
+// this after events that may have reset the qdisc (link flap, hotplug).
+func (s *Shaper) InvalidateCache(iface string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.lastRates, iface)
+	delete(s.ifIndices, iface)
+}
+
 // SetRate sets the CAKE bandwidth for the given interface.
 // rateKbps is the target bandwidth in kbit/s.
 func (s *Shaper) SetRate(iface string, rateKbps int) error {

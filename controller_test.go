@@ -100,8 +100,9 @@ func TestHandlePingResult_TimeoutDoesNotUpdateLastPingTime(t *testing.T) {
 func TestHandlePingResult_IgnoredWhenNotRunning(t *testing.T) {
 	c := newTestController(t)
 	c.state = StateIdle
+	before := c.lastPingTime
 
-	ts := time.Now()
+	ts := time.Now().Add(time.Second)
 	c.handlePingResult(PingResult{
 		Reflector: "1.1.1.1",
 		RTT:       10 * time.Millisecond,
@@ -109,7 +110,7 @@ func TestHandlePingResult_IgnoredWhenNotRunning(t *testing.T) {
 		Timeout:   false,
 	})
 
-	if !c.lastPingTime.IsZero() {
+	if c.lastPingTime != before {
 		t.Error("ping result should be ignored when not in StateRunning")
 	}
 }

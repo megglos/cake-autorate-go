@@ -227,6 +227,14 @@ func (c *LinkController) handleRateStats(ctx context.Context, stats RateStats) {
 		if stats.DlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) ||
 			stats.UlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) {
 			c.transitionTo(StateRunning)
+			// Invalidate shaper cache — the qdisc may have been
+			// recreated during the stall (link flap, hotplug).
+			c.shaper.InvalidateCache(c.link.Download.Interface)
+			c.shaper.InvalidateCache(c.link.Upload.Interface)
+			c.dl.shaperRateKbps = float64(c.link.Download.BaseRateKbps)
+			c.ul.shaperRateKbps = float64(c.link.Upload.BaseRateKbps)
+			c.applyRate(DL)
+			c.applyRate(UL)
 			c.startPingers(ctx)
 		}
 	}

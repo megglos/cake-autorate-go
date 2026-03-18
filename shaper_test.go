@@ -77,6 +77,32 @@ func TestShaper_RejectsNonPositiveRate(t *testing.T) {
 	}
 }
 
+func TestShaper_InvalidateCache(t *testing.T) {
+	logger := testLogger(t)
+	s := &Shaper{
+		logger:    logger,
+		fd:        -1,
+		ifIndices: make(map[string]int32),
+		lastRates: make(map[string]int),
+		msgBuf:    make([]byte, 64),
+		recvBuf:   make([]byte, 4096),
+	}
+
+	// Populate caches
+	s.lastRates["eth0"] = 20000
+	s.ifIndices["eth0"] = 42
+
+	// Invalidate
+	s.InvalidateCache("eth0")
+
+	if _, ok := s.lastRates["eth0"]; ok {
+		t.Error("expected lastRates to be cleared after InvalidateCache")
+	}
+	if _, ok := s.ifIndices["eth0"]; ok {
+		t.Error("expected ifIndices to be cleared after InvalidateCache")
+	}
+}
+
 func TestShaper_FallbackToTc(t *testing.T) {
 	// Shaper with fd=-1 should use tc fallback path.
 	// We can't easily test tc without root, but we can verify it doesn't panic.
