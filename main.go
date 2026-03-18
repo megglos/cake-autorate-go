@@ -89,12 +89,12 @@ func main() {
 		lc := NewLinkController(link, cfg, shaper, logger)
 
 		wg.Add(1)
-		go func(linkName string) {
+		go func(ctrl *LinkController, linkName string) {
 			defer wg.Done()
-			if err := lc.Run(ctx); err != nil && ctx.Err() == nil {
+			if err := ctrl.Run(ctx); err != nil && ctx.Err() == nil {
 				logger.Errorf("[%s] controller error: %v", linkName, err)
 			}
-		}(link.Name)
+		}(lc, link.Name)
 	}
 
 	wg.Wait()
