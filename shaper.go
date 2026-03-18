@@ -156,7 +156,7 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 	// nlmsghdr (16 bytes)
 	binary.NativeEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
 	binary.NativeEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
-	binary.NativeEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK) // nlmsg_flags (change-only semantics: modify existing qdisc, never create)
+	binary.NativeEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE) // nlmsg_flags (replace existing qdisc params; no NLM_F_CREATE so it won't create from scratch)
 	binary.NativeEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
 	binary.NativeEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
 
