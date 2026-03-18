@@ -71,6 +71,16 @@ func NewShaper(logger *Logger) *Shaper {
 		return s
 	}
 
+	// Set a receive timeout so Recvfrom won't block indefinitely if the
+	// kernel fails to emit an ACK. On timeout the netlink path returns an
+	// error and the caller falls back to tc exec.
+	tv := unix.Timeval{Sec: 5}
+	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
+		unix.Close(fd)
+		logger.Infof("netlink SO_RCVTIMEO failed (%v), shaper will use tc exec fallback", err)
+		return s
+	}
+
 	s.fd = fd
 	return s
 }
