@@ -289,3 +289,337 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+// --- Rate adjustment algorithm tests ---
+
+func TestAdjustRateBufferbloat_ReducesRate(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = 40000
+
+	// deltaUs well above threshold → should reduce rate
+	thresholdUs := 30.0 * 1000 // 30ms
+	deltaUs := 80.0 * 1000     // 80ms — significantly above threshold
+	c.adjustRateBufferbloat(DL, deltaUs, thresholdUs)
+
+	if c.dl.shaperRateKbps >= 40000 {
+		t.Errorf("expected rate reduction from 40000, got %.0f", c.dl.shaperRateKbps)
+	}
+	if c.dl.shaperRateKbps < float64(c.link.Download.MinRateKbps) {
+		t.Errorf("rate should not drop below min: %.0f < %d", c.dl.shaperRateKbps, c.link.Download.MinRateKbps)
+	}
+}
+
+func TestAdjustRateBufferbloat_ClampsToMin(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = float64(c.link.Download.MinRateKbps) + 1
+
+	// Extreme delta to force maximum reduction
+	c.adjustRateBufferbloat(DL, 1000000, 1000)
+
+	if c.dl.shaperRateKbps < float64(c.link.Download.MinRateKbps) {
+		t.Errorf("rate clamped below min: %.0f < %d", c.dl.shaperRateKbps, c.link.Download.MinRateKbps)
+	}
+}
+
+func TestAdjustRateHighLoad_IncreasesRate(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = 20000
+	c.dl.loadPercent = 0.9
+
+	// deltaUs below threshold → plenty of headroom to increase
+	thresholdUs := 30.0 * 1000
+	deltaUs := 1.0 * 1000 // 1ms — very low delay
+	c.adjustRateHighLoad(DL, deltaUs, thresholdUs)
+
+	if c.dl.shaperRateKbps <= 20000 {
+		t.Errorf("expected rate increase from 20000, got %.0f", c.dl.shaperRateKbps)
+	}
+}
+
+func TestAdjustRateHighLoad_ClampsToMax(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
+
+	c.adjustRateHighLoad(DL, 0, 30000)
+
+	if c.dl.shaperRateKbps > float64(c.link.Download.MaxRateKbps) {
+		t.Errorf("rate should not exceed max: %.0f > %d", c.dl.shaperRateKbps, c.link.Download.MaxRateKbps)
+	}
+}
+
+func TestAdjustRateHighLoad_NoChangeAtMaxRate(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
+
+	beforeRate := c.dl.shaperRateKbps
+	c.adjustRateHighLoad(DL, 0, 30000)
+
+	if c.dl.shaperRateKbps != beforeRate {
+		t.Errorf("rate should not change when already at max: %.0f != %.0f", c.dl.shaperRateKbps, beforeRate)
+	}
+}
+
+func TestAdjustRateDecay_TowardBaseFromAbove(t *testing.T) {
+	c := newTestController(t)
+	baseRate := float64(c.link.Download.BaseRateKbps)
+	c.dl.shaperRateKbps = baseRate * 2 // well above base
+
+	c.adjustRateDecay(DL)
+
+	if c.dl.shaperRateKbps >= baseRate*2 {
+		t.Errorf("expected decay from %.0f toward base %.0f, got %.0f", baseRate*2, baseRate, c.dl.shaperRateKbps)
+	}
+	if c.dl.shaperRateKbps < baseRate {
+		t.Errorf("decay should not undershoot base rate: %.0f < %.0f", c.dl.shaperRateKbps, baseRate)
+	}
+}
+
+func TestAdjustRateDecay_TowardBaseFromBelow(t *testing.T) {
+	c := newTestController(t)
+	baseRate := float64(c.link.Download.BaseRateKbps)
+	c.dl.shaperRateKbps = baseRate / 2 // well below base
+
+	c.adjustRateDecay(DL)
+
+	if c.dl.shaperRateKbps <= baseRate/2 {
+		t.Errorf("expected increase from %.0f toward base %.0f, got %.0f", baseRate/2, baseRate, c.dl.shaperRateKbps)
+	}
+	if c.dl.shaperRateKbps > baseRate {
+		t.Errorf("decay should not overshoot base rate: %.0f > %.0f", c.dl.shaperRateKbps, baseRate)
+	}
+}
+
+func TestAdjustRateDecay_NoChangeAtBase(t *testing.T) {
+	c := newTestController(t)
+	baseRate := float64(c.link.Download.BaseRateKbps)
+	c.dl.shaperRateKbps = baseRate
+
+	c.adjustRateDecay(DL)
+
+	if c.dl.shaperRateKbps != baseRate {
+		t.Errorf("no decay expected at base rate: %.0f != %.0f", c.dl.shaperRateKbps, baseRate)
+	}
+}
+
+func TestProcessDelay_HighLoadIncrease(t *testing.T) {
+	c := newTestController(t)
+	c.cfg.BufferbloatDetectionWindow = 4
+	c.cfg.BufferbloatDetectionThr = 3
+	c.cfg.HighLoadThr = 0.75
+	c.cfg.BufferbloatRefractoryPeriodMs = 0
+
+	c.dl = dirState{
+		shaperRateKbps: 20000,
+		loadPercent:    0.9, // high load
+		delayWindow:    make([]bool, 4),
+	}
+
+	// Low delta with high load → should increase rate
+	c.processDelay(DL, 100) // very low delay
+
+	if c.dl.shaperRateKbps <= 20000 {
+		t.Errorf("expected rate increase under high load with low delay, got %.0f", c.dl.shaperRateKbps)
+	}
+}
+
+func TestProcessDelay_LowLoadDecay(t *testing.T) {
+	c := newTestController(t)
+	c.cfg.BufferbloatDetectionWindow = 4
+	c.cfg.BufferbloatDetectionThr = 3
+	c.cfg.HighLoadThr = 0.75
+	c.cfg.DecayRefractoryPeriodMs = 0
+
+	baseRate := float64(c.link.Download.BaseRateKbps)
+	c.dl = dirState{
+		shaperRateKbps: baseRate * 2, // above base
+		loadPercent:    0.1,          // low load
+		delayWindow:    make([]bool, 4),
+	}
+
+	c.processDelay(DL, 100) // low delay, low load → decay
+
+	if c.dl.shaperRateKbps >= baseRate*2 {
+		t.Errorf("expected decay toward base rate, got %.0f", c.dl.shaperRateKbps)
+	}
+}
+
+func TestHandleTimeout_MinShaperRatesEnforcement(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateRunning
+	c.cfg.GlobalPingResponseTimeoutS = 0.001
+	c.cfg.MinShaperRatesEnforcement = true
+	c.lastPingTime = time.Now().Add(-10 * time.Second)
+
+	c.dl.shaperRateKbps = 40000
+	c.ul.shaperRateKbps = 30000
+
+	c.handlePingResult(PingResult{
+		Reflector: "1.1.1.1",
+		Timestamp: time.Now(),
+		Timeout:   true,
+	})
+
+	if c.state != StateStall {
+		t.Fatalf("expected StateStall, got %s", c.state)
+	}
+	if c.dl.shaperRateKbps != float64(c.link.Download.MinRateKbps) {
+		t.Errorf("dl rate should be min on stall with enforcement: got %.0f, want %d",
+			c.dl.shaperRateKbps, c.link.Download.MinRateKbps)
+	}
+	if c.ul.shaperRateKbps != float64(c.link.Upload.MinRateKbps) {
+		t.Errorf("ul rate should be min on stall with enforcement: got %.0f, want %d",
+			c.ul.shaperRateKbps, c.link.Upload.MinRateKbps)
+	}
+}
+
+func TestHandleRateStats_IdleWithMinShaperEnforcement(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateRunning
+	c.cfg.EnableSleepFunction = true
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.cfg.SustainedIdleSleepThrS = 0.001
+	c.cfg.MinShaperRatesEnforcement = true
+
+	c.dl.shaperRateKbps = 40000
+	c.ul.shaperRateKbps = 30000
+
+	ctx := context.Background()
+
+	// First call sets idleSince
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: time.Now().Add(-1 * time.Second)})
+	// Second call triggers idle
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: time.Now()})
+
+	if c.state != StateIdle {
+		t.Fatalf("expected StateIdle, got %s", c.state)
+	}
+	if c.dl.shaperRateKbps != float64(c.link.Download.MinRateKbps) {
+		t.Errorf("dl rate should be min on idle with enforcement: got %.0f, want %d",
+			c.dl.shaperRateKbps, c.link.Download.MinRateKbps)
+	}
+	if c.ul.shaperRateKbps != float64(c.link.Upload.MinRateKbps) {
+		t.Errorf("ul rate should be min on idle with enforcement: got %.0f, want %d",
+			c.ul.shaperRateKbps, c.link.Upload.MinRateKbps)
+	}
+}
+
+func TestHandleRateStats_IdleToRunningResetsToBase(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateIdle
+	c.cfg.ConnectionActiveThrKbps = 2000
+
+	c.dl.shaperRateKbps = float64(c.link.Download.MinRateKbps)
+	c.ul.shaperRateKbps = float64(c.link.Upload.MinRateKbps)
+
+	ctx := context.Background()
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 5000, UlRateKbps: 0, Timestamp: time.Now()})
+
+	if c.dl.shaperRateKbps != float64(c.link.Download.BaseRateKbps) {
+		t.Errorf("dl rate should reset to base on resume: got %.0f, want %d",
+			c.dl.shaperRateKbps, c.link.Download.BaseRateKbps)
+	}
+	if c.ul.shaperRateKbps != float64(c.link.Upload.BaseRateKbps) {
+		t.Errorf("ul rate should reset to base on resume: got %.0f, want %d",
+			c.ul.shaperRateKbps, c.link.Upload.BaseRateKbps)
+	}
+}
+
+func TestHandleRateStats_IdleResetOnTraffic(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateRunning
+	c.cfg.EnableSleepFunction = true
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.cfg.SustainedIdleSleepThrS = 60 // long wait
+
+	ctx := context.Background()
+
+	// Start idle timer
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: time.Now()})
+	if c.idleSince.IsZero() {
+		t.Fatal("idleSince should be set after low-traffic sample")
+	}
+
+	// Traffic spike resets idle timer
+	c.handleRateStats(ctx, RateStats{DlRateKbps: 5000, UlRateKbps: 0, Timestamp: time.Now()})
+	if !c.idleSince.IsZero() {
+		t.Error("idleSince should be reset when traffic exceeds threshold")
+	}
+}
+
+func TestProcessDelay_SlidingWindowCorrectness(t *testing.T) {
+	c := newTestController(t)
+	c.cfg.BufferbloatDetectionWindow = 4
+	c.cfg.BufferbloatDetectionThr = 3
+	c.cfg.HighLoadThr = 0.75
+	c.cfg.DecayRefractoryPeriodMs = 0
+
+	c.dl = dirState{
+		shaperRateKbps: float64(c.link.Download.BaseRateKbps),
+		delayWindow:    make([]bool, 4),
+		loadPercent:    0.1,
+	}
+
+	// Fill window with 2 high + 2 low → no BB (2 < 3)
+	c.processDelay(DL, 100000) // high
+	c.processDelay(DL, 100000) // high
+	c.processDelay(DL, 0)      // low
+	c.processDelay(DL, 0)      // low
+
+	if c.dl.bbDetected {
+		t.Error("2/4 exceeded should not trigger BB detection (thr=3)")
+	}
+	if c.dl.delayWindowCount != 2 {
+		t.Errorf("expected delayWindowCount=2, got %d", c.dl.delayWindowCount)
+	}
+
+	// Now wrap: push 2 more highs, evicting the 2 lows won't help but evicting old entries will
+	// Window was: [high, high, low, low] → next writes at idx 0,1 (wrapping)
+	c.processDelay(DL, 100000) // replaces high→high at [0]: count stays 2... wait let me think
+	// Actually idx advanced to 4 which wraps to 0. So:
+	// After 4 entries: idx=0, window=[high, high, low, low]
+	// 5th entry at idx=0: was high, now high → no change → count=2
+	// 6th entry at idx=1: was high, now high → no change → count=2
+	// We need to push high entries where lows were
+	c.processDelay(DL, 100000) // at idx=1: was high→high, count still 2
+
+	// Push high to replace the lows at idx 2,3
+	c.processDelay(DL, 100000) // at idx=2: was low→high, count=3 → BB!
+
+	if !c.dl.bbDetected {
+		t.Error("expected BB detection after filling window with highs")
+	}
+}
+
+func TestLoadPercent_ComputedFromRateStats(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateRunning
+	c.dl.shaperRateKbps = 10000
+	c.ul.shaperRateKbps = 5000
+
+	ctx := context.Background()
+	c.handleRateStats(ctx, RateStats{
+		DlRateKbps: 8000,
+		UlRateKbps: 4000,
+		Timestamp:  time.Now(),
+	})
+
+	if c.dl.loadPercent != 0.8 {
+		t.Errorf("expected dl loadPercent=0.8, got %f", c.dl.loadPercent)
+	}
+	if c.ul.loadPercent != 0.8 {
+		t.Errorf("expected ul loadPercent=0.8, got %f", c.ul.loadPercent)
+	}
+}
+
+func TestGetDirState(t *testing.T) {
+	c := newTestController(t)
+	c.dl.shaperRateKbps = 111
+	c.ul.shaperRateKbps = 222
+
+	if c.getDirState(DL).shaperRateKbps != 111 {
+		t.Error("getDirState(DL) returned wrong state")
+	}
+	if c.getDirState(UL).shaperRateKbps != 222 {
+		t.Error("getDirState(UL) returned wrong state")
+	}
+}

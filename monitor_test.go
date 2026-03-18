@@ -1,0 +1,187 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestSysfsCounter_Read(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("123456\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	sc := &sysfsCounter{file: f, path: path}
+	val, err := sc.read()
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if val != 123456 {
+		t.Errorf("expected 123456, got %d", val)
+	}
+}
+
+func TestSysfsCounter_ReadUpdatedValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("100\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	sc := &sysfsCounter{file: f, path: path}
+
+	val1, err := sc.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val1 != 100 {
+		t.Errorf("first read: expected 100, got %d", val1)
+	}
+
+	// Update the file (simulating sysfs counter increment)
+	if err := os.WriteFile(path, []byte("200\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	val2, err := sc.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val2 != 200 {
+		t.Errorf("second read: expected 200, got %d", val2)
+	}
+}
+
+func TestSysfsCounter_ReadNoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("42"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	sc := &sysfsCounter{file: f, path: path}
+	val, err := sc.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 42 {
+		t.Errorf("expected 42, got %d", val)
+	}
+}
+
+func TestSysfsCounter_ReadLargeValue(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	// ~18 digits — near int64 max
+	if err := os.WriteFile(path, []byte("999999999999999999\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	sc := &sysfsCounter{file: f, path: path}
+	val, err := sc.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != 999999999999999999 {
+		t.Errorf("expected 999999999999999999, got %d", val)
+	}
+}
+
+func TestSysfsCounter_Reopen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("100\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc := &sysfsCounter{file: f, path: path}
+
+	// Close the fd to simulate a stale fd
+	sc.file.Close()
+
+	// Reopen should get a fresh fd
+	if err := sc.reopen(); err != nil {
+		t.Fatalf("reopen failed: %v", err)
+	}
+	defer sc.close()
+
+	val, err := sc.read()
+	if err != nil {
+		t.Fatalf("read after reopen failed: %v", err)
+	}
+	if val != 100 {
+		t.Errorf("expected 100 after reopen, got %d", val)
+	}
+}
+
+func TestSysfsCounter_ReopenMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rx_bytes")
+	if err := os.WriteFile(path, []byte("100\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc := &sysfsCounter{file: f, path: path}
+	sc.file.Close()
+
+	// Remove the file
+	os.Remove(path)
+
+	if err := sc.reopen(); err == nil {
+		t.Error("reopen should fail when file is missing")
+	}
+}
+
+func TestOpenSysfsCounter_InvalidInterface(t *testing.T) {
+	_, err := openSysfsCounter("nonexistent_iface_xyz", "rx_bytes")
+	if err == nil {
+		t.Error("expected error for nonexistent interface")
+	}
+}
+
+func TestNewMonitor(t *testing.T) {
+	logger := testLogger(t)
+	m := NewMonitor("eth0", "eth0", 200, logger)
+	if m.dlIface != "eth0" || m.ulIface != "eth0" {
+		t.Error("interfaces not set correctly")
+	}
+	if m.interval.Milliseconds() != 200 {
+		t.Errorf("expected 200ms interval, got %v", m.interval)
+	}
+}
