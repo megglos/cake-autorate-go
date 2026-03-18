@@ -84,16 +84,17 @@ func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, logger *Lo
 	monitor := NewMonitor(link.Download.Interface, link.Upload.Interface, cfg.MonitorIntervalMs, logger)
 
 	c := &LinkController{
-		name:      link.Name,
-		link:      link,
-		cfg:       cfg,
-		shaper:    shaper,
-		pingerMgr: pingerMgr,
-		monitor:   monitor,
-		logger:    logger,
-		state:     StateRunning,
-		pingCh:    make(chan PingResult, 100),
-		rateCh:    make(chan RateStats, 10),
+		name:         link.Name,
+		link:         link,
+		cfg:          cfg,
+		shaper:       shaper,
+		pingerMgr:    pingerMgr,
+		monitor:      monitor,
+		logger:       logger,
+		state:        StateRunning,
+		lastPingTime: time.Now(), // assume connectivity until proven otherwise
+		pingCh:       make(chan PingResult, 100),
+		rateCh:       make(chan RateStats, 10),
 	}
 
 	c.dl = dirState{
