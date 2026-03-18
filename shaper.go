@@ -203,7 +203,7 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 	for _, m := range msgs {
 		if m.Header.Type == syscall.NLMSG_ERROR {
 			if len(m.Data) >= 4 {
-				errno := int32(binary.LittleEndian.Uint32(m.Data[:4]))
+				errno := int32(binary.NativeEndian.Uint32(m.Data[:4]))
 				if errno == 0 {
 					return nil // ACK (success)
 				}
