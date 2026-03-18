@@ -46,10 +46,10 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           VERSION="${GITHUB_REF_NAME:-dev}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" -o cake-autorate-${{ matrix.name }} .
+          go build -ldflags="-s -w -X main.version=${VERSION}" -o cake-autorate-go-${{ matrix.name }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cake-autorate-${{ matrix.name }}
-          path: cake-autorate-${{ matrix.name }}
+          name: cake-autorate-go-${{ matrix.name }}
+          path: cake-autorate-go-${{ matrix.name }}
