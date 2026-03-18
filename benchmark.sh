@@ -129,7 +129,7 @@ if ! service "$BASH_SERVICE" start 2>/dev/null; then
 fi
 sleep 5
 
-collect_samples "bash" "$RESULTS_DIR/bash_samples.csv" "cake.autorate|fping"
+collect_samples "bash" "$RESULTS_DIR/bash_samples.csv" "cake-autorate|fping"
 
 log "Stopping bash version..."
 service "$BASH_SERVICE" stop 2>/dev/null || true
