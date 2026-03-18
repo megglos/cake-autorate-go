@@ -118,18 +118,54 @@ func TestHandleTimeout_TriggersStallWhenNoRecentPings(t *testing.T) {
 	c := newTestController(t)
 	c.state = StateRunning
 	c.cfg.GlobalPingResponseTimeoutS = 0.001 // 1ms for fast test
+	c.cfg.StallDetectionThr = 3
 
 	// Set lastPingTime far in the past
 	c.lastPingTime = time.Now().Add(-10 * time.Second)
 
+	// Need StallDetectionThr consecutive timeouts to trigger stall
+	for i := 0; i < 2; i++ {
+		c.handlePingResult(PingResult{
+			Reflector: "1.1.1.1",
+			Timestamp: time.Now(),
+			Timeout:   true,
+		})
+	}
+	if c.state != StateRunning {
+		t.Error("should not stall before reaching StallDetectionThr")
+	}
+
+	// One more timeout reaches the threshold
 	c.handlePingResult(PingResult{
 		Reflector: "1.1.1.1",
 		Timestamp: time.Now(),
 		Timeout:   true,
 	})
-
 	if c.state != StateStall {
-		t.Errorf("expected StateStall after timeout with old lastPingTime, got %s", c.state)
+		t.Errorf("expected StateStall after %d timeouts, got %s", c.cfg.StallDetectionThr, c.state)
+	}
+}
+
+func TestHandleTimeout_ConsecutiveCounterResetOnSuccess(t *testing.T) {
+	c := newTestController(t)
+	c.state = StateRunning
+	c.cfg.GlobalPingResponseTimeoutS = 0.001
+	c.cfg.StallDetectionThr = 3
+	c.lastPingTime = time.Now().Add(-10 * time.Second)
+	c.pingerMgr.UpdateBaseline("1.1.1.1", 10000)
+
+	// 2 timeouts, then a success, then 2 more timeouts → should NOT stall
+	for i := 0; i < 2; i++ {
+		c.handlePingResult(PingResult{Reflector: "1.1.1.1", Timestamp: time.Now(), Timeout: true})
+	}
+	c.handlePingResult(PingResult{Reflector: "1.1.1.1", RTT: 10 * time.Millisecond, Timestamp: time.Now(), Timeout: false})
+	c.lastPingTime = time.Now().Add(-10 * time.Second) // reset for stall check
+	for i := 0; i < 2; i++ {
+		c.handlePingResult(PingResult{Reflector: "1.1.1.1", Timestamp: time.Now(), Timeout: true})
+	}
+
+	if c.state != StateRunning {
+		t.Error("success should reset consecutive timeout counter, preventing stall")
 	}
 }
 
@@ -447,6 +483,7 @@ func TestHandleTimeout_MinShaperRatesEnforcement(t *testing.T) {
 	c := newTestController(t)
 	c.state = StateRunning
 	c.cfg.GlobalPingResponseTimeoutS = 0.001
+	c.cfg.StallDetectionThr = 1 // trigger on first timeout
 	c.cfg.MinShaperRatesEnforcement = true
 	c.lastPingTime = time.Now().Add(-10 * time.Second)
 

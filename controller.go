@@ -66,6 +66,7 @@ type LinkController struct {
 	ul            dirState
 	lastPingTime  time.Time
 	idleSince     time.Time
+	consecutiveTimeouts int
 
 	mu            sync.Mutex
 
@@ -247,6 +248,7 @@ func (c *LinkController) handlePingResult(result PingResult) {
 	// Only update lastPingTime on successful replies — timeouts are emitted
 	// by the sweeper and would mask stall detection if counted here.
 	c.lastPingTime = result.Timestamp
+	c.consecutiveTimeouts = 0
 
 	rttUs := float64(result.RTT.Microseconds())
 
@@ -281,8 +283,12 @@ func (c *LinkController) handlePingResult(result PingResult) {
 }
 
 func (c *LinkController) handleTimeout(result PingResult) {
-	// Check for stall condition
-	if !c.lastPingTime.IsZero() &&
+	c.consecutiveTimeouts++
+
+	// Require both: enough consecutive timeouts AND elapsed time since last
+	// successful ping exceeds the global timeout threshold.
+	if c.consecutiveTimeouts >= c.cfg.StallDetectionThr &&
+		!c.lastPingTime.IsZero() &&
 		time.Since(c.lastPingTime).Seconds() > c.cfg.GlobalPingResponseTimeoutS {
 		c.transitionTo(StateStall)
 		c.stopPingers()
