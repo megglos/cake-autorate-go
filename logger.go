@@ -37,12 +37,23 @@ type Logger struct {
 // NewLogger creates a new Logger. If filePath is non-empty, logs are also
 // written to that file. maxSizeKB controls log file rotation (0 = no limit).
 func NewLogger(debug bool, filePath string, maxSizeKB int) (*Logger, error) {
+	return newLogger(debug, filePath, maxSizeKB, os.Stderr)
+}
+
+// NewDiscardLogger creates a logger that discards all output.
+// Useful for tests that don't want log noise on stderr.
+func NewDiscardLogger() *Logger {
+	l, _ := newLogger(false, "", 0, io.Discard)
+	return l
+}
+
+func newLogger(debug bool, filePath string, maxSizeKB int, stderr io.Writer) (*Logger, error) {
 	l := &Logger{
 		maxBytes: int64(maxSizeKB) * 1024,
 	}
 	l.debugOn.Store(debug)
 
-	writers := []io.Writer{os.Stderr}
+	writers := []io.Writer{stderr}
 
 	if filePath != "" {
 		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -108,7 +119,13 @@ func (l *Logger) maybeRotate() {
 	}
 
 	// Rotate: truncate the file
-	l.file.Truncate(0)
-	l.file.Seek(0, 0)
+	if err := l.file.Truncate(0); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] log rotation truncate failed: %v\n", err)
+		return
+	}
+	if _, err := l.file.Seek(0, 0); err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] log rotation seek failed: %v\n", err)
+		return
+	}
 	l.logger.Printf("[INFO] log file rotated (exceeded %d KB)", l.maxBytes/1024)
 }
