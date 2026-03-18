@@ -147,6 +147,8 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 			}
 
 			// Attempt to reopen stale file descriptors (interface may have reappeared).
+			// When either counter is reopened, reset both baselines and prevTime
+			// to avoid a bogus rate spike in the other direction.
 			if dlStale {
 				if err := dlCounter.reopen(); err != nil {
 					m.logger.Debugf("reopening dl counter: %v", err)
@@ -154,12 +156,16 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 				}
 				m.logger.Infof("dl counter reopened for %s", m.dlIface)
 				dlStale = false
-				// Reset baseline to avoid a spurious delta from stale prevDlBytes.
 				prevDlBytes, err = dlCounter.read()
 				if err != nil {
 					m.logger.Debugf("reading dl bytes after reopen: %v", err)
 					dlStale = true
 					continue
+				}
+				if !ulStale {
+					if v, e := ulCounter.read(); e == nil {
+						prevUlBytes = v
+					}
 				}
 				prevTime = now
 				continue
@@ -176,6 +182,11 @@ func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
 					m.logger.Debugf("reading ul bytes after reopen: %v", err)
 					ulStale = true
 					continue
+				}
+				if !dlStale {
+					if v, e := dlCounter.read(); e == nil {
+						prevDlBytes = v
+					}
 				}
 				prevTime = now
 				continue
