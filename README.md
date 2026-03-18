@@ -1,6 +1,6 @@
 # cake-autorate-go
 
-**A Go rewrite of [cake-autorate](https://github.com/lynxthecat/cake-autorate) — an experiment to explore how much less resources a native implementation may occupy compared to the original bash scripts.**
+**A Go rewrite of [cake-autorate](https://github.com/lynxthecat/cake-autorate) — an experiment to explore how many fewer resources a native implementation may occupy compared to the original bash scripts.**
 
 > **WARNING:** This project is experimental and largely vibe-coded. It is still
 > undergoing testing by the author. Use it at your own risk and with high
