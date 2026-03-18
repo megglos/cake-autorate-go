@@ -41,7 +41,7 @@ concurrently in one process.
 Different WAN links route through different paths with different latencies.
 Sharing reflectors/baselines across links would corrupt the measurements.
 The ping source address and interface binding already exist in config
-(`ping_source_addr`, `ping_interface_name`) — these become per-link.
+(`ping_source_addr`, `ping_interface`) — these become per-link.
 
 ### Shaper is shared
 The Shaper is stateless (just execs `tc`). A single Shaper instance can be
@@ -80,7 +80,7 @@ links:
       - 8.8.8.8
       - 9.9.9.9
     ping_source_addr: ""
-    ping_interface_name: ""
+    ping_interface: ""
 
   - name: secondary
     download:
