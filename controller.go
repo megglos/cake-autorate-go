@@ -9,7 +9,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,12 +40,13 @@ func (s State) String() string {
 	}
 }
 
-const mtuBytes = 1500
+const defaultMTU = 1500
 
 // dirState holds per-direction runtime state.
 type dirState struct {
 	shaperRateKbps    float64
 	loadPercent       float64
+	mtuBytes          int
 	delayWindow       []bool // true = delay exceeded threshold
 	delayWindowIdx    int
 	delayWindowCount  int    // running count of true entries (avoids O(n) scan)
@@ -98,10 +103,12 @@ func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, logger *Lo
 
 	c.dl = dirState{
 		shaperRateKbps: float64(link.Download.BaseRateKbps),
+		mtuBytes:       readInterfaceMTU(link.Download.Interface, logger),
 		delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
 	}
 	c.ul = dirState{
 		shaperRateKbps: float64(link.Upload.BaseRateKbps),
+		mtuBytes:       readInterfaceMTU(link.Upload.Interface, logger),
 		delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
 	}
 
@@ -318,7 +325,7 @@ func (c *LinkController) processDelay(dir Direction, deltaUs float64) {
 	dc := c.link.DirConfig(dir)
 
 	// Calculate compensated delay threshold
-	compensationUs := WirePacketCompensationUs(mtuBytes, int(ds.shaperRateKbps))
+	compensationUs := WirePacketCompensationUs(ds.mtuBytes, int(ds.shaperRateKbps))
 	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
 
 	// Record in sliding window with O(1) running count
@@ -471,6 +478,22 @@ func (c *LinkController) getDirState(dir Direction) *dirState {
 func (c *LinkController) transitionTo(newState State) {
 	c.logger.Infof("[%s] state: %s -> %s", c.name, c.state, newState)
 	c.state = newState
+}
+
+// readInterfaceMTU reads the MTU for a network interface from sysfs.
+// Falls back to defaultMTU (1500) if the read fails.
+func readInterfaceMTU(iface string, logger *Logger) int {
+	data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/mtu", iface))
+	if err != nil {
+		logger.Infof("reading MTU for %s: %v, using default %d", iface, err, defaultMTU)
+		return defaultMTU
+	}
+	val, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || val <= 0 {
+		logger.Infof("parsing MTU for %s: %v, using default %d", iface, err, defaultMTU)
+		return defaultMTU
+	}
+	return val
 }
 
 func clamp(v, min, max float64) float64 {
