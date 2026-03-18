@@ -315,5 +315,40 @@ func (c *Config) Validate() error {
 	if c.ReflectorResponseDeadlineS <= 0 {
 		return fmt.Errorf("reflector_response_deadline_s must be positive")
 	}
+
+	// Validate float tuning parameters
+	if c.HighLoadThr < 0 || c.HighLoadThr > 1 {
+		return fmt.Errorf("high_load_thr must be between 0 and 1")
+	}
+	if c.AlphaBaselineIncrease <= 0 || c.AlphaBaselineIncrease > 1 {
+		return fmt.Errorf("alpha_baseline_increase must be in (0, 1]")
+	}
+	if c.AlphaBaselineDecrease <= 0 || c.AlphaBaselineDecrease > 1 {
+		return fmt.Errorf("alpha_baseline_decrease must be in (0, 1]")
+	}
+	if c.AlphaDeltaEWMA <= 0 || c.AlphaDeltaEWMA > 1 {
+		return fmt.Errorf("alpha_delta_ewma must be in (0, 1]")
+	}
+	if c.ShaperRateMinAdjustDownBufferbloat <= 0 || c.ShaperRateMinAdjustDownBufferbloat > 1 {
+		return fmt.Errorf("shaper_rate_min_adjust_down_bufferbloat must be in (0, 1]")
+	}
+	if c.ShaperRateMaxAdjustDownBufferbloat <= 0 || c.ShaperRateMaxAdjustDownBufferbloat > 1 {
+		return fmt.Errorf("shaper_rate_max_adjust_down_bufferbloat must be in (0, 1]")
+	}
+	if c.ShaperRateMaxAdjustDownBufferbloat > c.ShaperRateMinAdjustDownBufferbloat {
+		return fmt.Errorf("shaper_rate_max_adjust_down_bufferbloat must be <= shaper_rate_min_adjust_down_bufferbloat")
+	}
+	if c.ShaperRateMinAdjustUpLoadHigh < 1 {
+		return fmt.Errorf("shaper_rate_min_adjust_up_load_high must be >= 1")
+	}
+	if c.ShaperRateMaxAdjustUpLoadHigh < c.ShaperRateMinAdjustUpLoadHigh {
+		return fmt.Errorf("shaper_rate_max_adjust_up_load_high must be >= shaper_rate_min_adjust_up_load_high")
+	}
+	if c.ShaperRateAdjustDownLoadLow <= 0 || c.ShaperRateAdjustDownLoadLow > 1 {
+		return fmt.Errorf("shaper_rate_adjust_down_load_low must be in (0, 1]")
+	}
+	if c.ShaperRateAdjustUpLoadLow < 1 {
+		return fmt.Errorf("shaper_rate_adjust_up_load_low must be >= 1")
+	}
 	return nil
 }
