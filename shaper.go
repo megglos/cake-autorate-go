@@ -86,6 +86,10 @@ func (s *Shaper) Close() {
 // SetRate sets the CAKE bandwidth for the given interface.
 // rateKbps is the target bandwidth in kbit/s.
 func (s *Shaper) SetRate(iface string, rateKbps int) error {
+	if rateKbps <= 0 {
+		return fmt.Errorf("rate must be positive, got %d", rateKbps)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -142,7 +146,7 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 	// nlmsghdr (16 bytes)
 	binary.LittleEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
 	binary.LittleEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
-	binary.LittleEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK)            // nlmsg_flags
+	binary.LittleEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE|unix.NLM_F_CREATE) // nlmsg_flags (change semantics, like tc qdisc change)
 	binary.LittleEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
 	binary.LittleEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
 
