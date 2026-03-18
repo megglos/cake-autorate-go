@@ -152,12 +152,12 @@ sudo ./cake-autorate-go --debug
 ./cake-autorate-go --version
 ```
 
-Root privileges (or `CAP_NET_RAW` + `CAP_NET_ADMIN`) are required for ICMP pinging and `tc` commands.
+Root privileges (or `CAP_NET_RAW` + `CAP_NET_ADMIN`) are required for ICMP pinging and netlink-based CAKE bandwidth control.
 
 ## Prerequisites
 
 - **CAKE qdisc** must already be configured on your interfaces. This tool only adjusts the bandwidth parameter — it does not set up CAKE itself.
-- **Linux** with `tc` (iproute2) available in PATH.
+- **Linux** — bandwidth adjustments use netlink sockets directly (no subprocess overhead). If netlink is unavailable, the shaper falls back to `tc` (iproute2).
 
 ## Status
 
