@@ -154,35 +154,35 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 	buf := s.msgBuf[:msgSize]
 
 	// nlmsghdr (16 bytes)
-	binary.LittleEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
-	binary.LittleEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
-	binary.LittleEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE|unix.NLM_F_CREATE) // nlmsg_flags (change semantics, like tc qdisc change)
-	binary.LittleEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
-	binary.LittleEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
+	binary.NativeEndian.PutUint32(buf[0:4], msgSize)                                      // nlmsg_len
+	binary.NativeEndian.PutUint16(buf[4:6], unix.RTM_NEWQDISC)                            // nlmsg_type
+	binary.NativeEndian.PutUint16(buf[6:8], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_REPLACE|unix.NLM_F_CREATE) // nlmsg_flags (change semantics, like tc qdisc change)
+	binary.NativeEndian.PutUint32(buf[8:12], s.seq)                                       // nlmsg_seq
+	binary.NativeEndian.PutUint32(buf[12:16], 0)                                          // nlmsg_pid
 
 	// tcmsg (20 bytes at offset 16)
 	buf[16] = 0                                                                            // tcm_family
 	buf[17] = 0; buf[18] = 0; buf[19] = 0                                                 // pad
-	binary.LittleEndian.PutUint32(buf[20:24], uint32(ifindex))                             // tcm_ifindex
-	binary.LittleEndian.PutUint32(buf[24:28], 0)                                          // tcm_handle
-	binary.LittleEndian.PutUint32(buf[28:32], tcHRoot)                                    // tcm_parent
-	binary.LittleEndian.PutUint32(buf[32:36], 0)                                          // tcm_info
+	binary.NativeEndian.PutUint32(buf[20:24], uint32(ifindex))                             // tcm_ifindex
+	binary.NativeEndian.PutUint32(buf[24:28], 0)                                          // tcm_handle
+	binary.NativeEndian.PutUint32(buf[28:32], tcHRoot)                                    // tcm_parent
+	binary.NativeEndian.PutUint32(buf[32:36], 0)                                          // tcm_info
 
 	// TCA_KIND nla (12 bytes at offset 36): "cake\0" padded to 8 bytes
-	binary.LittleEndian.PutUint16(buf[36:38], 9)                                          // nla_len = 4 + 5
-	binary.LittleEndian.PutUint16(buf[38:40], tcaKind)                                    // nla_type
+	binary.NativeEndian.PutUint16(buf[36:38], 9)                                          // nla_len = 4 + 5
+	binary.NativeEndian.PutUint16(buf[38:40], tcaKind)                                    // nla_type
 	buf[40] = 'c'; buf[41] = 'a'; buf[42] = 'k'; buf[43] = 'e'; buf[44] = 0             // "cake\0"
 	buf[45] = 0; buf[46] = 0; buf[47] = 0                                                 // alignment padding
 
 	// TCA_OPTIONS nla (16 bytes at offset 48): nested, contains TCA_CAKE_BASE_RATE64
-	binary.LittleEndian.PutUint16(buf[48:50], 16)                                         // nla_len = 4 + 12
-	binary.LittleEndian.PutUint16(buf[50:52], tcaOptions|nlaFNested)                      // nla_type
+	binary.NativeEndian.PutUint16(buf[48:50], 16)                                         // nla_len = 4 + 12
+	binary.NativeEndian.PutUint16(buf[50:52], tcaOptions|nlaFNested)                      // nla_type
 
 	// TCA_CAKE_BASE_RATE64 nla (12 bytes at offset 52)
-	binary.LittleEndian.PutUint16(buf[52:54], 12)                                         // nla_len = 4 + 8
-	binary.LittleEndian.PutUint16(buf[54:56], tcaCakeBaseRate64)                           // nla_type
+	binary.NativeEndian.PutUint16(buf[52:54], 12)                                         // nla_len = 4 + 8
+	binary.NativeEndian.PutUint16(buf[54:56], tcaCakeBaseRate64)                           // nla_type
 	bytesPerSec := uint64(rateKbps) * 125                                                  // kbit/s -> bytes/s
-	binary.LittleEndian.PutUint64(buf[56:64], bytesPerSec)                                // rate value
+	binary.NativeEndian.PutUint64(buf[56:64], bytesPerSec)                                // rate value
 
 	// Send
 	if err := unix.Sendto(s.fd, buf, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
