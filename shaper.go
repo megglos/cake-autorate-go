@@ -54,7 +54,7 @@ func NewShaper(logger *Logger) *Shaper {
 		fd:        -1,
 		ifIndices: make(map[string]int32),
 		lastRates: make(map[string]int),
-		msgBuf:    make([]byte, 64), // pre-allocate for netlink messages (exact size)
+		msgBuf:    make([]byte, cakeRateMsgSize), // pre-allocate for netlink messages
 		recvBuf:   make([]byte, 4096),   // pre-allocate for netlink responses
 	}
 
