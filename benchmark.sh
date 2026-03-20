@@ -4,9 +4,11 @@
 #
 # Usage: ./benchmark.sh [options]
 #   -d DURATION     Seconds to run each version (default: 120)
-#   -i DL_IFACE     Download CAKE interface (default: ifb4eth1)
-#   -u UL_IFACE     Upload CAKE interface (default: eth1)
 #   -h              Show help
+#
+# Dual-WAN interface defaults (override via environment variables):
+#   PRI_DL_IFACE=ifb4eth1  PRI_UL_IFACE=eth1
+#   SEC_DL_IFACE=ifb4eth2  SEC_UL_IFACE=eth2
 #
 # Requirements: install procps-ng on OpenWrt for full ps support
 #   opkg install procps-ng-ps
@@ -15,8 +17,8 @@
 # this script begins each version's benchmark phase.
 #
 # What it measures:
-#   - CPU and memory usage (sampled every 5s)
-#   - CAKE shaper rate timeline (polled every 50ms via tc)
+#   - CPU and memory usage (sampled every 500ms)
+#   - CAKE shaper rate timeline per link (polled every 50ms via tc)
 #   - Decision latency from debug logs (when each version decides to adjust)
 #   - Responsiveness: time to first rate change, rate of adjustment
 
@@ -38,12 +40,26 @@ msleep() {
         sleep 1
     fi
 }
+
+# ── Service and log configuration ─────────────────────────────────────────
 GO_SERVICE="${GO_SERVICE:-cake-autorate-go}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
-BASH_LOG="${BASH_LOG:-/var/log/cake-autorate.log}"
+
+# Go uses a single log file for all links
 GO_LOG="${GO_LOG:-/var/log/cake-autorate.log}"
-DL_IFACE="${DL_IFACE:-ifb4eth1}"
-UL_IFACE="${UL_IFACE:-eth1}"
+
+# Bash uses per-link log files
+BASH_LOG_PRIMARY="${BASH_LOG_PRIMARY:-/var/log/cake-autorate.primary.log}"
+BASH_LOG_SECONDARY="${BASH_LOG_SECONDARY:-/var/log/cake-autorate.secondary.log}"
+
+# ── Dual-WAN interface configuration ──────────────────────────────────────
+# Primary link
+PRI_DL_IFACE="${PRI_DL_IFACE:-ifb4eth1}"
+PRI_UL_IFACE="${PRI_UL_IFACE:-eth1}"
+# Secondary link
+SEC_DL_IFACE="${SEC_DL_IFACE:-ifb4eth2}"
+SEC_UL_IFACE="${SEC_UL_IFACE:-eth2}"
+
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
 
 usage() {
@@ -51,11 +67,9 @@ usage() {
     exit 0
 }
 
-while getopts "d:i:u:h" opt; do
+while getopts "d:h" opt; do
     case $opt in
         d) DURATION="$OPTARG" ;;
-        i) DL_IFACE="$OPTARG" ;;
-        u) UL_IFACE="$OPTARG" ;;
         h) usage ;;
         *) usage ;;
     esac
@@ -78,7 +92,6 @@ read_cake_rate() {
         # Try Mbit
         rate=$(echo "$line" | sed -n 's/.*bandwidth \([0-9.]*\)[Mm]bit.*/\1/p')
         if [ -n "$rate" ]; then
-            # Convert Mbit to Kbit (integer math, good enough)
             rate=$(echo "$rate" | awk '{printf "%d", $1 * 1000}')
         else
             rate=0
@@ -96,7 +109,6 @@ collect_samples() {
     samples=0
     elapsed_ms=0
     duration_ms=$((DURATION * 1000))
-    # Print a status line every ~5s to avoid flooding the terminal
     status_every=$(( (5000 + SAMPLE_INTERVAL_MS - 1) / SAMPLE_INTERVAL_MS ))
 
     echo "timestamp_ms,num_procs,total_rss_kb,total_cpu_pct" > "$outfile"
@@ -124,41 +136,41 @@ collect_samples() {
         fi
         echo "${ts},$num_procs,$total_rss,$total_cpu" >> "$outfile"
 
-        # Periodic status line
         if [ $((samples % status_every)) -eq 0 ]; then
             log "  [$label] ${elapsed_ms}ms/${duration_ms}ms: procs=$num_procs rss=${total_rss}KB cpu=${total_cpu}%"
         fi
     done
 }
 
-# ── Poll CAKE rates at high frequency ───────────────────────────────────────
-# Runs in background, records dl/ul rates every RATE_POLL_MS.
+# ── Poll CAKE rates at high frequency (dual-WAN) ──────────────────────────
+# Records primary + secondary DL/UL rates every RATE_POLL_MS.
 # Args: $1=output_file
 poll_rates() {
     outfile="$1"
-    echo "timestamp_ms,dl_rate_kbps,ul_rate_kbps" > "$outfile"
+    echo "timestamp_ms,pri_dl_kbps,pri_ul_kbps,sec_dl_kbps,sec_ul_kbps" > "$outfile"
 
     elapsed_ms=0
     duration_ms=$((DURATION * 1000))
 
     while [ "$elapsed_ms" -lt "$duration_ms" ]; do
         ts=$(date '+%s%N' 2>/dev/null | cut -c1-13)
-        # Fallback for systems without %N (busybox)
         if [ ${#ts} -lt 13 ]; then
             ts=$(date '+%s')000
         fi
 
-        dl_rate=$(read_cake_rate "$DL_IFACE")
-        ul_rate=$(read_cake_rate "$UL_IFACE")
+        pri_dl=$(read_cake_rate "$PRI_DL_IFACE")
+        pri_ul=$(read_cake_rate "$PRI_UL_IFACE")
+        sec_dl=$(read_cake_rate "$SEC_DL_IFACE")
+        sec_ul=$(read_cake_rate "$SEC_UL_IFACE")
 
-        echo "${ts},${dl_rate},${ul_rate}" >> "$outfile"
+        echo "${ts},${pri_dl},${pri_ul},${sec_dl},${sec_ul}" >> "$outfile"
 
         msleep "$RATE_POLL_MS"
         elapsed_ms=$((elapsed_ms + RATE_POLL_MS))
     done
 }
 
-# ── Summarize resource usage CSV ────────────────────────────────────────────
+# ── Summarize resource usage CSV ──────────────────────────────────────────
 summarize() {
     label="$1"
     file="$2"
@@ -181,42 +193,43 @@ summarize() {
     }' "$file"
 }
 
-# ── Analyze rate timeline for responsiveness ────────────────────────────────
-analyze_rates() {
+# ── Analyze rate timeline for one link ────────────────────────────────────
+# Args: $1=label $2=csv_file $3=dl_column $4=ul_column
+analyze_rates_link() {
     label="$1"
     file="$2"
+    dl_col="$3"
+    ul_col="$4"
 
     echo ""
     echo "--- $label: Rate Responsiveness ---"
 
-    awk -F, '
+    awk -F, -v dl_col="$dl_col" -v ul_col="$ul_col" '
     NR == 1 { next }
     NR == 2 {
         start_ts = $1
-        initial_dl = $2
-        initial_ul = $3
-        min_dl = $2; max_dl = $2
-        min_ul = $3; max_ul = $3
-        first_dl_change_ts = 0
-        first_ul_change_ts = 0
+        initial_dl = $dl_col; initial_ul = $ul_col
+        min_dl = $dl_col; max_dl = $dl_col
+        min_ul = $ul_col; max_ul = $ul_col
+        first_dl_change_ts = 0; first_ul_change_ts = 0
         dl_changes = 0; ul_changes = 0
-        prev_dl = $2; prev_ul = $3
+        prev_dl = $dl_col; prev_ul = $ul_col
         next
     }
     {
-        if ($2 != prev_dl) {
+        if ($dl_col != prev_dl) {
             dl_changes++
-            if (first_dl_change_ts == 0 && $2 != initial_dl) first_dl_change_ts = $1
+            if (first_dl_change_ts == 0 && $dl_col != initial_dl) first_dl_change_ts = $1
         }
-        if ($3 != prev_ul) {
+        if ($ul_col != prev_ul) {
             ul_changes++
-            if (first_ul_change_ts == 0 && $3 != initial_ul) first_ul_change_ts = $1
+            if (first_ul_change_ts == 0 && $ul_col != initial_ul) first_ul_change_ts = $1
         }
-        if ($2 < min_dl) min_dl = $2
-        if ($2 > max_dl) max_dl = $2
-        if ($3 < min_ul) min_ul = $3
-        if ($3 > max_ul) max_ul = $3
-        prev_dl = $2; prev_ul = $3
+        if ($dl_col < min_dl) min_dl = $dl_col
+        if ($dl_col > max_dl) max_dl = $dl_col
+        if ($ul_col < min_ul) min_ul = $ul_col
+        if ($ul_col > max_ul) max_ul = $ul_col
+        prev_dl = $dl_col; prev_ul = $ul_col
         last_ts = $1
     }
     END {
@@ -247,43 +260,31 @@ analyze_rates() {
 
 # ── Analyze Go debug logs for decision latency ──────────────────────────────
 # Go log format: "2024/01/15 10:30:45.123456 [DEBUG] [link] [DL] bufferbloat: rate 200000 -> 150000 kbps ..."
-# Also matches: "high load: rate ... -> ... kbps" and "decay: rate ... -> ... kbps"
 analyze_go_log() {
     logfile="$1"
+    link_filter="$2"  # e.g. "primary" or "secondary"
     if [ ! -s "$logfile" ]; then
         echo "  (no Go debug log available)"
         return
     fi
 
     echo ""
-    echo "--- cake-autorate-go: Decision Latency (from debug log) ---"
+    echo "--- cake-autorate-go [$link_filter]: Decision Latency ---"
 
-    grep -E "rate [0-9]+ -> [0-9]+ kbps" "$logfile" | head -1 | {
-        read first_line 2>/dev/null || true
-        if [ -z "$first_line" ]; then
-            echo "  No rate changes found in Go log"
-            return
-        fi
-    }
-
-    # Extract rate change events with timestamps
-    grep -E "rate [0-9]+ -> [0-9]+ kbps" "$logfile" | awk '
+    grep -E "\\[$link_filter\\].*rate [0-9]+ -> [0-9]+ kbps" "$logfile" | awk '
     {
-        # Parse timestamp: "2024/01/15 10:30:45.123456"
         split($2, t, ":")
         split(t[3], s, ".")
         ts = t[1]*3600 + t[2]*60 + s[1] + (length(s) > 1 ? s[2] / 1000000.0 : 0)
 
         if (NR == 1) first_ts = ts
 
-        # Parse direction [DL] or [UL]
         dir = ""
         for (i = 3; i <= NF; i++) {
             if ($i == "[DL]") dir = "DL"
             if ($i == "[UL]") dir = "UL"
         }
 
-        # Parse type: bufferbloat/high load/decay
         type = "unknown"
         for (i = 3; i <= NF; i++) {
             if ($i == "bufferbloat:") type = "bb"
@@ -316,22 +317,21 @@ analyze_go_log() {
 # Bash log format: "SHAPER; datetime; timestamp; tc qdisc change root dev IFACE cake bandwidth NNNKbit"
 analyze_bash_log() {
     logfile="$1"
+    link_name="$2"
     if [ ! -s "$logfile" ]; then
-        echo "  (no bash debug log available — ensure output_cake_changes=1 in bash config)"
+        echo "  (no bash $link_name log — ensure output_cake_changes=1 in bash config)"
         return
     fi
 
     echo ""
-    echo "--- cake-autorate (bash): Decision Latency (from SHAPER log) ---"
+    echo "--- cake-autorate (bash) [$link_name]: Decision Latency ---"
 
     grep "^SHAPER" "$logfile" | awk -F'; ' '
     {
         total++
-        # Extract timestamp (field 3) and rate
         ts = $3 + 0
         if (NR == 1) first_ts = ts
 
-        # Extract interface and rate from tc command
         n = split($4, parts, " ")
         for (i = 1; i <= n; i++) {
             if (parts[i] == "dev") iface = parts[i+1]
@@ -349,35 +349,37 @@ analyze_bash_log() {
     }'
 }
 
-# ── Compare rate responsiveness between versions ────────────────────────────
-compare_rates() {
+# ── Compare rate responsiveness between versions (per link) ──────────────
+compare_rates_link() {
     go_file="$1"
     bash_file="$2"
+    dl_col="$3"
+    ul_col="$4"
+    link_name="$5"
 
     echo ""
-    echo "--- Rate Responsiveness Comparison ---"
+    echo "--- Rate Responsiveness Comparison [$link_name] ---"
 
-    # Extract metrics from each file for comparison
-    go_metrics=$(awk -F, '
+    go_metrics=$(awk -F, -v dc="$dl_col" -v uc="$ul_col" '
     NR == 1 { next }
-    NR == 2 { start_ts = $1; initial_dl = $2; initial_ul = $3; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $2; prev_ul = $3; next }
+    NR == 2 { start_ts = $1; initial_dl = $dc; initial_ul = $uc; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $dc; prev_ul = $uc; next }
     {
-        if ($2 != prev_dl) { dlc++; if (first_dl == 0 && $2 != initial_dl) first_dl = $1 - start_ts }
-        if ($3 != prev_ul) { ulc++; if (first_ul == 0 && $3 != initial_ul) first_ul = $1 - start_ts }
-        prev_dl = $2; prev_ul = $3; last_ts = $1
+        if ($dc != prev_dl) { dlc++; if (first_dl == 0 && $dc != initial_dl) first_dl = $1 - start_ts }
+        if ($uc != prev_ul) { ulc++; if (first_ul == 0 && $uc != initial_ul) first_ul = $1 - start_ts }
+        prev_dl = $dc; prev_ul = $uc; last_ts = $1
     }
     END {
         dur = (last_ts - start_ts) / 1000.0
         printf "%.0f %.0f %d %d %.1f", first_dl, first_ul, dlc, ulc, dur
     }' "$go_file")
 
-    bash_metrics=$(awk -F, '
+    bash_metrics=$(awk -F, -v dc="$dl_col" -v uc="$ul_col" '
     NR == 1 { next }
-    NR == 2 { start_ts = $1; initial_dl = $2; initial_ul = $3; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $2; prev_ul = $3; next }
+    NR == 2 { start_ts = $1; initial_dl = $dc; initial_ul = $uc; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $dc; prev_ul = $uc; next }
     {
-        if ($2 != prev_dl) { dlc++; if (first_dl == 0 && $2 != initial_dl) first_dl = $1 - start_ts }
-        if ($3 != prev_ul) { ulc++; if (first_ul == 0 && $3 != initial_ul) first_ul = $1 - start_ts }
-        prev_dl = $2; prev_ul = $3; last_ts = $1
+        if ($dc != prev_dl) { dlc++; if (first_dl == 0 && $dc != initial_dl) first_dl = $1 - start_ts }
+        if ($uc != prev_ul) { ulc++; if (first_ul == 0 && $uc != initial_ul) first_ul = $1 - start_ts }
+        prev_dl = $dc; prev_ul = $uc; last_ts = $1
     }
     END {
         dur = (last_ts - start_ts) / 1000.0
@@ -414,18 +416,26 @@ compare_rates() {
 # ── Main ────────────────────────────────────────────────────────────────────
 
 log "Benchmark configuration:"
-log "  Duration:     ${DURATION}s per version"
-log "  DL interface: $DL_IFACE"
-log "  UL interface: $UL_IFACE"
-log "  Rate polling: every ${RATE_POLL_MS}ms"
-log "  Results dir:  $RESULTS_DIR"
+log "  Duration:       ${DURATION}s per version"
+log "  Primary link:   DL=$PRI_DL_IFACE  UL=$PRI_UL_IFACE"
+log "  Secondary link: DL=$SEC_DL_IFACE  UL=$SEC_UL_IFACE"
+log "  Rate polling:   every ${RATE_POLL_MS}ms"
+log "  Results dir:    $RESULTS_DIR"
 echo ""
 
 # Verify tc can read the interfaces
-dl_test=$(read_cake_rate "$DL_IFACE")
-ul_test=$(read_cake_rate "$UL_IFACE")
-if [ "$dl_test" = "0" ] && [ "$ul_test" = "0" ]; then
-    log "WARNING: Could not read CAKE rates from $DL_IFACE / $UL_IFACE"
+pri_dl_test=$(read_cake_rate "$PRI_DL_IFACE")
+pri_ul_test=$(read_cake_rate "$PRI_UL_IFACE")
+sec_dl_test=$(read_cake_rate "$SEC_DL_IFACE")
+sec_ul_test=$(read_cake_rate "$SEC_UL_IFACE")
+
+if [ "$pri_dl_test" = "0" ] && [ "$pri_ul_test" = "0" ]; then
+    log "WARNING: Could not read CAKE rates from primary ($PRI_DL_IFACE / $PRI_UL_IFACE)"
+fi
+if [ "$sec_dl_test" = "0" ] && [ "$sec_ul_test" = "0" ]; then
+    log "WARNING: Could not read CAKE rates from secondary ($SEC_DL_IFACE / $SEC_UL_IFACE)"
+fi
+if [ "$pri_dl_test" = "0" ] && [ "$sec_dl_test" = "0" ]; then
     log "Make sure CAKE qdisc is configured on these interfaces."
     log "Continuing anyway (rate tracking may show all zeros)."
     echo ""
@@ -473,19 +483,26 @@ sleep 3
 
 log "=== Phase 2: Bash version (${DURATION}s) ==="
 log "Starting bash version (service $BASH_SERVICE)..."
-# Truncate bash log to isolate this benchmark's output
-: > "$BASH_LOG" 2>/dev/null || true
+
+# Truncate bash logs to isolate this benchmark's output
+: > "$BASH_LOG_PRIMARY" 2>/dev/null || true
+: > "$BASH_LOG_SECONDARY" 2>/dev/null || true
+
 if ! service "$BASH_SERVICE" start 2>/dev/null; then
     log "ERROR: 'service $BASH_SERVICE start' failed"
     log "Ensure the $BASH_SERVICE init script is installed"
     echo ""
     echo "============================================================"
     echo "  BENCHMARK RESULTS (Go only — bash service not available)"
-    echo "  Duration: ${DURATION}s, sampled every ${SAMPLE_INTERVAL}s"
+    echo "  Duration: ${DURATION}s, sampled every ${SAMPLE_INTERVAL_MS}ms"
+    echo "  Primary:   DL=$PRI_DL_IFACE  UL=$PRI_UL_IFACE"
+    echo "  Secondary: DL=$SEC_DL_IFACE  UL=$SEC_UL_IFACE"
     echo "============================================================"
     summarize "cake-autorate-go" "$RESULTS_DIR/go_samples.csv"
-    analyze_rates "cake-autorate-go" "$RESULTS_DIR/go_rates.csv"
-    analyze_go_log "$RESULTS_DIR/go_debug.log"
+    analyze_rates_link "cake-autorate-go [primary]" "$RESULTS_DIR/go_rates.csv" 2 3
+    analyze_rates_link "cake-autorate-go [secondary]" "$RESULTS_DIR/go_rates.csv" 4 5
+    analyze_go_log "$RESULTS_DIR/go_debug.log" "primary"
+    analyze_go_log "$RESULTS_DIR/go_debug.log" "secondary"
     echo ""
     echo "Raw data: $RESULTS_DIR/"
     exit 0
@@ -504,7 +521,8 @@ wait "$RATE_PID" 2>/dev/null || true
 
 log "Stopping bash version..."
 service "$BASH_SERVICE" stop 2>/dev/null || true
-cp "$BASH_LOG" "$RESULTS_DIR/bash_debug.log" 2>/dev/null || true
+cp "$BASH_LOG_PRIMARY" "$RESULTS_DIR/bash_primary_debug.log" 2>/dev/null || true
+cp "$BASH_LOG_SECONDARY" "$RESULTS_DIR/bash_secondary_debug.log" 2>/dev/null || true
 sleep 2
 
 # ── Results ─────────────────────────────────────────────────────────────────
@@ -513,7 +531,8 @@ echo ""
 echo "============================================================"
 echo "  BENCHMARK RESULTS"
 echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL_MS}ms"
-echo "  Interfaces: DL=$DL_IFACE  UL=$UL_IFACE"
+echo "  Primary:   DL=$PRI_DL_IFACE  UL=$PRI_UL_IFACE"
+echo "  Secondary: DL=$SEC_DL_IFACE  UL=$SEC_UL_IFACE"
 echo "============================================================"
 
 # Resource usage
@@ -538,20 +557,28 @@ awk -F, 'NR > 1 { n++; rss += $3; cpu += $4; procs += $2 } END {
     }' "$RESULTS_DIR/go_samples.csv"
 }
 
-# Rate responsiveness
-analyze_rates "cake-autorate-go"     "$RESULTS_DIR/go_rates.csv"
-analyze_rates "cake-autorate (bash)" "$RESULTS_DIR/bash_rates.csv"
-compare_rates "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv"
+# Rate responsiveness — per link
+analyze_rates_link "cake-autorate-go [primary]"     "$RESULTS_DIR/go_rates.csv" 2 3
+analyze_rates_link "cake-autorate-go [secondary]"   "$RESULTS_DIR/go_rates.csv" 4 5
+analyze_rates_link "cake-autorate (bash) [primary]"   "$RESULTS_DIR/bash_rates.csv" 2 3
+analyze_rates_link "cake-autorate (bash) [secondary]" "$RESULTS_DIR/bash_rates.csv" 4 5
 
-# Decision latency from debug logs
-analyze_go_log "$RESULTS_DIR/go_debug.log"
-analyze_bash_log "$RESULTS_DIR/bash_debug.log"
+# Compare go vs bash per link
+compare_rates_link "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv" 2 3 "primary"
+compare_rates_link "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv" 4 5 "secondary"
+
+# Decision latency from debug logs — per link
+analyze_go_log "$RESULTS_DIR/go_debug.log" "primary"
+analyze_go_log "$RESULTS_DIR/go_debug.log" "secondary"
+analyze_bash_log "$RESULTS_DIR/bash_primary_debug.log" "primary"
+analyze_bash_log "$RESULTS_DIR/bash_secondary_debug.log" "secondary"
 
 echo ""
 echo "Raw data: $RESULTS_DIR/"
-echo "  go_samples.csv   — Go resource usage over time"
-echo "  bash_samples.csv — Bash resource usage over time"
-echo "  go_rates.csv     — Go CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
-echo "  bash_rates.csv   — Bash CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
-echo "  go_debug.log     — Go debug log (rate decisions with microsecond timestamps)"
-echo "  bash_debug.log   — Bash log (SHAPER entries)"
+echo "  go_samples.csv            — Go resource usage over time"
+echo "  bash_samples.csv          — Bash resource usage over time"
+echo "  go_rates.csv              — Go CAKE rate timeline, both links (${RATE_POLL_MS}ms resolution)"
+echo "  bash_rates.csv            — Bash CAKE rate timeline, both links (${RATE_POLL_MS}ms resolution)"
+echo "  go_debug.log              — Go debug log (rate decisions with microsecond timestamps)"
+echo "  bash_primary_debug.log    — Bash primary link log (SHAPER entries)"
+echo "  bash_secondary_debug.log  — Bash secondary link log (SHAPER entries)"
