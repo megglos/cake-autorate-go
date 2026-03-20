@@ -10,8 +10,7 @@
     Downloads from / uploads to Cloudflare's speed test endpoints,
     which are fast, globally distributed, and don't require accounts.
 
-    Uses System.Net.HttpClient for maximum throughput (Invoke-WebRequest
-    is too slow due to progress bar and buffering overhead).
+    Uses curl.exe (shipped with Windows 10+) for maximum throughput.
 
 .PARAMETER Duration
     Duration in seconds (default: 120)
@@ -39,6 +38,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Verify curl.exe is available (ships with Windows 10 1803+)
+$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+if (-not $curl) {
+    Write-Error "curl.exe not found. Install curl or upgrade to Windows 10 1803+."
+    exit 1
+}
+
 $ChunkBytes = $ChunkMB * 1000000
 $DL_URL = "https://speed.cloudflare.com/__down?bytes=$ChunkBytes"
 $UL_URL = "https://speed.cloudflare.com/__up"
@@ -52,8 +58,8 @@ Log "Download URL: $DL_URL"
 Log "Upload URL:   $UL_URL"
 Write-Host ""
 
-# Generate a 1 MB random payload for upload workers
-$uploadPayloadPath = [System.IO.Path]::GetTempFileName()
+# Generate a 1 MB random payload file for upload workers
+$uploadPayloadPath = Join-Path $env:TEMP "load-gen-payload.bin"
 $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
 $payloadBytes = New-Object byte[] (1024 * 1024)
 $rng.GetBytes($payloadBytes)
@@ -61,51 +67,31 @@ $rng.GetBytes($payloadBytes)
 $rng.Dispose()
 
 $jobs = @()
+$maxTime = $Duration + 30
 
-# Download worker: uses HttpClient to stream-read and discard bytes at wire speed
+# Download worker: curl.exe fetching chunks in a loop
 $dlBlock = {
-    param($url, $durationSec)
+    param($url, $durationSec, $maxTime)
     $deadline = [DateTime]::UtcNow.AddSeconds($durationSec)
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $client = New-Object System.Net.Http.HttpClient($handler)
-    $client.Timeout = [TimeSpan]::FromSeconds($durationSec + 30)
-    $buf = New-Object byte[] (256 * 1024)
     while ([DateTime]::UtcNow -lt $deadline) {
-        try {
-            $resp = $client.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
-            $stream = $resp.Content.ReadAsStreamAsync().Result
-            while ($stream.Read($buf, 0, $buf.Length) -gt 0 -and [DateTime]::UtcNow -lt $deadline) {}
-            $stream.Dispose()
-            $resp.Dispose()
-        } catch {}
+        & curl.exe -s -o NUL --max-time $maxTime $url 2>$null
     }
-    $client.Dispose()
 }
 
-# Upload worker: uses HttpClient to POST random payload repeatedly
+# Upload worker: curl.exe POSTing random payload in a loop
 $ulBlock = {
-    param($url, $payloadPath, $durationSec)
+    param($url, $payloadPath, $durationSec, $maxTime)
     $deadline = [DateTime]::UtcNow.AddSeconds($durationSec)
-    $payload = [System.IO.File]::ReadAllBytes($payloadPath)
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $client = New-Object System.Net.Http.HttpClient($handler)
-    $client.Timeout = [TimeSpan]::FromSeconds($durationSec + 30)
     while ([DateTime]::UtcNow -lt $deadline) {
-        try {
-            $content = New-Object System.Net.Http.ByteArrayContent($payload)
-            $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-            $resp = $client.PostAsync($url, $content).Result
-            $resp.Dispose()
-        } catch {}
+        & curl.exe -s -o NUL --max-time $maxTime -X POST -H "Content-Type: application/octet-stream" --data-binary "@$payloadPath" $url 2>$null
     }
-    $client.Dispose()
 }
 
 # Start download workers
 if ($Mode -eq "dl" -or $Mode -eq "both") {
     Log "Starting $Workers download workers..."
     for ($i = 1; $i -le $Workers; $i++) {
-        $jobs += Start-Job -ScriptBlock $dlBlock -ArgumentList $DL_URL, $Duration
+        $jobs += Start-Job -ScriptBlock $dlBlock -ArgumentList $DL_URL, $Duration, $maxTime
     }
 }
 
@@ -113,7 +99,7 @@ if ($Mode -eq "dl" -or $Mode -eq "both") {
 if ($Mode -eq "ul" -or $Mode -eq "both") {
     Log "Starting $Workers upload workers..."
     for ($i = 1; $i -le $Workers; $i++) {
-        $jobs += Start-Job -ScriptBlock $ulBlock -ArgumentList $UL_URL, $uploadPayloadPath, $Duration
+        $jobs += Start-Job -ScriptBlock $ulBlock -ArgumentList $UL_URL, $uploadPayloadPath, $Duration, $maxTime
     }
 }
 
