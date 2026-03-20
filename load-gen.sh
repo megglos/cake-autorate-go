@@ -24,9 +24,10 @@ MODE="both"
 WORKERS=8
 
 # Well-known speed test file servers that serve at full line rate.
-# Many distinct destination IPs ensures mwan3 sticky sessions distribute
-# connections across all WAN links. Workers round-robin across these.
-DEFAULT_DL_URLS="https://speed.hetzner.de/1GB.bin https://ash-speed.hetzner.com/1GB.bin http://speedtest.tele2.net/1GB.zip http://proof.ovh.net/files/1Gio.dat http://speedtest.serverius.net/files/1000mb.bin http://fra-de-ping.vultr.com/vultr.com.1000MB.bin http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin http://par-fr-ping.vultr.com/vultr.com.1000MB.bin"
+# Uses smaller files (10-100MB) so each worker reconnects frequently —
+# every new TCP connection gets a fresh source port, which changes the
+# mwan3 hash and distributes connections across all WAN links.
+DEFAULT_DL_URLS="https://speed.hetzner.de/100MB.bin https://ash-speed.hetzner.com/100MB.bin http://speedtest.tele2.net/100MB.zip http://proof.ovh.net/files/100Mo.dat http://speedtest.serverius.net/files/100mb.bin http://fra-de-ping.vultr.com/vultr.com.100MB.bin http://ams-nl-ping.vultr.com/vultr.com.100MB.bin http://par-fr-ping.vultr.com/vultr.com.100MB.bin"
 DL_URLS="${DL_URLS:-$DEFAULT_DL_URLS}"
 UL_URL="${UL_URL:-https://speed.cloudflare.com/__up}"
 

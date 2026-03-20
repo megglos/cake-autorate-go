@@ -38,14 +38,14 @@ param(
     [string]$Mode = "both",
     [int]$Workers = 8,
     [string[]]$DlUrls = @(
-        "https://speed.hetzner.de/1GB.bin",
-        "https://ash-speed.hetzner.com/1GB.bin",
-        "http://speedtest.tele2.net/1GB.zip",
-        "http://proof.ovh.net/files/1Gio.dat",
-        "http://speedtest.serverius.net/files/1000mb.bin",
-        "http://fra-de-ping.vultr.com/vultr.com.1000MB.bin",
-        "http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin",
-        "http://par-fr-ping.vultr.com/vultr.com.1000MB.bin"
+        "https://speed.hetzner.de/100MB.bin",
+        "https://ash-speed.hetzner.com/100MB.bin",
+        "http://speedtest.tele2.net/100MB.zip",
+        "http://proof.ovh.net/files/100Mo.dat",
+        "http://speedtest.serverius.net/files/100mb.bin",
+        "http://fra-de-ping.vultr.com/vultr.com.100MB.bin",
+        "http://ams-nl-ping.vultr.com/vultr.com.100MB.bin",
+        "http://par-fr-ping.vultr.com/vultr.com.100MB.bin"
     ),
     [string]$UlUrl = "https://speed.cloudflare.com/__up"
 )
