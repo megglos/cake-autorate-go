@@ -10,6 +10,9 @@
     Downloads from / uploads to Cloudflare's speed test endpoints,
     which are fast, globally distributed, and don't require accounts.
 
+    Uses System.Net.HttpClient for maximum throughput (Invoke-WebRequest
+    is too slow due to progress bar and buffering overhead).
+
 .PARAMETER Duration
     Duration in seconds (default: 120)
 
@@ -59,29 +62,43 @@ $rng.Dispose()
 
 $jobs = @()
 
-# Download worker script block
+# Download worker: uses HttpClient to stream-read and discard bytes at wire speed
 $dlBlock = {
     param($url, $durationSec)
-    $deadline = [DateTime]::UtcNow.AddSeconds($durationSec + 30)
+    $deadline = [DateTime]::UtcNow.AddSeconds($durationSec)
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($durationSec + 30)
+    $buf = New-Object byte[] (256 * 1024)
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
-            Invoke-WebRequest -Uri $url -OutFile ([System.IO.Path]::GetTempFileName()) -UseBasicParsing -TimeoutSec ($durationSec + 30) -ErrorAction SilentlyContinue | Out-Null
+            $resp = $client.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
+            $stream = $resp.Content.ReadAsStreamAsync().Result
+            while ($stream.Read($buf, 0, $buf.Length) -gt 0 -and [DateTime]::UtcNow -lt $deadline) {}
+            $stream.Dispose()
+            $resp.Dispose()
         } catch {}
-        # Clean up temp file
-        Remove-Item ([System.IO.Path]::GetTempFileName()) -ErrorAction SilentlyContinue
     }
+    $client.Dispose()
 }
 
-# Upload worker script block
+# Upload worker: uses HttpClient to POST random payload repeatedly
 $ulBlock = {
     param($url, $payloadPath, $durationSec)
-    $deadline = [DateTime]::UtcNow.AddSeconds($durationSec + 30)
+    $deadline = [DateTime]::UtcNow.AddSeconds($durationSec)
     $payload = [System.IO.File]::ReadAllBytes($payloadPath)
+    $handler = New-Object System.Net.Http.HttpClientHandler
+    $client = New-Object System.Net.Http.HttpClient($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($durationSec + 30)
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
-            Invoke-WebRequest -Uri $url -Method POST -Body $payload -ContentType "application/octet-stream" -UseBasicParsing -TimeoutSec ($durationSec + 30) -ErrorAction SilentlyContinue | Out-Null
+            $content = New-Object System.Net.Http.ByteArrayContent($payload)
+            $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
+            $resp = $client.PostAsync($url, $content).Result
+            $resp.Dispose()
         } catch {}
     }
+    $client.Dispose()
 }
 
 # Start download workers
@@ -103,11 +120,6 @@ if ($Mode -eq "ul" -or $Mode -eq "both") {
 Log "Load generation running for ${Duration}s..."
 Log "Press Ctrl+C to stop early."
 Write-Host ""
-
-# Register cleanup on Ctrl+C
-$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
-    Get-Job | Stop-Job -PassThru | Remove-Job -Force
-}
 
 try {
     $elapsed = 0
