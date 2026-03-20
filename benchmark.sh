@@ -16,20 +16,23 @@
 #
 # What it measures:
 #   - CPU and memory usage (sampled every 5s)
-#   - CAKE shaper rate timeline (polled every 200ms via tc)
+#   - CAKE shaper rate timeline (polled every 50ms via tc)
+#   - Decision latency from debug logs (when each version decides to adjust)
 #   - Responsiveness: time to first rate change, rate of adjustment
 
 set -e
 
 DURATION=120
 SAMPLE_INTERVAL=5
-RATE_POLL_MS=200
+RATE_POLL_MS=50
 GO_BIN="${GO_BIN:-/tmp/cake-autorate-go}"
 GO_CONFIG="${GO_CONFIG:-/etc/cake-autorate/config.yaml}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
+BASH_LOG="${BASH_LOG:-/var/log/cake-autorate.log}"
 DL_IFACE="${DL_IFACE:-ifb4eth1}"
 UL_IFACE="${UL_IFACE:-eth1}"
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
+GO_LOG="$RESULTS_DIR/go_debug.log"
 
 usage() {
     sed -n '2,/^$/s/^# //p' "$0"
@@ -222,6 +225,110 @@ analyze_rates() {
     }' "$file"
 }
 
+# ── Analyze Go debug logs for decision latency ──────────────────────────────
+# Go log format: "2024/01/15 10:30:45.123456 [DEBUG] [link] [DL] bufferbloat: rate 200000 -> 150000 kbps ..."
+# Also matches: "high load: rate ... -> ... kbps" and "decay: rate ... -> ... kbps"
+analyze_go_log() {
+    logfile="$1"
+    if [ ! -s "$logfile" ]; then
+        echo "  (no Go debug log available)"
+        return
+    fi
+
+    echo ""
+    echo "--- cake-autorate-go: Decision Latency (from debug log) ---"
+
+    grep -E "rate [0-9]+ -> [0-9]+ kbps" "$logfile" | head -1 | {
+        read first_line 2>/dev/null || true
+        if [ -z "$first_line" ]; then
+            echo "  No rate changes found in Go log"
+            return
+        fi
+    }
+
+    # Extract rate change events with timestamps
+    grep -E "rate [0-9]+ -> [0-9]+ kbps" "$logfile" | awk '
+    {
+        # Parse timestamp: "2024/01/15 10:30:45.123456"
+        split($2, t, ":")
+        split(t[3], s, ".")
+        ts = t[1]*3600 + t[2]*60 + s[1] + (length(s) > 1 ? s[2] / 1000000.0 : 0)
+
+        if (NR == 1) first_ts = ts
+
+        # Parse direction [DL] or [UL]
+        dir = ""
+        for (i = 3; i <= NF; i++) {
+            if ($i == "[DL]") dir = "DL"
+            if ($i == "[UL]") dir = "UL"
+        }
+
+        # Parse type: bufferbloat/high load/decay
+        type = "unknown"
+        for (i = 3; i <= NF; i++) {
+            if ($i == "bufferbloat:") type = "bb"
+            if ($i == "high") type = "up"
+            if ($i == "decay:") type = "decay"
+        }
+
+        total++
+        if (type == "bb") bb_count++
+        else if (type == "up") up_count++
+        else if (type == "decay") decay_count++
+
+        if (dir == "DL") dl_count++
+        if (dir == "UL") ul_count++
+
+        last_ts = ts
+    }
+    END {
+        if (total == 0) { print "  No rate changes found in Go log"; exit }
+        duration = last_ts - first_ts
+        printf "  Total rate decisions:   %d over %.1fs\n", total, duration
+        printf "  Breakdown:              %d bufferbloat, %d high-load, %d decay\n", bb_count+0, up_count+0, decay_count+0
+        printf "  By direction:           %d DL, %d UL\n", dl_count+0, ul_count+0
+        if (duration > 0)
+            printf "  Decisions/s:            %.1f\n", total / duration
+    }'
+}
+
+# ── Analyze bash debug logs for decision latency ────────────────────────────
+# Bash log format: "SHAPER; datetime; timestamp; tc qdisc change root dev IFACE cake bandwidth NNNKbit"
+analyze_bash_log() {
+    logfile="$1"
+    if [ ! -s "$logfile" ]; then
+        echo "  (no bash debug log available — ensure output_cake_changes=1 in bash config)"
+        return
+    fi
+
+    echo ""
+    echo "--- cake-autorate (bash): Decision Latency (from SHAPER log) ---"
+
+    grep "^SHAPER" "$logfile" | awk -F'; ' '
+    {
+        total++
+        # Extract timestamp (field 3) and rate
+        ts = $3 + 0
+        if (NR == 1) first_ts = ts
+
+        # Extract interface and rate from tc command
+        n = split($4, parts, " ")
+        for (i = 1; i <= n; i++) {
+            if (parts[i] == "dev") iface = parts[i+1]
+            if (parts[i] == "bandwidth") rate = parts[i+1]
+        }
+
+        last_ts = ts
+    }
+    END {
+        if (total == 0) { print "  No SHAPER entries found in bash log"; exit }
+        duration = last_ts - first_ts
+        printf "  Total rate decisions:   %d over %.1fs\n", total, duration
+        if (duration > 0)
+            printf "  Decisions/s:            %.1f\n", total / duration
+    }'
+}
+
 # ── Compare rate responsiveness between versions ────────────────────────────
 compare_rates() {
     go_file="$1"
@@ -314,8 +421,8 @@ sleep 2
 # ── Benchmark Go version ───────────────────────────────────────────────────
 
 log "=== Phase 1: Go version (${DURATION}s) ==="
-log "Starting Go version..."
-$GO_BIN --config "$GO_CONFIG" &
+log "Starting Go version (debug enabled)..."
+$GO_BIN --config "$GO_CONFIG" --debug 2>"$GO_LOG" &
 GO_PID=$!
 sleep 2
 
@@ -344,6 +451,8 @@ sleep 3
 
 log "=== Phase 2: Bash version (${DURATION}s) ==="
 log "Starting bash version (service $BASH_SERVICE)..."
+# Truncate bash log to isolate this benchmark's output
+: > "$BASH_LOG" 2>/dev/null || true
 if ! service "$BASH_SERVICE" start 2>/dev/null; then
     log "ERROR: 'service $BASH_SERVICE start' failed"
     log "Ensure the $BASH_SERVICE init script is installed"
@@ -354,6 +463,7 @@ if ! service "$BASH_SERVICE" start 2>/dev/null; then
     echo "============================================================"
     summarize "cake-autorate-go" "$RESULTS_DIR/go_samples.csv"
     analyze_rates "cake-autorate-go" "$RESULTS_DIR/go_rates.csv"
+    analyze_go_log "$GO_LOG"
     echo ""
     echo "Raw data: $RESULTS_DIR/"
     exit 0
@@ -372,6 +482,7 @@ wait "$RATE_PID" 2>/dev/null || true
 
 log "Stopping bash version..."
 service "$BASH_SERVICE" stop 2>/dev/null || true
+cp "$BASH_LOG" "$RESULTS_DIR/bash_debug.log" 2>/dev/null || true
 sleep 2
 
 # ── Results ─────────────────────────────────────────────────────────────────
@@ -410,9 +521,15 @@ analyze_rates "cake-autorate-go"     "$RESULTS_DIR/go_rates.csv"
 analyze_rates "cake-autorate (bash)" "$RESULTS_DIR/bash_rates.csv"
 compare_rates "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv"
 
+# Decision latency from debug logs
+analyze_go_log "$GO_LOG"
+analyze_bash_log "$RESULTS_DIR/bash_debug.log"
+
 echo ""
 echo "Raw data: $RESULTS_DIR/"
 echo "  go_samples.csv   — Go resource usage over time"
 echo "  bash_samples.csv — Bash resource usage over time"
 echo "  go_rates.csv     — Go CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
 echo "  bash_rates.csv   — Bash CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
+echo "  go_debug.log     — Go debug log (rate decisions with microsecond timestamps)"
+echo "  bash_debug.log   — Bash log (SHAPER entries)"
