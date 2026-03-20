@@ -1,22 +1,50 @@
 #!/bin/sh
-# benchmark.sh — Compare resource usage of cake-autorate (bash) vs cake-autorate-go
+# benchmark.sh — Compare resource usage and responsiveness of
+#                cake-autorate (bash) vs cake-autorate-go
 #
-# Usage: ./benchmark.sh [duration_seconds]
-#   duration_seconds: how long to run each version (default: 120)
+# Usage: ./benchmark.sh [options]
+#   -d DURATION     Seconds to run each version (default: 120)
+#   -i DL_IFACE     Download CAKE interface (default: ifb4eth1)
+#   -u UL_IFACE     Upload CAKE interface (default: eth1)
+#   -h              Show help
 #
 # Requirements: install procps-ng on OpenWrt for full ps support
 #   opkg install procps-ng-ps
 #
-# Run this on the router with both versions installed.
+# Run this on the router. Start load-gen.sh on the PC ~10s after
+# this script begins each version's benchmark phase.
+#
+# What it measures:
+#   - CPU and memory usage (sampled every 5s)
+#   - CAKE shaper rate timeline (polled every 200ms via tc)
+#   - Responsiveness: time to first rate change, rate of adjustment
 
 set -e
 
-DURATION="${1:-120}"
+DURATION=120
 SAMPLE_INTERVAL=5
+RATE_POLL_MS=200
 GO_BIN="${GO_BIN:-/tmp/cake-autorate-go}"
 GO_CONFIG="${GO_CONFIG:-/etc/cake-autorate/config.yaml}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
+DL_IFACE="${DL_IFACE:-ifb4eth1}"
+UL_IFACE="${UL_IFACE:-eth1}"
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
+
+usage() {
+    sed -n '2,/^$/s/^# //p' "$0"
+    exit 0
+}
+
+while getopts "d:i:u:h" opt; do
+    case $opt in
+        d) DURATION="$OPTARG" ;;
+        i) DL_IFACE="$OPTARG" ;;
+        u) UL_IFACE="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
 
 mkdir -p "$RESULTS_DIR"
 
@@ -24,7 +52,27 @@ log() {
     echo "[$(date '+%H:%M:%S')] $*"
 }
 
-# Collect samples for a running process tree
+# ── Read current CAKE rate from tc ──────────────────────────────────────────
+# Parses "bandwidth NNNNKbit" from tc qdisc show output.
+# Returns rate in kbit/s, or 0 on failure.
+read_cake_rate() {
+    iface="$1"
+    line=$(tc qdisc show dev "$iface" root 2>/dev/null) || { echo 0; return; }
+    rate=$(echo "$line" | sed -n 's/.*bandwidth \([0-9]*\)[Kk]bit.*/\1/p')
+    if [ -z "$rate" ]; then
+        # Try Mbit
+        rate=$(echo "$line" | sed -n 's/.*bandwidth \([0-9.]*\)[Mm]bit.*/\1/p')
+        if [ -n "$rate" ]; then
+            # Convert Mbit to Kbit (integer math, good enough)
+            rate=$(echo "$rate" | awk '{printf "%d", $1 * 1000}')
+        else
+            rate=0
+        fi
+    fi
+    echo "$rate"
+}
+
+# ── Collect resource usage samples ──────────────────────────────────────────
 # Args: $1=label $2=output_file $3=match_pattern
 collect_samples() {
     label="$1"
@@ -40,8 +88,6 @@ collect_samples() {
         elapsed=$((elapsed + SAMPLE_INTERVAL))
         samples=$((samples + 1))
 
-        # Count processes, sum RSS and CPU
-        # Use /proc directly as fallback for minimal OpenWrt
         proc_data=$(ps -eo pid,rss,pcpu,args 2>/dev/null | grep -E "$pattern" | grep -v grep || true)
 
         if [ -n "$proc_data" ]; then
@@ -60,7 +106,36 @@ collect_samples() {
     done
 }
 
-# Summarize a CSV results file
+# ── Poll CAKE rates at high frequency ───────────────────────────────────────
+# Runs in background, records dl/ul rates every RATE_POLL_MS.
+# Args: $1=output_file
+poll_rates() {
+    outfile="$1"
+    echo "timestamp_ms,dl_rate_kbps,ul_rate_kbps" > "$outfile"
+
+    elapsed_ms=0
+    duration_ms=$((DURATION * 1000))
+
+    while [ "$elapsed_ms" -lt "$duration_ms" ]; do
+        ts=$(date '+%s%N' 2>/dev/null | cut -c1-13)
+        # Fallback for systems without %N (busybox)
+        if [ ${#ts} -lt 13 ]; then
+            ts=$(date '+%s')000
+        fi
+
+        dl_rate=$(read_cake_rate "$DL_IFACE")
+        ul_rate=$(read_cake_rate "$UL_IFACE")
+
+        echo "${ts},${dl_rate},${ul_rate}" >> "$outfile"
+
+        # Sleep in milliseconds using awk for fractional sleep
+        sleep_sec=$(awk "BEGIN {printf \"%.3f\", $RATE_POLL_MS / 1000.0}")
+        sleep "$sleep_sec"
+        elapsed_ms=$((elapsed_ms + RATE_POLL_MS))
+    done
+}
+
+# ── Summarize resource usage CSV ────────────────────────────────────────────
 summarize() {
     label="$1"
     file="$2"
@@ -68,7 +143,6 @@ summarize() {
     echo ""
     echo "=== $label ==="
 
-    # Skip header, compute averages and peaks
     awk -F, 'NR > 1 {
         n++
         procs += $2; rss += $3; cpu += $4
@@ -84,6 +158,152 @@ summarize() {
     }' "$file"
 }
 
+# ── Analyze rate timeline for responsiveness ────────────────────────────────
+analyze_rates() {
+    label="$1"
+    file="$2"
+
+    echo ""
+    echo "--- $label: Rate Responsiveness ---"
+
+    awk -F, '
+    NR == 1 { next }
+    NR == 2 {
+        start_ts = $1
+        initial_dl = $2
+        initial_ul = $3
+        min_dl = $2; max_dl = $2
+        min_ul = $3; max_ul = $3
+        first_dl_change_ts = 0
+        first_ul_change_ts = 0
+        dl_changes = 0; ul_changes = 0
+        prev_dl = $2; prev_ul = $3
+        next
+    }
+    {
+        if ($2 != prev_dl) {
+            dl_changes++
+            if (first_dl_change_ts == 0 && $2 != initial_dl) first_dl_change_ts = $1
+        }
+        if ($3 != prev_ul) {
+            ul_changes++
+            if (first_ul_change_ts == 0 && $3 != initial_ul) first_ul_change_ts = $1
+        }
+        if ($2 < min_dl) min_dl = $2
+        if ($2 > max_dl) max_dl = $2
+        if ($3 < min_ul) min_ul = $3
+        if ($3 > max_ul) max_ul = $3
+        prev_dl = $2; prev_ul = $3
+        last_ts = $1
+    }
+    END {
+        if (NR < 3) { print "  Not enough rate samples"; exit }
+        duration_s = (last_ts - start_ts) / 1000.0
+
+        printf "  Duration:          %.1fs (%d rate samples)\n", duration_s, NR - 1
+
+        printf "  DL rate range:     %d - %d kbps (initial: %d)\n", min_dl, max_dl, initial_dl
+        printf "  UL rate range:     %d - %d kbps (initial: %d)\n", min_ul, max_ul, initial_ul
+
+        printf "  DL rate changes:   %d", dl_changes
+        if (first_dl_change_ts > 0)
+            printf "  (first change: %.1fs after start)", (first_dl_change_ts - start_ts) / 1000.0
+        printf "\n"
+
+        printf "  UL rate changes:   %d", ul_changes
+        if (first_ul_change_ts > 0)
+            printf "  (first change: %.1fs after start)", (first_ul_change_ts - start_ts) / 1000.0
+        printf "\n"
+
+        if (dl_changes > 0)
+            printf "  DL adjustments/s:  %.1f\n", dl_changes / duration_s
+        if (ul_changes > 0)
+            printf "  UL adjustments/s:  %.1f\n", ul_changes / duration_s
+    }' "$file"
+}
+
+# ── Compare rate responsiveness between versions ────────────────────────────
+compare_rates() {
+    go_file="$1"
+    bash_file="$2"
+
+    echo ""
+    echo "--- Rate Responsiveness Comparison ---"
+
+    # Extract metrics from each file for comparison
+    go_metrics=$(awk -F, '
+    NR == 1 { next }
+    NR == 2 { start_ts = $1; initial_dl = $2; initial_ul = $3; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $2; prev_ul = $3; next }
+    {
+        if ($2 != prev_dl) { dlc++; if (first_dl == 0 && $2 != initial_dl) first_dl = $1 - start_ts }
+        if ($3 != prev_ul) { ulc++; if (first_ul == 0 && $3 != initial_ul) first_ul = $1 - start_ts }
+        prev_dl = $2; prev_ul = $3; last_ts = $1
+    }
+    END {
+        dur = (last_ts - start_ts) / 1000.0
+        printf "%.0f %.0f %d %d %.1f", first_dl, first_ul, dlc, ulc, dur
+    }' "$go_file")
+
+    bash_metrics=$(awk -F, '
+    NR == 1 { next }
+    NR == 2 { start_ts = $1; initial_dl = $2; initial_ul = $3; first_dl = 0; first_ul = 0; dlc = 0; ulc = 0; prev_dl = $2; prev_ul = $3; next }
+    {
+        if ($2 != prev_dl) { dlc++; if (first_dl == 0 && $2 != initial_dl) first_dl = $1 - start_ts }
+        if ($3 != prev_ul) { ulc++; if (first_ul == 0 && $3 != initial_ul) first_ul = $1 - start_ts }
+        prev_dl = $2; prev_ul = $3; last_ts = $1
+    }
+    END {
+        dur = (last_ts - start_ts) / 1000.0
+        printf "%.0f %.0f %d %d %.1f", first_dl, first_ul, dlc, ulc, dur
+    }' "$bash_file")
+
+    echo "$go_metrics" | {
+        read go_first_dl go_first_ul go_dlc go_ulc go_dur 2>/dev/null || true
+        echo "$bash_metrics" | {
+            read bash_first_dl bash_first_ul bash_dlc bash_ulc bash_dur 2>/dev/null || true
+
+            if [ "${go_first_dl:-0}" -gt 0 ] && [ "${bash_first_dl:-0}" -gt 0 ]; then
+                ratio=$(awk "BEGIN {printf \"%.1f\", $bash_first_dl / $go_first_dl}")
+                printf "  DL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n" \
+                    "${go_first_dl}" "${bash_first_dl}" "$ratio"
+            fi
+            if [ "${go_first_ul:-0}" -gt 0 ] && [ "${bash_first_ul:-0}" -gt 0 ]; then
+                ratio=$(awk "BEGIN {printf \"%.1f\", $bash_first_ul / $go_first_ul}")
+                printf "  UL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n" \
+                    "${go_first_ul}" "${bash_first_ul}" "$ratio"
+            fi
+            if [ "${go_dur:-0}" != "0" ] && [ "${bash_dur:-0}" != "0" ]; then
+                go_rate=$(awk "BEGIN {if ($go_dur > 0) printf \"%.1f\", $go_dlc / $go_dur; else print 0}")
+                bash_rate=$(awk "BEGIN {if ($bash_dur > 0) printf \"%.1f\", $bash_dlc / $bash_dur; else print 0}")
+                printf "  DL adjustments/s:   go=%s  bash=%s\n" "$go_rate" "$bash_rate"
+                go_rate=$(awk "BEGIN {if ($go_dur > 0) printf \"%.1f\", $go_ulc / $go_dur; else print 0}")
+                bash_rate=$(awk "BEGIN {if ($bash_dur > 0) printf \"%.1f\", $bash_ulc / $bash_dur; else print 0}")
+                printf "  UL adjustments/s:   go=%s  bash=%s\n" "$go_rate" "$bash_rate"
+            fi
+        }
+    }
+}
+
+# ── Main ────────────────────────────────────────────────────────────────────
+
+log "Benchmark configuration:"
+log "  Duration:     ${DURATION}s per version"
+log "  DL interface: $DL_IFACE"
+log "  UL interface: $UL_IFACE"
+log "  Rate polling: every ${RATE_POLL_MS}ms"
+log "  Results dir:  $RESULTS_DIR"
+echo ""
+
+# Verify tc can read the interfaces
+dl_test=$(read_cake_rate "$DL_IFACE")
+ul_test=$(read_cake_rate "$UL_IFACE")
+if [ "$dl_test" = "0" ] && [ "$ul_test" = "0" ]; then
+    log "WARNING: Could not read CAKE rates from $DL_IFACE / $UL_IFACE"
+    log "Make sure CAKE qdisc is configured on these interfaces."
+    log "Continuing anyway (rate tracking may show all zeros)."
+    echo ""
+fi
+
 # ── Stop any running instances ──────────────────────────────────────────────
 
 log "Stopping any running cake-autorate instances..."
@@ -93,7 +313,8 @@ sleep 2
 
 # ── Benchmark Go version ───────────────────────────────────────────────────
 
-log "Starting Go version for ${DURATION}s..."
+log "=== Phase 1: Go version (${DURATION}s) ==="
+log "Starting Go version..."
 $GO_BIN --config "$GO_CONFIG" &
 GO_PID=$!
 sleep 2
@@ -103,7 +324,16 @@ if ! kill -0 "$GO_PID" 2>/dev/null; then
     exit 1
 fi
 
+log "Go version running (PID $GO_PID)"
+log ">>> Start load-gen.sh on the PC now <<<"
+echo ""
+
+# Run resource sampling and rate polling in parallel
+poll_rates "$RESULTS_DIR/go_rates.csv" &
+RATE_PID=$!
 collect_samples "go" "$RESULTS_DIR/go_samples.csv" "cake-autorate-go"
+kill "$RATE_PID" 2>/dev/null || true
+wait "$RATE_PID" 2>/dev/null || true
 
 log "Stopping Go version..."
 kill "$GO_PID" 2>/dev/null || true
@@ -112,24 +342,33 @@ sleep 3
 
 # ── Benchmark Bash version ─────────────────────────────────────────────────
 
-log "Starting bash version (service $BASH_SERVICE) for ${DURATION}s..."
+log "=== Phase 2: Bash version (${DURATION}s) ==="
+log "Starting bash version (service $BASH_SERVICE)..."
 if ! service "$BASH_SERVICE" start 2>/dev/null; then
     log "ERROR: 'service $BASH_SERVICE start' failed"
     log "Ensure the $BASH_SERVICE init script is installed"
-    # Still print Go results
     echo ""
     echo "============================================================"
     echo "  BENCHMARK RESULTS (Go only — bash service not available)"
-    echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL}s"
+    echo "  Duration: ${DURATION}s, sampled every ${SAMPLE_INTERVAL}s"
     echo "============================================================"
     summarize "cake-autorate-go" "$RESULTS_DIR/go_samples.csv"
+    analyze_rates "cake-autorate-go" "$RESULTS_DIR/go_rates.csv"
     echo ""
     echo "Raw data: $RESULTS_DIR/"
     exit 0
 fi
 sleep 5
 
+log "Bash version running"
+log ">>> Start load-gen.sh on the PC now <<<"
+echo ""
+
+poll_rates "$RESULTS_DIR/bash_rates.csv" &
+RATE_PID=$!
 collect_samples "bash" "$RESULTS_DIR/bash_samples.csv" "cake-autorate|fping"
+kill "$RATE_PID" 2>/dev/null || true
+wait "$RATE_PID" 2>/dev/null || true
 
 log "Stopping bash version..."
 service "$BASH_SERVICE" stop 2>/dev/null || true
@@ -141,14 +380,16 @@ echo ""
 echo "============================================================"
 echo "  BENCHMARK RESULTS"
 echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL}s"
+echo "  Interfaces: DL=$DL_IFACE  UL=$UL_IFACE"
 echo "============================================================"
 
+# Resource usage
 summarize "cake-autorate (bash)" "$RESULTS_DIR/bash_samples.csv"
 summarize "cake-autorate-go"     "$RESULTS_DIR/go_samples.csv"
 
-# Side-by-side comparison
+# Side-by-side resource comparison
 echo ""
-echo "=== Comparison ==="
+echo "=== Resource Comparison ==="
 awk -F, 'NR > 1 { n++; rss += $3; cpu += $4; procs += $2 } END {
     if (n > 0) { printf "%.0f %.2f %.1f", rss/n, cpu/n, procs/n }
 }' "$RESULTS_DIR/bash_samples.csv" | {
@@ -164,5 +405,14 @@ awk -F, 'NR > 1 { n++; rss += $3; cpu += $4; procs += $2 } END {
     }' "$RESULTS_DIR/go_samples.csv"
 }
 
+# Rate responsiveness
+analyze_rates "cake-autorate-go"     "$RESULTS_DIR/go_rates.csv"
+analyze_rates "cake-autorate (bash)" "$RESULTS_DIR/bash_rates.csv"
+compare_rates "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv"
+
 echo ""
 echo "Raw data: $RESULTS_DIR/"
+echo "  go_samples.csv   — Go resource usage over time"
+echo "  bash_samples.csv — Bash resource usage over time"
+echo "  go_rates.csv     — Go CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
+echo "  bash_rates.csv   — Bash CAKE rate timeline (${RATE_POLL_MS}ms resolution)"
