@@ -23,7 +23,7 @@
 set -e
 
 DURATION=120
-SAMPLE_INTERVAL=5
+SAMPLE_INTERVAL_MS=500
 RATE_POLL_MS=50
 GO_SERVICE="${GO_SERVICE:-cake-autorate-go}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
@@ -81,13 +81,17 @@ collect_samples() {
     outfile="$2"
     pattern="$3"
     samples=0
-    elapsed=0
+    elapsed_ms=0
+    duration_ms=$((DURATION * 1000))
+    sleep_sec=$(awk "BEGIN {printf \"%.3f\", $SAMPLE_INTERVAL_MS / 1000.0}")
+    # Print a status line every ~5s to avoid flooding the terminal
+    status_every=$(( (5000 + SAMPLE_INTERVAL_MS - 1) / SAMPLE_INTERVAL_MS ))
 
-    echo "timestamp,num_procs,total_rss_kb,total_cpu_pct" > "$outfile"
+    echo "timestamp_ms,num_procs,total_rss_kb,total_cpu_pct" > "$outfile"
 
-    while [ "$elapsed" -lt "$DURATION" ]; do
-        sleep "$SAMPLE_INTERVAL"
-        elapsed=$((elapsed + SAMPLE_INTERVAL))
+    while [ "$elapsed_ms" -lt "$duration_ms" ]; do
+        sleep "$sleep_sec"
+        elapsed_ms=$((elapsed_ms + SAMPLE_INTERVAL_MS))
         samples=$((samples + 1))
 
         proc_data=$(ps -eo pid,rss,pcpu,args 2>/dev/null | grep -E "$pattern" | grep -v grep || true)
@@ -102,9 +106,16 @@ collect_samples() {
             total_cpu="0.0"
         fi
 
-        timestamp=$(date '+%s')
-        echo "$timestamp,$num_procs,$total_rss,$total_cpu" >> "$outfile"
-        log "  [$label] sample $samples: procs=$num_procs rss=${total_rss}KB cpu=${total_cpu}%"
+        ts=$(date '+%s%N' 2>/dev/null | cut -c1-13)
+        if [ ${#ts} -lt 13 ]; then
+            ts=$(date '+%s')000
+        fi
+        echo "${ts},$num_procs,$total_rss,$total_cpu" >> "$outfile"
+
+        # Periodic status line
+        if [ $((samples % status_every)) -eq 0 ]; then
+            log "  [$label] ${elapsed_ms}ms/${duration_ms}ms: procs=$num_procs rss=${total_rss}KB cpu=${total_cpu}%"
+        fi
     done
 }
 
@@ -491,7 +502,7 @@ sleep 2
 echo ""
 echo "============================================================"
 echo "  BENCHMARK RESULTS"
-echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL}s"
+echo "  Duration: ${DURATION}s per version, sampled every ${SAMPLE_INTERVAL_MS}ms"
 echo "  Interfaces: DL=$DL_IFACE  UL=$UL_IFACE"
 echo "============================================================"
 
