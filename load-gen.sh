@@ -12,8 +12,8 @@
 #
 # Requirements: curl
 #
-# Download workers fetch large test files from well-known speed test servers
-# (Hetzner, OVH, Tele2) that serve at full speed without throttling.
+# Download workers fetch large test files from many distinct speed test servers
+# so that mwan3 sticky sessions distribute connections across all WAN links.
 # Upload workers POST to Cloudflare's speed test upload endpoint.
 # Override URLs with DL_URLS (space-separated) and UL_URL env vars.
 
@@ -21,11 +21,12 @@ set -e
 
 DURATION=120
 MODE="both"
-WORKERS=4
+WORKERS=8
 
 # Well-known speed test file servers that serve at full line rate.
-# Workers round-robin across these to spread load / avoid single-server limits.
-DEFAULT_DL_URLS="https://speed.hetzner.de/1GB.bin http://speedtest.tele2.net/1GB.zip http://proof.ovh.net/files/1Gio.dat"
+# Many distinct destination IPs ensures mwan3 sticky sessions distribute
+# connections across all WAN links. Workers round-robin across these.
+DEFAULT_DL_URLS="https://speed.hetzner.de/1GB.bin https://ash-speed.hetzner.com/1GB.bin http://speedtest.tele2.net/1GB.zip http://proof.ovh.net/files/1Gio.dat http://speedtest.serverius.net/files/1000mb.bin http://fra-de-ping.vultr.com/vultr.com.1000MB.bin http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin http://par-fr-ping.vultr.com/vultr.com.1000MB.bin"
 DL_URLS="${DL_URLS:-$DEFAULT_DL_URLS}"
 UL_URL="${UL_URL:-https://speed.cloudflare.com/__up}"
 

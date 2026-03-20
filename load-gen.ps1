@@ -36,11 +36,16 @@ param(
     [int]$Duration = 120,
     [ValidateSet("dl", "ul", "both")]
     [string]$Mode = "both",
-    [int]$Workers = 4,
+    [int]$Workers = 8,
     [string[]]$DlUrls = @(
         "https://speed.hetzner.de/1GB.bin",
+        "https://ash-speed.hetzner.com/1GB.bin",
         "http://speedtest.tele2.net/1GB.zip",
-        "http://proof.ovh.net/files/1Gio.dat"
+        "http://proof.ovh.net/files/1Gio.dat",
+        "http://speedtest.serverius.net/files/1000mb.bin",
+        "http://fra-de-ping.vultr.com/vultr.com.1000MB.bin",
+        "http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin",
+        "http://par-fr-ping.vultr.com/vultr.com.1000MB.bin"
     ),
     [string]$UlUrl = "https://speed.cloudflare.com/__up"
 )
