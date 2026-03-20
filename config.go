@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -256,6 +257,20 @@ func (c *Config) migrateLinks() {
 	}
 }
 
+// ifnameRe matches valid Linux interface names: alphanumerics, hyphens, dots,
+// and underscores, up to IFNAMSIZ-1 (15) characters. This rejects path
+// separators, whitespace, and other characters that could cause issues when
+// interpolated into sysfs paths or tc arguments.
+var ifnameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
+
+// validateIfname checks that name is a valid Linux network interface name.
+func validateIfname(name string) error {
+	if !ifnameRe.MatchString(name) {
+		return fmt.Errorf("invalid interface name %q: must be 1-15 chars of [a-zA-Z0-9._-], starting with alphanumeric", name)
+	}
+	return nil
+}
+
 // Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
 	if len(c.Links) == 0 {
@@ -275,6 +290,9 @@ func (c *Config) Validate() error {
 		} {
 			if dc.dir.Interface == "" {
 				return fmt.Errorf("%s interface must be set", dc.name)
+			}
+			if err := validateIfname(dc.dir.Interface); err != nil {
+				return fmt.Errorf("%s: %w", dc.name, err)
 			}
 			if dc.dir.MinRateKbps <= 0 {
 				return fmt.Errorf("%s min_rate_kbps must be positive", dc.name)
