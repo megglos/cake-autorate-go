@@ -25,14 +25,13 @@ set -e
 DURATION=120
 SAMPLE_INTERVAL=5
 RATE_POLL_MS=50
-GO_BIN="${GO_BIN:-/tmp/cake-autorate-go}"
-GO_CONFIG="${GO_CONFIG:-/etc/cake-autorate/config.yaml}"
+GO_SERVICE="${GO_SERVICE:-cake-autorate-go}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
 BASH_LOG="${BASH_LOG:-/var/log/cake-autorate.log}"
+GO_LOG="${GO_LOG:-/var/log/cake-autorate.log}"
 DL_IFACE="${DL_IFACE:-ifb4eth1}"
 UL_IFACE="${UL_IFACE:-eth1}"
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
-GO_LOG="$RESULTS_DIR/go_debug.log"
 
 usage() {
     sed -n '2,/^$/s/^# //p' "$0"
@@ -414,24 +413,26 @@ fi
 # ── Stop any running instances ──────────────────────────────────────────────
 
 log "Stopping any running cake-autorate instances..."
-killall cake-autorate-go 2>/dev/null || true
+service "$GO_SERVICE" stop 2>/dev/null || true
 service "$BASH_SERVICE" stop 2>/dev/null || true
 sleep 2
 
 # ── Benchmark Go version ───────────────────────────────────────────────────
 
 log "=== Phase 1: Go version (${DURATION}s) ==="
-log "Starting Go version (debug enabled)..."
-$GO_BIN --config "$GO_CONFIG" --debug 2>"$GO_LOG" &
-GO_PID=$!
-sleep 2
 
-if ! kill -0 "$GO_PID" 2>/dev/null; then
-    log "ERROR: Go version failed to start"
+# Truncate Go log to isolate this benchmark's output
+: > "$GO_LOG" 2>/dev/null || true
+
+log "Starting Go version (service $GO_SERVICE)..."
+if ! service "$GO_SERVICE" start 2>/dev/null; then
+    log "ERROR: 'service $GO_SERVICE start' failed"
+    log "Ensure the $GO_SERVICE init script is installed"
     exit 1
 fi
+sleep 2
 
-log "Go version running (PID $GO_PID)"
+log "Go version running"
 log ">>> Start load-gen.sh on the PC now <<<"
 echo ""
 
@@ -443,8 +444,8 @@ kill "$RATE_PID" 2>/dev/null || true
 wait "$RATE_PID" 2>/dev/null || true
 
 log "Stopping Go version..."
-kill "$GO_PID" 2>/dev/null || true
-wait "$GO_PID" 2>/dev/null || true
+service "$GO_SERVICE" stop 2>/dev/null || true
+cp "$GO_LOG" "$RESULTS_DIR/go_debug.log" 2>/dev/null || true
 sleep 3
 
 # ── Benchmark Bash version ─────────────────────────────────────────────────
@@ -463,7 +464,7 @@ if ! service "$BASH_SERVICE" start 2>/dev/null; then
     echo "============================================================"
     summarize "cake-autorate-go" "$RESULTS_DIR/go_samples.csv"
     analyze_rates "cake-autorate-go" "$RESULTS_DIR/go_rates.csv"
-    analyze_go_log "$GO_LOG"
+    analyze_go_log "$RESULTS_DIR/go_debug.log"
     echo ""
     echo "Raw data: $RESULTS_DIR/"
     exit 0
@@ -522,7 +523,7 @@ analyze_rates "cake-autorate (bash)" "$RESULTS_DIR/bash_rates.csv"
 compare_rates "$RESULTS_DIR/go_rates.csv" "$RESULTS_DIR/bash_rates.csv"
 
 # Decision latency from debug logs
-analyze_go_log "$GO_LOG"
+analyze_go_log "$RESULTS_DIR/go_debug.log"
 analyze_bash_log "$RESULTS_DIR/bash_debug.log"
 
 echo ""
