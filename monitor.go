@@ -99,39 +99,78 @@ func NewMonitor(dlIface, ulIface string, intervalMs int, logger *Logger) *Monito
 	}
 }
 
+// waitForCounters retries opening sysfs counters with exponential backoff
+// until both are available or ctx is cancelled. This handles interfaces that
+// aren't present yet at daemon start (e.g. hotplug, boot ordering on OpenWrt).
+func (m *Monitor) waitForCounters(ctx context.Context) (dl, ul *sysfsCounter, dlBytes, ulBytes int64, ok bool) {
+	const maxBackoff = 30 * time.Second
+	backoff := 1 * time.Second
+
+	for {
+		dlC, dlErr := openSysfsCounter(m.dlIface, "rx_bytes")
+		ulC, ulErr := openSysfsCounter(m.ulIface, "tx_bytes")
+
+		if dlErr == nil && ulErr == nil {
+			dlB, err := dlC.read()
+			if err != nil {
+				dlC.close()
+				ulC.close()
+				m.logger.Infof("reading initial dl bytes: %v, retrying in %v", err, backoff)
+			} else {
+				ulB, err := ulC.read()
+				if err != nil {
+					dlC.close()
+					ulC.close()
+					m.logger.Infof("reading initial ul bytes: %v, retrying in %v", err, backoff)
+				} else {
+					return dlC, ulC, dlB, ulB, true
+				}
+			}
+		} else {
+			if dlC != nil {
+				dlC.close()
+			}
+			if ulC != nil {
+				ulC.close()
+			}
+			if dlErr != nil {
+				m.logger.Infof("opening dl counter: %v, retrying in %v", dlErr, backoff)
+			}
+			if ulErr != nil {
+				m.logger.Infof("opening ul counter: %v, retrying in %v", ulErr, backoff)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, nil, 0, 0, false
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
 // Run starts the monitor loop, sending RateStats to the provided channel.
 // Opens persistent file descriptors to sysfs counters to avoid open/close overhead.
+// Retries with backoff if interfaces aren't available at startup.
 func (m *Monitor) Run(ctx context.Context, ch chan<- RateStats) {
-	dlCounter, err := openSysfsCounter(m.dlIface, "rx_bytes")
-	if err != nil {
-		m.logger.Errorf("opening dl counter: %v", err)
+	dlCounter, ulCounter, prevDlBytes, prevUlBytes, ok := m.waitForCounters(ctx)
+	if !ok {
 		return
 	}
 	defer dlCounter.close()
-
-	ulCounter, err := openSysfsCounter(m.ulIface, "tx_bytes")
-	if err != nil {
-		m.logger.Errorf("opening ul counter: %v", err)
-		return
-	}
 	defer ulCounter.close()
 
-	prevDlBytes, err := dlCounter.read()
-	if err != nil {
-		m.logger.Errorf("reading initial dl bytes: %v", err)
-		return
-	}
-	prevUlBytes, err := ulCounter.read()
-	if err != nil {
-		m.logger.Errorf("reading initial ul bytes: %v", err)
-		return
-	}
 	prevTime := time.Now()
 
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
 	// dlStale/ulStale track whether the fd needs reopening after a read error.
+	var err error
 	dlStale := false
 	ulStale := false
 
