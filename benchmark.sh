@@ -25,6 +25,19 @@ set -e
 DURATION=120
 SAMPLE_INTERVAL_MS=500
 RATE_POLL_MS=50
+
+# BusyBox sleep only accepts integers. Use usleep (microseconds) if available,
+# otherwise fall back to sleep 1.
+msleep() {
+    ms="$1"
+    if command -v usleep >/dev/null 2>&1; then
+        usleep $((ms * 1000))
+    elif [ "$ms" -ge 1000 ]; then
+        sleep $((ms / 1000))
+    else
+        sleep 1
+    fi
+}
 GO_SERVICE="${GO_SERVICE:-cake-autorate-go}"
 BASH_SERVICE="${BASH_SERVICE:-cake-autorate}"
 BASH_LOG="${BASH_LOG:-/var/log/cake-autorate.log}"
@@ -83,14 +96,13 @@ collect_samples() {
     samples=0
     elapsed_ms=0
     duration_ms=$((DURATION * 1000))
-    sleep_sec=$(awk "BEGIN {printf \"%.3f\", $SAMPLE_INTERVAL_MS / 1000.0}")
     # Print a status line every ~5s to avoid flooding the terminal
     status_every=$(( (5000 + SAMPLE_INTERVAL_MS - 1) / SAMPLE_INTERVAL_MS ))
 
     echo "timestamp_ms,num_procs,total_rss_kb,total_cpu_pct" > "$outfile"
 
     while [ "$elapsed_ms" -lt "$duration_ms" ]; do
-        sleep "$sleep_sec"
+        msleep "$SAMPLE_INTERVAL_MS"
         elapsed_ms=$((elapsed_ms + SAMPLE_INTERVAL_MS))
         samples=$((samples + 1))
 
@@ -141,9 +153,7 @@ poll_rates() {
 
         echo "${ts},${dl_rate},${ul_rate}" >> "$outfile"
 
-        # Sleep in milliseconds using awk for fractional sleep
-        sleep_sec=$(awk "BEGIN {printf \"%.3f\", $RATE_POLL_MS / 1000.0}")
-        sleep "$sleep_sec"
+        msleep "$RATE_POLL_MS"
         elapsed_ms=$((elapsed_ms + RATE_POLL_MS))
     done
 }
