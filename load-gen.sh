@@ -8,40 +8,55 @@
 #   -d DURATION   Duration in seconds (default: 120)
 #   -m MODE       Load mode: dl, ul, both (default: both)
 #   -w WORKERS    Parallel workers per direction (default: 4)
-#   -s CHUNK_MB   Download chunk size in MB (default: 100)
 #   -h            Show help
 #
 # Requirements: curl
 #
-# The script downloads from / uploads to Cloudflare's speed test endpoints,
-# which are fast, globally distributed, and don't require accounts.
+# Download workers fetch large test files from well-known speed test servers
+# (Hetzner, OVH, Tele2) that serve at full speed without throttling.
+# Upload workers POST to Cloudflare's speed test upload endpoint.
+# Override URLs with DL_URLS (space-separated) and UL_URL env vars.
 
 set -e
 
 DURATION=120
 MODE="both"
 WORKERS=4
-CHUNK_MB=100
+
+# Well-known speed test file servers that serve at full line rate.
+# Workers round-robin across these to spread load / avoid single-server limits.
+DEFAULT_DL_URLS="https://speed.hetzner.de/1GB.bin http://speedtest.tele2.net/1GB.zip http://proof.ovh.net/files/1Gio.dat"
+DL_URLS="${DL_URLS:-$DEFAULT_DL_URLS}"
+UL_URL="${UL_URL:-https://speed.cloudflare.com/__up}"
 
 usage() {
     sed -n '2,/^$/s/^# //p' "$0"
     exit 0
 }
 
-while getopts "d:m:w:s:h" opt; do
+while getopts "d:m:w:h" opt; do
     case $opt in
         d) DURATION="$OPTARG" ;;
         m) MODE="$OPTARG" ;;
         w) WORKERS="$OPTARG" ;;
-        s) CHUNK_MB="$OPTARG" ;;
         h) usage ;;
         *) usage ;;
     esac
 done
 
-CHUNK_BYTES=$((CHUNK_MB * 1000000))
-DL_URL="https://speed.cloudflare.com/__down?bytes=${CHUNK_BYTES}"
-UL_URL="https://speed.cloudflare.com/__up"
+# Convert DL_URLS string to an array
+set -f  # disable globbing
+dl_urls_arr=()
+for u in $DL_URLS; do
+    dl_urls_arr+=("$u")
+done
+set +f
+dl_url_count=${#dl_urls_arr[@]}
+
+if [ "$dl_url_count" -eq 0 ]; then
+    echo "ERROR: No download URLs configured" >&2
+    exit 1
+fi
 
 # Track child PIDs for cleanup
 PIDS=""
@@ -60,18 +75,18 @@ log() {
     echo "[load-gen] [$(date '+%H:%M:%S')] $*"
 }
 
-# Download worker: fetch large chunks in a loop until killed
+# Download worker: fetch large file in a loop until killed
+# Each worker gets a URL assigned round-robin from dl_urls_arr
 dl_worker() {
-    id=$1
+    url=$1
     while true; do
-        curl -s -o /dev/null --max-time "$((DURATION + 30))" "$DL_URL" 2>/dev/null || true
+        curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2>/dev/null || true
     done
 }
 
 # Upload worker: POST random data in a loop until killed
 ul_worker() {
     id=$1
-    # Generate a reusable random payload (1 MB) and POST it repeatedly
     payload_file=$(mktemp)
     dd if=/dev/urandom of="$payload_file" bs=1M count=1 2>/dev/null
     while true; do
@@ -82,16 +97,21 @@ ul_worker() {
     rm -f "$payload_file"
 }
 
-log "Mode: $MODE | Duration: ${DURATION}s | Workers: $WORKERS per direction | Chunk: ${CHUNK_MB}MB"
-log "Download URL: $DL_URL"
-log "Upload URL:   $UL_URL"
+log "Mode: $MODE | Duration: ${DURATION}s | Workers: $WORKERS per direction"
+log "Download URLs:"
+for u in "${dl_urls_arr[@]}"; do
+    log "  $u"
+done
+log "Upload URL: $UL_URL"
 echo ""
 
-# Start download workers
+# Start download workers (round-robin across URLs)
 if [ "$MODE" = "dl" ] || [ "$MODE" = "both" ]; then
     log "Starting $WORKERS download workers..."
     for i in $(seq 1 "$WORKERS"); do
-        dl_worker "$i" &
+        idx=$(( (i - 1) % dl_url_count ))
+        url="${dl_urls_arr[$idx]}"
+        dl_worker "$url" &
         PIDS="$PIDS $!"
     done
 fi

@@ -7,8 +7,9 @@
     through the router's WAN interfaces into the internet, triggering
     cake-autorate shaping.
 
-    Downloads from / uploads to Cloudflare's speed test endpoints,
-    which are fast, globally distributed, and don't require accounts.
+    Download workers fetch large test files from well-known speed test servers
+    (Hetzner, OVH, Tele2) that serve at full speed without throttling.
+    Upload workers POST to Cloudflare's speed test upload endpoint.
 
     Uses curl.exe (shipped with Windows 10+) for maximum throughput.
 
@@ -21,8 +22,11 @@
 .PARAMETER Workers
     Parallel workers per direction (default: 4)
 
-.PARAMETER ChunkMB
-    Download chunk size in MB (default: 100)
+.PARAMETER DlUrls
+    Override download URLs (array of strings)
+
+.PARAMETER UlUrl
+    Override upload URL
 
 .EXAMPLE
     .\load-gen.ps1 -Duration 120 -Mode both -Workers 4
@@ -33,7 +37,12 @@ param(
     [ValidateSet("dl", "ul", "both")]
     [string]$Mode = "both",
     [int]$Workers = 4,
-    [int]$ChunkMB = 100
+    [string[]]$DlUrls = @(
+        "https://speed.hetzner.de/1GB.bin",
+        "http://speedtest.tele2.net/1GB.zip",
+        "http://proof.ovh.net/files/1Gio.dat"
+    ),
+    [string]$UlUrl = "https://speed.cloudflare.com/__up"
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,17 +54,14 @@ if (-not $curl) {
     exit 1
 }
 
-$ChunkBytes = $ChunkMB * 1000000
-$DL_URL = "https://speed.cloudflare.com/__down?bytes=$ChunkBytes"
-$UL_URL = "https://speed.cloudflare.com/__up"
-
 function Log($msg) {
     Write-Host "[load-gen] [$(Get-Date -Format 'HH:mm:ss')] $msg"
 }
 
-Log "Mode: $Mode | Duration: ${Duration}s | Workers: $Workers per direction | Chunk: ${ChunkMB}MB"
-Log "Download URL: $DL_URL"
-Log "Upload URL:   $UL_URL"
+Log "Mode: $Mode | Duration: ${Duration}s | Workers: $Workers per direction"
+Log "Download URLs:"
+foreach ($u in $DlUrls) { Log "  $u" }
+Log "Upload URL: $UlUrl"
 Write-Host ""
 
 # Generate a 1 MB random payload file for upload workers
@@ -69,12 +75,12 @@ $rng.Dispose()
 $jobs = @()
 $maxTime = $Duration + 30
 
-# Download worker: curl.exe fetching chunks in a loop
+# Download worker: curl.exe fetching a large file in a loop
 $dlBlock = {
     param($url, $durationSec, $maxTime)
     $deadline = [DateTime]::UtcNow.AddSeconds($durationSec)
     while ([DateTime]::UtcNow -lt $deadline) {
-        & curl.exe -s -o NUL --max-time $maxTime $url 2>$null
+        & curl.exe -s -L -o NUL --max-time $maxTime $url 2>$null
     }
 }
 
@@ -87,11 +93,12 @@ $ulBlock = {
     }
 }
 
-# Start download workers
+# Start download workers (round-robin across URLs)
 if ($Mode -eq "dl" -or $Mode -eq "both") {
     Log "Starting $Workers download workers..."
-    for ($i = 1; $i -le $Workers; $i++) {
-        $jobs += Start-Job -ScriptBlock $dlBlock -ArgumentList $DL_URL, $Duration, $maxTime
+    for ($i = 0; $i -lt $Workers; $i++) {
+        $url = $DlUrls[$i % $DlUrls.Length]
+        $jobs += Start-Job -ScriptBlock $dlBlock -ArgumentList $url, $Duration, $maxTime
     }
 }
 
@@ -99,7 +106,7 @@ if ($Mode -eq "dl" -or $Mode -eq "both") {
 if ($Mode -eq "ul" -or $Mode -eq "both") {
     Log "Starting $Workers upload workers..."
     for ($i = 1; $i -le $Workers; $i++) {
-        $jobs += Start-Job -ScriptBlock $ulBlock -ArgumentList $UL_URL, $uploadPayloadPath, $Duration, $maxTime
+        $jobs += Start-Job -ScriptBlock $ulBlock -ArgumentList $UlUrl, $uploadPayloadPath, $Duration, $maxTime
     }
 }
 
