@@ -60,6 +60,14 @@ PRI_UL_IFACE="${PRI_UL_IFACE:-eth1}"
 SEC_DL_IFACE="${SEC_DL_IFACE:-ifb4lan1}"
 SEC_UL_IFACE="${SEC_UL_IFACE:-lan1}"
 
+SETTLE_TIMEOUT=120
+SETTLE_TOLERANCE_PCT=5
+
+# Config file paths (override via environment)
+GO_CONFIG="${GO_CONFIG:-/etc/cake-autorate/config.yaml}"
+BASH_CONFIG_PRIMARY="${BASH_CONFIG_PRIMARY:-/root/cake-autorate/config.primary.sh}"
+BASH_CONFIG_SECONDARY="${BASH_CONFIG_SECONDARY:-/root/cake-autorate/config.secondary.sh}"
+
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
 
 usage() {
@@ -98,6 +106,128 @@ read_cake_rate() {
         fi
     fi
     echo "$rate"
+}
+
+# ── Extract base rates from config files ───────────────────────────────────
+# Go config: YAML with links[].download.base_rate_kbps / upload.base_rate_kbps
+# Returns: "pri_dl pri_ul sec_dl sec_ul" base rates in kbps
+get_go_base_rates() {
+    config="$1"
+    if [ ! -f "$config" ]; then
+        log "WARNING: Go config not found at $config"
+        echo "0 0 0 0"
+        return
+    fi
+    # Parse YAML — extract base_rate_kbps values per link/direction.
+    # Expects links with download/upload sections. Uses simple line-based parsing.
+    awk '
+    /^[[:space:]]*links:/ { in_links = 1; next }
+    in_links && /^[[:space:]]*- name:/ {
+        link_idx++
+        next
+    }
+    in_links && /^[[:space:]]*download:/ { section = "dl"; next }
+    in_links && /^[[:space:]]*upload:/ { section = "ul"; next }
+    in_links && /base_rate_kbps:/ {
+        gsub(/[^0-9]/, "", $NF)
+        if (link_idx == 1 && section == "dl") pri_dl = $NF
+        if (link_idx == 1 && section == "ul") pri_ul = $NF
+        if (link_idx == 2 && section == "dl") sec_dl = $NF
+        if (link_idx == 2 && section == "ul") sec_ul = $NF
+    }
+    # Also handle top-level download/upload (single-link config)
+    !in_links && /^download:/ { section = "dl"; single = 1; next }
+    !in_links && /^upload:/ { section = "ul"; single = 1; next }
+    single && /base_rate_kbps:/ {
+        gsub(/[^0-9]/, "", $NF)
+        if (section == "dl") pri_dl = $NF
+        if (section == "ul") pri_ul = $NF
+    }
+    END {
+        printf "%s %s %s %s", pri_dl+0, pri_ul+0, sec_dl+0, sec_ul+0
+    }' "$config"
+}
+
+# Bash config: shell variables base_dl_shaper_rate_kbps / base_ul_shaper_rate_kbps
+# Args: $1=primary_config $2=secondary_config
+# Returns: "pri_dl pri_ul sec_dl sec_ul" base rates in kbps
+get_bash_base_rates() {
+    pri_config="$1"
+    sec_config="$2"
+    pri_dl=0; pri_ul=0; sec_dl=0; sec_ul=0
+
+    if [ -f "$pri_config" ]; then
+        pri_dl=$(sed -n 's/^base_dl_shaper_rate_kbps=\([0-9]*\).*/\1/p' "$pri_config")
+        pri_ul=$(sed -n 's/^base_ul_shaper_rate_kbps=\([0-9]*\).*/\1/p' "$pri_config")
+    else
+        log "WARNING: Bash primary config not found at $pri_config"
+    fi
+
+    if [ -f "$sec_config" ]; then
+        sec_dl=$(sed -n 's/^base_dl_shaper_rate_kbps=\([0-9]*\).*/\1/p' "$sec_config")
+        sec_ul=$(sed -n 's/^base_ul_shaper_rate_kbps=\([0-9]*\).*/\1/p' "$sec_config")
+    else
+        log "WARNING: Bash secondary config not found at $sec_config"
+    fi
+
+    printf "%s %s %s %s" "${pri_dl:-0}" "${pri_ul:-0}" "${sec_dl:-0}" "${sec_ul:-0}"
+}
+
+# ── Wait for autorate to settle at base rates ─────────────────────────────
+# Polls tc until all interfaces show rates within SETTLE_TOLERANCE_PCT of base.
+# Args: $1=pri_dl_base $2=pri_ul_base $3=sec_dl_base $4=sec_ul_base
+# Times out after SETTLE_TIMEOUT seconds.
+wait_for_settle() {
+    base_pri_dl="$1"; base_pri_ul="$2"
+    base_sec_dl="$3"; base_sec_ul="$4"
+    elapsed=0
+
+    # Skip if we have no base rates to compare against
+    if [ "$base_pri_dl" = "0" ] && [ "$base_sec_dl" = "0" ]; then
+        log "  No base rates available — skipping settle detection"
+        return 0
+    fi
+
+    log "  Waiting for rates to settle at base values (timeout: ${SETTLE_TIMEOUT}s, tolerance: ${SETTLE_TOLERANCE_PCT}%)..."
+    log "  Target base rates: pri_dl=${base_pri_dl} pri_ul=${base_pri_ul} sec_dl=${base_sec_dl} sec_ul=${base_sec_ul}"
+
+    while [ "$elapsed" -lt "$SETTLE_TIMEOUT" ]; do
+        cur_pri_dl=$(read_cake_rate "$PRI_DL_IFACE")
+        cur_pri_ul=$(read_cake_rate "$PRI_UL_IFACE")
+        cur_sec_dl=$(read_cake_rate "$SEC_DL_IFACE")
+        cur_sec_ul=$(read_cake_rate "$SEC_UL_IFACE")
+
+        settled=1
+        for pair in \
+            "$cur_pri_dl $base_pri_dl" \
+            "$cur_pri_ul $base_pri_ul" \
+            "$cur_sec_dl $base_sec_dl" \
+            "$cur_sec_ul $base_sec_ul"
+        do
+            set -- $pair
+            current="$1"; base="$2"
+            [ "$base" = "0" ] && continue  # skip unconfigured links
+            if ! awk "BEGIN { diff = ($current - $base); if (diff < 0) diff = -diff; exit (diff <= $base * $SETTLE_TOLERANCE_PCT / 100) ? 0 : 1 }"; then
+                settled=0
+                break
+            fi
+        done
+
+        if [ "$settled" = "1" ]; then
+            log "  Settled at base rates after ${elapsed}s (pri_dl=${cur_pri_dl} pri_ul=${cur_pri_ul} sec_dl=${cur_sec_dl} sec_ul=${cur_sec_ul})"
+            return 0
+        fi
+
+        sleep 2
+        elapsed=$((elapsed + 2))
+
+        if [ $((elapsed % 10)) -eq 0 ]; then
+            log "  Still settling... ${elapsed}s (pri_dl=${cur_pri_dl}/${base_pri_dl} pri_ul=${cur_pri_ul}/${base_pri_ul} sec_dl=${cur_sec_dl}/${base_sec_dl} sec_ul=${cur_sec_ul}/${base_sec_ul})"
+        fi
+    done
+
+    log "  WARNING: Settle timeout (${SETTLE_TIMEOUT}s) — proceeding with current rates"
+    return 1
 }
 
 # ── Collect resource usage samples ──────────────────────────────────────────
@@ -463,7 +593,11 @@ if ! service "$GO_SERVICE" start 2>/dev/null; then
 fi
 sleep 2
 
-log "Go version running"
+log "Go version running — waiting for settle..."
+go_base_rates=$(get_go_base_rates "$GO_CONFIG")
+set -- $go_base_rates
+wait_for_settle "$1" "$2" "$3" "$4"
+
 log ">>> Start load-gen.sh on the PC now <<<"
 echo ""
 
@@ -509,7 +643,11 @@ if ! service "$BASH_SERVICE" start 2>/dev/null; then
 fi
 sleep 5
 
-log "Bash version running"
+log "Bash version running — waiting for settle..."
+bash_base_rates=$(get_bash_base_rates "$BASH_CONFIG_PRIMARY" "$BASH_CONFIG_SECONDARY")
+set -- $bash_base_rates
+wait_for_settle "$1" "$2" "$3" "$4"
+
 log ">>> Start load-gen.sh on the PC now <<<"
 echo ""
 
