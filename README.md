@@ -56,28 +56,28 @@ With native netlink for CAKE bandwidth adjustments, the Go version reacts to eac
 
 The single-interface benchmark above shows rough parity on memory and CPU. However, routers often manage **multiple WAN interfaces** (dual-WAN failover, load balancing, or separate uplinks). This is where the architectural differences become decisive.
 
-Measured on the same OpenWrt router with **two WAN interfaces** configured, 60 seconds per version:
+Measured on the same OpenWrt router with **two WAN interfaces** configured, 120 seconds per version:
 
 | Metric | Bash | Go | Improvement |
 |---|---|---|---|
-| **Processes** | 11 (peak 11) | 1 | **11x fewer** |
-| **Memory (RSS)** | 21,603 KB (peak 21,704 KB) | 10,435 KB (peak 11,156 KB) | **2x less** |
-| **CPU** | 12.11% (peak 13.8%) | 4.65% (peak 5.3%) | **2.6x less** |
+| **Processes** | 12 (peak 13) | 1 | **12x fewer** |
+| **Memory (RSS)** | 22,717 KB (peak 23,696 KB) | 10,899 KB (peak 11,664 KB) | **2x less** |
+| **CPU** | 14.23% (peak 114.1%) | 6.29% (peak 6.7%) | **2.3x less** |
 
 The bash version spawns a **full process tree per interface** — each WAN link gets its own set of bash, fping, awk, and monitor subprocesses. Resource usage scales linearly with the number of interfaces. The Go version handles all interfaces within a single process using goroutines, so adding a second WAN link adds negligible overhead.
 
-On a resource-constrained router with 128–256 MB of RAM, the difference between 21 MB and 10 MB for a single daemon is significant — especially when running alongside other services (dnsmasq, firewall, VPN).
+On a resource-constrained router with 128–256 MB of RAM, the difference between 23 MB and 11 MB for a single daemon is significant — especially when running alongside other services (dnsmasq, firewall, VPN).
 
 #### Summary
 
 | Aspect | Winner | Details |
 |---|---|---|
 | Memory (1 WAN) | **Go (~10%)** | 10.5 MB vs 11.6 MB |
-| Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
+| Memory (2 WAN) | **Go (2x)** | 11 MB vs 23 MB — bash scales linearly per interface |
 | CPU (1 WAN) | **Go (1.5x)** | 4.2% vs 6.2% |
-| CPU (2 WAN) | **Go (2.6x)** | 4.7% vs 12% — native netlink + zero-alloc hot path |
+| CPU (2 WAN) | **Go (2.3x)** | 6.3% vs 14.2% — native netlink + zero-alloc hot path |
 | Responsiveness | **Go (3.5–3.8x)** | 1.2s (1 WAN) / 1.3s (2 WANs) vs 4.6s ramp-up |
-| Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
+| Process count | **Go** | 1 vs 5-13 processes (scales with interfaces) |
 | Multi-WAN scaling | **Go** | Goroutines vs full process trees per interface |
 | Deployment | **Go** | Single static binary, no bash/awk/fping dependencies |
 | Maturity | **Bash** | Battle-tested with a large user community |
