@@ -57,8 +57,8 @@ BASH_LOG_SECONDARY="${BASH_LOG_SECONDARY:-/var/log/cake-autorate.secondary.log}"
 PRI_DL_IFACE="${PRI_DL_IFACE:-ifb4eth1}"
 PRI_UL_IFACE="${PRI_UL_IFACE:-eth1}"
 # Secondary link
-SEC_DL_IFACE="${SEC_DL_IFACE:-ifb4eth2}"
-SEC_UL_IFACE="${SEC_UL_IFACE:-eth2}"
+SEC_DL_IFACE="${SEC_DL_IFACE:-ifb4lan1}"
+SEC_UL_IFACE="${SEC_UL_IFACE:-lan1}"
 
 RESULTS_DIR="/tmp/cake-autorate-benchmark"
 
