@@ -16,6 +16,8 @@ The original project is licensed under [GPL-2.0](https://www.gnu.org/licenses/ol
 
 ## Why a Go rewrite?
 
+The motivation was twofold: to explore how much fewer resources a native implementation may consume compared to the original bash scripts, and to see how much more responsive a compiled solution could be at tracking latency changes and adjusting rates.
+
 The original cake-autorate is a sophisticated bash script (~1,800 lines) that orchestrates multiple background processes (fping, monitor, log manager) communicating via FIFOs. On resource-constrained routers, this architecture has overhead from constant fork/exec cycles for arithmetic, parsing, and process coordination.
 
 Go was chosen because:
@@ -135,19 +137,226 @@ This installs the binary to `/usr/sbin/cake-autorate-go`, creates a default conf
 
 ## Configuration
 
-Generate a default configuration file:
+cake-autorate-go uses a single YAML configuration file (default: `/etc/cake-autorate/config.yaml`). Every setting has a sensible default, so you only need to override what differs from your setup.
+
+Generate a default configuration file as a starting point:
 
 ```bash
 ./cake-autorate-go --defaults > /etc/cake-autorate/config.yaml
 ```
 
-Edit the configuration to match your setup. At minimum, you must set:
+See [config.example.yaml](config.example.yaml) for a fully annotated example.
 
-- `download.interface` — your download interface (e.g., `ifb-wan`)
-- `upload.interface` — your upload interface (e.g., `wan`)
-- Rate limits for both directions (`min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps`)
+### Quick Start (Single WAN)
 
-See [config.example.yaml](config.example.yaml) for a fully documented example.
+At minimum, set the interfaces and rate limits for your connection:
+
+```yaml
+links:
+  - name: primary
+    download:
+      interface: ifb-wan        # Your download interface
+      adjust: true
+      min_rate_kbps: 25000      # Minimum download bandwidth
+      base_rate_kbps: 100000    # Steady-state target bandwidth
+      max_rate_kbps: 100000     # Maximum download bandwidth
+    upload:
+      interface: wan            # Your upload interface
+      adjust: true
+      min_rate_kbps: 5000
+      base_rate_kbps: 35000
+      max_rate_kbps: 35000
+```
+
+**Finding your interfaces:** On OpenWrt, the download interface is typically `ifb-wan` (or `ifb4eth0` / `ifb4eth1` depending on your setup), and the upload interface matches your WAN device (e.g., `wan`, `eth0`, `eth1`). Run `tc qdisc show` to see which interfaces have CAKE configured.
+
+**Setting rates:** `base_rate_kbps` should match your ISP's provisioned speed. Set `min_rate_kbps` to the lowest usable bandwidth (typically 10–25% of base) and `max_rate_kbps` to the maximum your link can sustain. If unsure, set `max_rate_kbps` equal to `base_rate_kbps` to start.
+
+### Multi-WAN Setup
+
+To manage multiple WAN links, add additional entries to the `links` array. Each link runs concurrently within the same process — no need to spawn separate instances.
+
+```yaml
+links:
+  - name: primary
+    download:
+      interface: ifb4eth1
+      adjust: true
+      min_rate_kbps: 25000
+      base_rate_kbps: 200000
+      max_rate_kbps: 200000
+    upload:
+      interface: eth1
+      adjust: true
+      min_rate_kbps: 25000
+      base_rate_kbps: 35000
+      max_rate_kbps: 35000
+    reflectors:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
+    ping_interface: wan         # Bind pings to this WAN for policy routing
+
+  - name: secondary
+    download:
+      interface: ifb4eth2
+      adjust: true
+      min_rate_kbps: 5000
+      base_rate_kbps: 50000
+      max_rate_kbps: 100000
+    upload:
+      interface: eth2
+      adjust: true
+      min_rate_kbps: 5000
+      base_rate_kbps: 10000
+      max_rate_kbps: 20000
+    reflectors:
+      - 1.0.0.1
+      - 8.8.4.4
+    ping_interface: wan2
+```
+
+For multi-WAN routers (e.g., with mwan3), set `ping_interface` on each link so ICMP packets are routed through the correct WAN using `SO_BINDTODEVICE`. You can optionally set `ping_source_addr` to bind to a specific source IP.
+
+### Reflectors
+
+Reflectors are remote hosts used for latency measurement via ICMP ping. Each link can specify its own reflector list, or inherit the defaults:
+
+```yaml
+reflectors:              # Default reflectors (used if a link omits its own)
+  - 1.1.1.1
+  - 1.0.0.1
+  - 8.8.8.8
+  - 8.8.4.4
+  - 9.9.9.9
+  - 149.112.112.112
+  - 208.67.222.222
+  - 208.67.220.220
+
+pinger_count: 6          # How many reflectors to ping simultaneously
+ping_interval_ms: 300    # Interval between pings per reflector (ms)
+```
+
+Misbehaving reflectors (those that stop responding or show erratic latency) are automatically detected and replaced from the pool.
+
+### Delay Thresholds
+
+Each direction has three delay thresholds that control how aggressively bufferbloat is detected and acted upon:
+
+```yaml
+owd_delta_delay_thr_ms: 30.0               # OWD delta above this = possible bufferbloat
+avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Only increase rate if avg delta is below this
+avg_owd_delta_max_adjust_down_thr_ms: 60.0  # Maximum avg delta — triggers largest rate decrease
+```
+
+- `owd_delta_delay_thr_ms` — The one-way delay (OWD) delta threshold. When the delta between the current OWD and the baseline exceeds this, a bufferbloat sample is counted.
+- `avg_owd_delta_max_adjust_up_thr_ms` — The average OWD delta must be below this value for the shaper to increase the rate. Lower values make rate increases more conservative.
+- `avg_owd_delta_max_adjust_down_thr_ms` — At this average delta, the maximum rate decrease is applied. The actual decrease is interpolated between the min and max adjustment factors.
+
+### Rate Adjustment Tuning
+
+These factors control how the shaper adjusts bandwidth in response to load and bufferbloat:
+
+```yaml
+# Bufferbloat response — rate is multiplied by a factor between max and min
+shaper_rate_min_adjust_down_bufferbloat: 0.99   # Mild bufferbloat → small decrease
+shaper_rate_max_adjust_down_bufferbloat: 0.75   # Severe bufferbloat → large decrease
+
+# High load — rate increases when load is above high_load_thr and no bufferbloat
+shaper_rate_min_adjust_up_load_high: 1.0        # Minimum increase (1.0 = hold steady)
+shaper_rate_max_adjust_up_load_high: 1.04       # Maximum increase per cycle
+
+# Low load — gentle drift toward base_rate when load is below high_load_thr
+shaper_rate_adjust_down_load_low: 0.99          # Decay toward base (when rate > base)
+shaper_rate_adjust_up_load_low: 1.01            # Recovery toward base (when rate < base)
+
+high_load_thr: 0.75    # Fraction of current rate considered "high load" (0.0–1.0)
+```
+
+### EWMA Parameters
+
+The algorithm uses exponentially weighted moving averages (EWMA) to track delay baselines:
+
+```yaml
+alpha_baseline_increase: 0.001   # Baseline moves very slowly when delay rises
+alpha_baseline_decrease: 0.9     # Baseline tracks quickly when delay drops
+alpha_delta_ewma: 0.095          # Smoothing for the delay delta moving average
+```
+
+The asymmetry between `alpha_baseline_increase` (slow) and `alpha_baseline_decrease` (fast) is intentional — the baseline should be slow to rise (to avoid normalizing bufferbloat) but quick to drop (to track genuine improvements in path latency).
+
+### Idle and Sleep Detection
+
+To avoid unnecessary rate adjustments on idle connections:
+
+```yaml
+enable_sleep_function: true
+connection_active_thr_kbps: 2000   # Below this = idle
+sustained_idle_sleep_thr_s: 60.0   # Seconds of idle before entering sleep state
+```
+
+When the connection enters the **Idle** state, rate adjustments pause and bandwidth drifts back toward `base_rate_kbps`. After `sustained_idle_sleep_thr_s` seconds, pinging stops entirely (**Sleep** state) and resumes when traffic reappears.
+
+### Stall Detection
+
+Detects when a connection appears completely stalled:
+
+```yaml
+stall_detection_thr: 5                  # Consecutive stall samples to trigger
+connection_stall_thr_kbps: 10           # Rate below this = stall sample
+global_ping_response_timeout_s: 10.0    # All reflectors must respond within this
+```
+
+### Timing
+
+```yaml
+monitor_interval_ms: 200                # How often to sample interface throughput
+bufferbloat_refractory_period_ms: 300   # Cooldown between rate increases after bufferbloat
+decay_refractory_period_ms: 1000        # Cooldown between low-load decay adjustments
+```
+
+### Logging
+
+```yaml
+log_to_file: true
+log_file_path: /var/log/cake-autorate.log
+log_file_max_size_kb: 2000    # Log is truncated when it exceeds this size
+debug: false                  # Enable verbose debug logging (or use --debug flag)
+```
+
+### Configuration Reference
+
+| Setting | Default | Description |
+|---|---|---|
+| `links[].download.interface` | `ifb-wan` | Download interface name |
+| `links[].upload.interface` | `wan` | Upload interface name |
+| `links[].*.adjust` | `false` | Enable rate adjustment for this direction |
+| `links[].*.min_rate_kbps` | `5000` | Minimum bandwidth (kbit/s) |
+| `links[].*.base_rate_kbps` | `20000` | Steady-state target bandwidth (kbit/s) |
+| `links[].*.max_rate_kbps` | `80000`/`35000` | Maximum bandwidth (DL/UL, kbit/s) |
+| `links[].reflectors` | 8 public DNS | ICMP ping targets for latency measurement |
+| `links[].ping_interface` | *(none)* | Bind ICMP to this interface (multi-WAN) |
+| `links[].ping_source_addr` | *(none)* | Source IP for ICMP packets |
+| `pinger_count` | `6` | Reflectors to ping simultaneously |
+| `ping_interval_ms` | `300` | Ping interval per reflector (ms) |
+| `enable_sleep_function` | `true` | Enable idle/sleep detection |
+| `connection_active_thr_kbps` | `2000` | Idle threshold (kbit/s) |
+| `sustained_idle_sleep_thr_s` | `60.0` | Idle time before sleep (seconds) |
+| `bufferbloat_detection_window` | `6` | Samples in detection window |
+| `bufferbloat_detection_thr` | `3` | Samples to trigger bufferbloat |
+| `alpha_baseline_increase` | `0.001` | EWMA alpha for rising baseline |
+| `alpha_baseline_decrease` | `0.9` | EWMA alpha for falling baseline |
+| `alpha_delta_ewma` | `0.095` | EWMA alpha for delay delta |
+| `high_load_thr` | `0.75` | High-load threshold (0.0–1.0) |
+| `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
+| `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
+| `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
+| `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |
+| `global_ping_response_timeout_s` | `10.0` | All-reflector response timeout (s) |
+| `log_to_file` | `true` | Enable file logging |
+| `log_file_path` | `/var/log/cake-autorate.log` | Log file location |
+| `log_file_max_size_kb` | `2000` | Max log file size (KB) |
+| `debug` | `false` | Enable debug logging |
 
 ## Usage
 
