@@ -394,7 +394,7 @@ analyze_rates_link() {
 }
 
 # ── Analyze Go debug logs for decision latency ──────────────────────────────
-# Go log format: "2024/01/15 10:30:45.123456 [DEBUG] [link] [DL] bufferbloat: rate 200000 -> 150000 kbps ..."
+# Go log format: "2026/03/21 13:30:49.409860 [DEBUG] [link] [dl] high load: rate 389505 -> 393400 kbps ..."
 analyze_go_log() {
     logfile="$1"
     link_filter="$2"  # e.g. "primary" or "secondary"
@@ -416,8 +416,8 @@ analyze_go_log() {
 
         dir = ""
         for (i = 3; i <= NF; i++) {
-            if ($i == "[DL]") dir = "DL"
-            if ($i == "[UL]") dir = "UL"
+            if ($i == "[dl]") dir = "DL"
+            if ($i == "[ul]") dir = "UL"
         }
 
         type = "unknown"
@@ -527,14 +527,20 @@ compare_rates_link() {
             read bash_first_dl bash_first_ul bash_dlc bash_ulc bash_dur 2>/dev/null || true
 
             if [ "${go_first_dl:-0}" -gt 0 ] && [ "${bash_first_dl:-0}" -gt 0 ]; then
-                ratio=$(awk "BEGIN {printf \"%.1f\", $bash_first_dl / $go_first_dl}")
-                printf "  DL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n" \
-                    "${go_first_dl}" "${bash_first_dl}" "$ratio"
+                awk "BEGIN {
+                    g = $go_first_dl; b = $bash_first_dl
+                    if (g < b) printf \"  DL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n\", g, b, b/g
+                    else if (b < g) printf \"  DL first reaction:  go=%dms  bash=%dms  (bash %.1fx faster)\n\", g, b, g/b
+                    else printf \"  DL first reaction:  go=%dms  bash=%dms  (same)\n\", g, b
+                }"
             fi
             if [ "${go_first_ul:-0}" -gt 0 ] && [ "${bash_first_ul:-0}" -gt 0 ]; then
-                ratio=$(awk "BEGIN {printf \"%.1f\", $bash_first_ul / $go_first_ul}")
-                printf "  UL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n" \
-                    "${go_first_ul}" "${bash_first_ul}" "$ratio"
+                awk "BEGIN {
+                    g = $go_first_ul; b = $bash_first_ul
+                    if (g < b) printf \"  UL first reaction:  go=%dms  bash=%dms  (go %.1fx faster)\n\", g, b, b/g
+                    else if (b < g) printf \"  UL first reaction:  go=%dms  bash=%dms  (bash %.1fx faster)\n\", g, b, g/b
+                    else printf \"  UL first reaction:  go=%dms  bash=%dms  (same)\n\", g, b
+                }"
             fi
             if [ "${go_dur:-0}" != "0" ] && [ "${bash_dur:-0}" != "0" ]; then
                 go_rate=$(awk "BEGIN {if ($go_dur > 0) printf \"%.1f\", $go_dlc / $go_dur; else print 0}")
