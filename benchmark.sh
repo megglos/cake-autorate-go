@@ -83,6 +83,7 @@ while getopts "d:h" opt; do
     esac
 done
 
+rm -rf "$RESULTS_DIR"
 mkdir -p "$RESULTS_DIR"
 
 log() {
