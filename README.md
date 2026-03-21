@@ -16,6 +16,8 @@ The original project is licensed under [GPL-2.0](https://www.gnu.org/licenses/ol
 
 ## Why a Go rewrite?
 
+The motivation was twofold: to explore how much fewer resources a native implementation may consume compared to the original bash scripts, and to see how much more responsive a compiled solution could be at tracking latency changes and adjusting rates.
+
 The original cake-autorate is a sophisticated bash script (~1,800 lines) that orchestrates multiple background processes (fping, monitor, log manager) communicating via FIFOs. On resource-constrained routers, this architecture has overhead from constant fork/exec cycles for arithmetic, parsing, and process coordination.
 
 Go was chosen because:
