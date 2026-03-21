@@ -218,30 +218,6 @@ links:
 
 For multi-WAN routers (e.g., with mwan3), set `ping_interface` on each link so ICMP packets are routed through the correct WAN using `SO_BINDTODEVICE`. You can optionally set `ping_source_addr` to bind to a specific source IP.
 
-### Legacy Single-Link Format
-
-For backward compatibility, single-WAN setups can use the flat top-level format instead of the `links` array:
-
-```yaml
-download:
-  interface: ifb-wan
-  adjust: true
-  min_rate_kbps: 5000
-  base_rate_kbps: 20000
-  max_rate_kbps: 80000
-upload:
-  interface: wan
-  adjust: true
-  min_rate_kbps: 5000
-  base_rate_kbps: 20000
-  max_rate_kbps: 35000
-reflectors:
-  - 1.1.1.1
-  - 8.8.8.8
-```
-
-This is automatically migrated to a single link named "default" at load time. The `links` format is preferred for new configurations.
-
 ### Reflectors
 
 Reflectors are remote hosts used for latency measurement via ICMP ping. Each link can specify its own reflector list, or inherit the defaults:
