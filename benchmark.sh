@@ -237,15 +237,18 @@ collect_samples() {
     outfile="$2"
     pattern="$3"
     samples=0
-    elapsed_ms=0
-    duration_ms=$((DURATION * 1000))
-    status_every=$(( (5000 + SAMPLE_INTERVAL_MS - 1) / SAMPLE_INTERVAL_MS ))
+    start_epoch=$(date '+%s')
+    last_status_s=0
 
     echo "timestamp_ms,num_procs,total_rss_kb,total_cpu_pct" > "$outfile"
 
-    while [ "$elapsed_ms" -lt "$duration_ms" ]; do
+    while true; do
         msleep "$SAMPLE_INTERVAL_MS"
-        elapsed_ms=$((elapsed_ms + SAMPLE_INTERVAL_MS))
+
+        now_epoch=$(date '+%s')
+        elapsed_s=$((now_epoch - start_epoch))
+        [ "$elapsed_s" -ge "$DURATION" ] && break
+
         samples=$((samples + 1))
 
         proc_data=$(ps -eo pid,rss,pcpu,args 2>/dev/null | grep -E "$pattern" | grep -v grep || true)
@@ -266,8 +269,9 @@ collect_samples() {
         fi
         echo "${ts},$num_procs,$total_rss,$total_cpu" >> "$outfile"
 
-        if [ $((samples % status_every)) -eq 0 ]; then
-            log "  [$label] ${elapsed_ms}ms/${duration_ms}ms: procs=$num_procs rss=${total_rss}KB cpu=${total_cpu}%"
+        if [ $((elapsed_s - last_status_s)) -ge 5 ]; then
+            last_status_s=$elapsed_s
+            log "  [$label] ${elapsed_s}s/${DURATION}s: procs=$num_procs rss=${total_rss}KB cpu=${total_cpu}%"
         fi
     done
 }
@@ -279,10 +283,12 @@ poll_rates() {
     outfile="$1"
     echo "timestamp_ms,pri_dl_kbps,pri_ul_kbps,sec_dl_kbps,sec_ul_kbps" > "$outfile"
 
-    elapsed_ms=0
-    duration_ms=$((DURATION * 1000))
+    start_epoch=$(date '+%s')
 
-    while [ "$elapsed_ms" -lt "$duration_ms" ]; do
+    while true; do
+        now_epoch=$(date '+%s')
+        [ $((now_epoch - start_epoch)) -ge "$DURATION" ] && break
+
         ts=$(date '+%s%N' 2>/dev/null | cut -c1-13)
         if [ ${#ts} -lt 13 ]; then
             ts=$(date '+%s')000
@@ -296,7 +302,6 @@ poll_rates() {
         echo "${ts},${pri_dl},${pri_ul},${sec_dl},${sec_ul}" >> "$outfile"
 
         msleep "$RATE_POLL_MS"
-        elapsed_ms=$((elapsed_ms + RATE_POLL_MS))
     done
 }
 
