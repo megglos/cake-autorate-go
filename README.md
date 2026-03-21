@@ -40,44 +40,57 @@ Even on a single WAN interface, the Go version is leaner across all metrics. The
 
 #### Responsiveness (Rate Adjustment Speed)
 
-This is where the Go version significantly outperforms bash. During a load ramp-up from ~80 Mbps to 200 Mbps:
+Measured during sustained load across two WAN interfaces. The Go version sustains a higher rate of adjustments per second, meaning it tracks changing conditions more closely:
 
-| Metric | Bash | Go (1 WAN) | Go (2 WANs) |
+| Link | Direction | Bash adj/s | Go adj/s |
 |---|---|---|---|
-| **Time to full bandwidth** | ~4.6 seconds | ~1.2 seconds | ~1.3 seconds |
-| **Adjustment interval** | ~200-250 ms | ~44-59 ms | ~45-55 ms |
-| **Speedup** | — | **~3.8x faster** | **~3.5x faster** |
+| **Primary** | DL | 0.3 | 0.6 |
+| **Primary** | UL | 0.3 | 0.5 |
+| **Secondary** | DL | 0.7 | 0.8 |
+| **Secondary** | UL | 0.3 | 0.5 |
 
-With native netlink for CAKE bandwidth adjustments, the Go version reacts to each ping result and adjusts the shaper in ~45-59 ms — even while managing two WAN interfaces concurrently. The tight interval range reflects the elimination of `tc` subprocess variance. In bash, each adjustment cycle requires multiple fork+exec calls (fping parsing, awk calculations, tc invocation), each costing ~5-20 ms on a router CPU, adding up to ~200-250 ms per cycle.
+The Go version consistently makes 1.5–2x more rate adjustments per second than bash. Combined with 3–7x higher decision throughput (see Decision Throughput below), this means the Go shaper tracks load transitions more granularly — smaller, more frequent adjustments rather than larger, less frequent ones.
 
-**Why this matters:** For a latency-sensitive traffic shaper, reaching full bandwidth in ~1.2 seconds vs ~4.6 seconds means noticeably less bufferbloat during load transitions (e.g., starting a download, joining a video call). The Go version maintains this responsiveness even with multiple WAN interfaces — both links reach full bandwidth within 1.3 seconds simultaneously.
+**Why this matters:** More frequent adjustments mean the shaper tracks actual bandwidth demand more closely, reducing both over-provisioning (wasted capacity) and under-provisioning (bufferbloat). This is especially important during rapid load transitions like starting a download or joining a video call.
 
 #### Multi-WAN Scaling
 
 The single-interface benchmark above shows rough parity on memory and CPU. However, routers often manage **multiple WAN interfaces** (dual-WAN failover, load balancing, or separate uplinks). This is where the architectural differences become decisive.
 
-Measured on the same OpenWrt router with **two WAN interfaces** configured, 60 seconds per version:
+Measured on the same OpenWrt router with **two WAN interfaces** configured, 120 seconds per version:
 
 | Metric | Bash | Go | Improvement |
 |---|---|---|---|
-| **Processes** | 11 (peak 11) | 1 | **11x fewer** |
-| **Memory (RSS)** | 21,603 KB (peak 21,704 KB) | 10,435 KB (peak 11,156 KB) | **2x less** |
-| **CPU** | 12.11% (peak 13.8%) | 4.65% (peak 5.3%) | **2.6x less** |
+| **Processes** | 12 | 1 | **12x fewer** |
+| **Memory (RSS)** | 22,640 KB (peak 22,688 KB) | 10,688 KB (peak 11,792 KB) | **2x less** |
+| **CPU** | 10.95% (peak 15.2%) | 5.20% (peak 6.3%) | **2.1x less** |
 
 The bash version spawns a **full process tree per interface** — each WAN link gets its own set of bash, fping, awk, and monitor subprocesses. Resource usage scales linearly with the number of interfaces. The Go version handles all interfaces within a single process using goroutines, so adding a second WAN link adds negligible overhead.
 
-On a resource-constrained router with 128–256 MB of RAM, the difference between 21 MB and 10 MB for a single daemon is significant — especially when running alongside other services (dnsmasq, firewall, VPN).
+On a resource-constrained router with 128–256 MB of RAM, the difference between 23 MB and 11 MB for a single daemon is significant — especially when running alongside other services (dnsmasq, firewall, VPN).
+
+#### Decision Throughput
+
+The Go version processes significantly more rate decisions per second, enabled by its tight goroutine-based control loop:
+
+| Link | Bash decisions/s | Go decisions/s | Speedup |
+|---|---|---|---|
+| **Primary** | 1.1 | 7.7 | **7x more** |
+| **Secondary** | 1.5 | 5.0 | **3.3x more** |
+
+The Go version also provides a breakdown of decision types (bufferbloat, high-load, decay), giving better visibility into shaper behavior.
 
 #### Summary
 
 | Aspect | Winner | Details |
 |---|---|---|
 | Memory (1 WAN) | **Go (~10%)** | 10.5 MB vs 11.6 MB |
-| Memory (2 WAN) | **Go (2x)** | 10 MB vs 21 MB — bash scales linearly per interface |
+| Memory (2 WAN) | **Go (2x)** | 11 MB vs 23 MB — bash scales linearly per interface |
 | CPU (1 WAN) | **Go (1.5x)** | 4.2% vs 6.2% |
-| CPU (2 WAN) | **Go (2.6x)** | 4.7% vs 12% — native netlink + zero-alloc hot path |
-| Responsiveness | **Go (3.5–3.8x)** | 1.2s (1 WAN) / 1.3s (2 WANs) vs 4.6s ramp-up |
-| Process count | **Go** | 1 vs 5-11 processes (scales with interfaces) |
+| CPU (2 WAN) | **Go (2.1x)** | 5.2% vs 11.0% — native netlink + zero-alloc hot path |
+| Responsiveness | **Go (1.5–2x)** | More frequent rate adjustments per second |
+| Decision throughput | **Go (3–7x)** | 5–7.7 decisions/s vs 1.1–1.5 decisions/s |
+| Process count | **Go** | 1 vs 5-12 processes (scales with interfaces) |
 | Multi-WAN scaling | **Go** | Goroutines vs full process trees per interface |
 | Deployment | **Go** | Single static binary, no bash/awk/fping dependencies |
 | Maturity | **Bash** | Battle-tested with a large user community |
