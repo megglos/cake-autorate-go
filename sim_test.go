@@ -175,8 +175,11 @@ type simPolicy string
 
 const (
 	policyAutorate simPolicy = "autorate"
-	policyUnshaped simPolicy = "unshaped"
-	policyFixed    simPolicy = "fixed-base"
+	// policyAutorateOWD is autorate with one-way delays (ICMP timestamps)
+	// instead of RTT/2.
+	policyAutorateOWD simPolicy = "autorate-owd"
+	policyUnshaped    simPolicy = "unshaped"
+	policyFixed       simPolicy = "fixed-base"
 )
 
 // simResult is the scorecard for one run.
@@ -257,8 +260,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	at := func(t float64) time.Time { return epoch.Add(time.Duration(t * float64(time.Millisecond))) }
 
+	owd := policy == policyAutorateOWD
 	var core *RecordingCore
-	if policy == policyAutorate {
+	if policy == policyAutorate || owd {
 		logger := NewDiscardLogger()
 		defer logger.Close()
 		var rec *Recorder
@@ -308,7 +312,8 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 			ulCap += ul.capacity(t) * simStepMs
 		}
 
-		queueMs := dl.bottleneckDelayMs(t) + ul.bottleneckDelayMs(t)
+		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t), ul.bottleneckDelayMs(t)
+		queueMs := dlQueueMs + ulQueueMs
 
 		if core != nil {
 			// Send pings
@@ -320,15 +325,25 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				if !act.pinging {
 					continue
 				}
-				rtt := sc.baseRTT(t, i) + queueMs + sc.jitterMs*rng.ExpFloat64()
-				pending = append(pending, simPendingPing{
-					at: t + rtt,
-					result: PingResult{
-						Reflector: link.Reflectors[i],
-						RTT:       time.Duration(rtt * float64(time.Millisecond)),
-						Timestamp: at(t + rtt),
-					},
-				})
+				base := sc.baseRTT(t, i)
+				jitter := sc.jitterMs * rng.ExpFloat64()
+				rtt := base + queueMs + jitter
+				result := PingResult{
+					Reflector: link.Reflectors[i],
+					RTT:       time.Duration(rtt * float64(time.Millisecond)),
+					Timestamp: at(t + rtt),
+				}
+				if owd {
+					// Each reflector has a different clock offset. The
+					// timestamps have a resolution of 1 ms.
+					offset := 13.7*float64(i) - 40
+					ul := base/2 + ulQueueMs + jitter/2 + offset
+					dl := base/2 + dlQueueMs + jitter/2 - offset
+					result.OWD = true
+					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
+					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond
+				}
+				pending = append(pending, simPendingPing{at: t + rtt, result: result})
 			}
 			// Deliver the replies that are due, in the order of arrival
 			sort.Slice(pending, func(a, b int) bool { return pending[a].at < pending[b].at })

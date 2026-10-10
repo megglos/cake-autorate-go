@@ -927,3 +927,64 @@ func TestCore_DeterministicForSameEvents(t *testing.T) {
 		}
 	}
 }
+
+// owdPing returns a ping result with one-way delays in ms.
+func owdPing(reflector string, ts time.Time, ulMs, dlMs float64) PingResult {
+	ms := func(v float64) time.Duration { return time.Duration(v * float64(time.Millisecond)) }
+	return PingResult{
+		Reflector: reflector,
+		RTT:       ms(ulMs + dlMs),
+		Timestamp: ts,
+		OWD:       true,
+		UlOWD:     ms(ulMs),
+		DlOWD:     ms(dlMs),
+	}
+}
+
+// With one-way delays, a queue in the upload direction must decrease only
+// the upload rate. The clock offset (here +500 ms upload, -500 ms download)
+// must have no effect.
+func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.state = StateRunning
+	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	dlBefore, ulBefore := c.dl.shaperRateKbps, c.ul.shaperRateKbps
+
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 510, -490)) // baseline: 10 ms each way
+	for i := 1; i <= 6; i++ {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 510+80, -490)) // +80 ms upload queue
+	}
+
+	if c.ul.shaperRateKbps >= ulBefore {
+		t.Errorf("upload rate %.0f, want a decrease from %.0f", c.ul.shaperRateKbps, ulBefore)
+	}
+	if c.dl.shaperRateKbps < dlBefore {
+		t.Errorf("download rate %.0f, want no decrease from %.0f", c.dl.shaperRateKbps, dlBefore)
+	}
+}
+
+// Without one-way delays (RTT/2), the same upload queue also decreases the
+// download rate. This is the reason for ICMP timestamps.
+func TestHandlePing_RTTDelayAppliesToBothDirections(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.state = StateRunning
+	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	dlBefore := c.dl.shaperRateKbps
+
+	ts := time.Now()
+	p := owdPing("1.1.1.1", ts, 10, 10)
+	p.OWD = false
+	c.HandlePing(p)
+	for i := 1; i <= 6; i++ {
+		ts = ts.Add(50 * time.Millisecond)
+		p := owdPing("1.1.1.1", ts, 10+80, 10)
+		p.OWD = false
+		c.HandlePing(p)
+	}
+
+	if c.dl.shaperRateKbps >= dlBefore {
+		t.Errorf("download rate %.0f, want a decrease from %.0f with RTT/2", c.dl.shaperRateKbps, dlBefore)
+	}
+}

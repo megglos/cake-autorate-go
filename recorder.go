@@ -70,6 +70,9 @@ type recPingEvent struct {
 	Reflector string `json:"reflector"`
 	RTTUs     int64  `json:"rtt_us"`
 	Timeout   bool   `json:"timeout,omitempty"`
+	// One-way delays (ICMP timestamps only). They contain the clock offset.
+	DlOWDUs *int64 `json:"dl_owd_us,omitempty"`
+	UlOWDUs *int64 `json:"ul_owd_us,omitempty"`
 }
 
 type recRateEvent struct {
@@ -281,14 +284,19 @@ func (r *Recorder) Ping(link string, p PingResult) {
 	if r == nil {
 		return
 	}
-	r.write(recPingEvent{
+	ev := recPingEvent{
 		T:         r.since(p.Timestamp),
 		Type:      recPing,
 		Link:      link,
 		Reflector: p.Reflector,
 		RTTUs:     p.RTT.Microseconds(),
 		Timeout:   p.Timeout,
-	})
+	}
+	if p.OWD {
+		dl, ul := p.DlOWD.Microseconds(), p.UlOWD.Microseconds()
+		ev.DlOWDUs, ev.UlOWDUs = &dl, &ul
+	}
+	r.write(ev)
 }
 
 // Rate records a throughput sample.

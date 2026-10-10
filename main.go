@@ -74,6 +74,9 @@ func main() {
 	defer logger.Close()
 
 	logger.Infof("cake-autorate-go %s starting (%d link(s))", version, len(cfg.Links))
+	for _, w := range cfg.Warnings() {
+		logger.Infof("warning: %s", w)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -80,6 +80,11 @@ links:
 
 pinger_count: 6             # Number of reflectors to ping simultaneously
 ping_interval_ms: 300       # Interval between pings per reflector (ms)
+# ping_method: "icmp" (ICMP echo, RTT/2 for each direction) or
+# "icmp-timestamp" (ICMP timestamps, delay of each direction). With
+# "icmp-timestamp", the reflectors must reply to timestamp requests. If you do
+# not set reflectors, the program uses a list of reflectors that reply.
+ping_method: icmp
 
 # -- Idle/Sleep Settings ------------------------------------------------------
 

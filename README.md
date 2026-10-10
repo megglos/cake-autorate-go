@@ -239,6 +239,21 @@ ping_interval_ms: 300    # Interval between pings per reflector (ms)
 
 Misbehaving reflectors (those that stop responding or show erratic latency) are automatically detected and replaced from the pool.
 
+### Ping method
+
+```yaml
+ping_method: icmp-timestamp   # "icmp" (default) or "icmp-timestamp"
+```
+
+- `icmp` uses ICMP echo. It measures only the round-trip time (RTT). The controller uses RTT/2 as the delay of each direction. Thus, a queue in one direction also decreases the rate of the other direction. For example, a saturated upload decreases the download rate.
+- `icmp-timestamp` uses ICMP timestamp requests (RFC 792). The reply gives the delay of each direction. Thus, the controller decreases only the rate of the direction with the queue. On 5G and Starlink, the upload is frequently saturated. Thus, use `icmp-timestamp` on these links.
+
+Requirements for `icmp-timestamp`:
+
+- Reflectors that reply to ICMP timestamp requests. Many public DNS servers do not reply (for example 1.1.1.1, 8.8.8.8, 9.9.9.9). If the config does not set `reflectors`, the program uses a different default list (AdGuard DNS, Vultr and Hetzner test servers). A reflector that does not reply is replaced from the pool.
+- A firewall that permits ICMP timestamp replies (type 14).
+- A correct clock (NTP) on the router. The controller uses only the change of each one-way delay. Thus, a constant clock offset has no effect, but a fast clock drift can show as a delay change.
+
 ### Delay Thresholds
 
 Each direction has three delay thresholds that control how aggressively bufferbloat is detected and acted upon:
@@ -339,6 +354,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `links[].ping_source_addr` | *(none)* | Source IP for ICMP packets |
 | `pinger_count` | `6` | Reflectors to ping simultaneously |
 | `ping_interval_ms` | `300` | Ping interval per reflector (ms) |
+| `ping_method` | `icmp` | `icmp` (RTT/2 for each direction) or `icmp-timestamp` (delay of each direction) |
 | `enable_sleep_function` | `true` | Enable idle/sleep detection |
 | `connection_active_thr_kbps` | `2000` | Idle threshold (kbit/s) |
 | `sustained_idle_sleep_thr_s` | `60.0` | Idle time before sleep (seconds) |

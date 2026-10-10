@@ -197,12 +197,12 @@ func TestSimScorecard(t *testing.T) {
 		t.Skip("simulation scorecard skipped in -short mode")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%-16s %-10s %8s %8s %8s %8s %7s %7s %7s\n",
+	fmt.Fprintf(&b, "\n%-16s %-12s %8s %8s %8s %8s %7s %7s %7s\n",
 		"scenario", "policy", "p50 ms", "p95 ms", "p99 ms", "bloat s", "dl %", "ul %", "sets")
 	for _, sc := range simScenarios() {
-		for _, p := range []simPolicy{policyUnshaped, policyFixed, policyAutorate} {
+		for _, p := range []simPolicy{policyUnshaped, policyFixed, policyAutorate, policyAutorateOWD} {
 			r := runSim(sc, p)
-			fmt.Fprintf(&b, "%-16s %-10s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7d\n",
+			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7d\n",
 				r.scenario, r.policy, r.latP50, r.latP95, r.latP99, r.bloatS,
 				100*r.dlUtil, 100*r.ulUtil, r.rateChanges)
 		}
@@ -315,6 +315,18 @@ func TestKnownIssue4_UploadBloatThrottlesDownload(t *testing.T) {
 	r := runSim(scenarioByName(t, "bidir-saturated"), policyAutorate)
 	knownIssue(t, "F4", r.dlUtil >= 0.75,
 		"DL utilization %.0f%% while UL is saturated", 100*r.dlUtil)
+}
+
+// With one-way delays, a saturated upload must not decrease the download
+// rate (fix for F4).
+func TestSimOWD_UploadBloatDoesNotThrottleDownload(t *testing.T) {
+	r := runSim(scenarioByName(t, "bidir-saturated"), policyAutorateOWD)
+	if r.dlUtil < 0.75 {
+		t.Errorf("DL utilization %.0f%% while UL is saturated, want 75%% or more", 100*r.dlUtil)
+	}
+	if r.ulUtil < 0.75 {
+		t.Errorf("UL utilization %.0f%%, want 75%% or more", 100*r.ulUtil)
+	}
 }
 
 // F5: a step in the RTT floor (Starlink reconfiguration, route change) is not

@@ -23,6 +23,15 @@ type PingResult struct {
 	RTT       time.Duration
 	Timestamp time.Time
 	Timeout   bool
+
+	// OWD is true if the reply contains one-way delays (ICMP timestamps).
+	// UlOWD is the delay from this host to the reflector, DlOWD is the delay
+	// back. The two values contain the clock offset between the hosts, with
+	// a different sign. Thus, only a change of each value is a delay
+	// change. The resolution is 1 ms.
+	OWD   bool
+	UlOWD time.Duration
+	DlOWD time.Duration
 }
 
 // ReflectorState is the health data of a reflector. Core keeps the delay
@@ -130,6 +139,19 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 			return
 		case <-time.After(initialDelay):
 		}
+	}
+
+	if pm.cfg.PingMethod == PingMethodTimestamp {
+		err := pm.runTimestampPinger(ctx, reflector, interval, deadline, resultCh)
+		if err != nil && ctx.Err() == nil {
+			pm.logger.Errorf("timestamp pinger %s: %v", reflector, err)
+			pm.recordHealth(reflector, true)
+			select {
+			case resultCh <- PingResult{Reflector: reflector, Timestamp: time.Now(), Timeout: true}:
+			case <-ctx.Done():
+			}
+		}
+		return
 	}
 
 	// Create a single long-running pinger instead of a new one per ping.
