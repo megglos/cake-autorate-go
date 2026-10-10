@@ -133,6 +133,10 @@ cleanup() {
     [ -n "$LOAD_PID" ] && kill "$LOAD_PID" 2>/dev/null && wait "$LOAD_PID" 2>/dev/null
     [ -n "$CAR_PID" ] && kill -INT "$CAR_PID" 2>/dev/null && wait "$CAR_PID" 2>/dev/null
     "$CAKE_PC" down "$IFACE" >/dev/null 2>&1 || true
+    # Give the files to the user who started sudo.
+    if [ -n "${SUDO_USER:-}" ] && [ -d "$OUTDIR" ]; then
+        chown -R "$SUDO_USER": "$OUTDIR" 2>/dev/null || true
+    fi
     log "CAKE is removed. Output: $OUTDIR"
 }
 trap cleanup EXIT
