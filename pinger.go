@@ -25,14 +25,13 @@ type PingResult struct {
 	Timeout   bool
 }
 
-// ReflectorState tracks the health and baseline RTT for a reflector.
+// ReflectorState is the health data of a reflector. Core keeps the delay
+// data (baseline RTT, delta EWMA).
 type ReflectorState struct {
-	mu             sync.Mutex
-	BaselineRTT    float64 // microseconds
-	DeltaEWMA      float64 // microseconds
-	MissedWindow   []bool  // sliding window of missed responses
-	MissedIdx      int
-	Active         bool
+	mu           sync.Mutex
+	MissedWindow []bool // sliding window of missed responses
+	MissedIdx    int
+	Active       bool
 }
 
 // PingerManager manages ICMP pingers to multiple reflectors.
@@ -267,10 +266,11 @@ func (pm *PingerManager) recordHealth(reflector string, missed bool) {
 	state.mu.Unlock()
 }
 
-// ReplaceUnhealthy checks reflector health and replaces misbehaving ones
-// with spare reflectors from the pool. Returns true if any replacements
-// were made (callers should restart pingers to pick up the new set).
-func (pm *PingerManager) ReplaceUnhealthy() bool {
+// ReplaceUnhealthy examines the health of the reflectors. It replaces each
+// reflector that does not operate correctly with a spare from the pool. It
+// returns the spares that it made active. If it returns spares, reset their
+// delay data and start the pingers again with the new set.
+func (pm *PingerManager) ReplaceUnhealthy() []string {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -279,7 +279,7 @@ func (pm *PingerManager) ReplaceUnhealthy() bool {
 		activeCount = len(pm.reflectors)
 	}
 
-	replaced := false
+	var promoted []string
 	for i := 0; i < activeCount; i++ {
 		state := pm.states[pm.reflectors[i]]
 		if state == nil {
@@ -310,57 +310,17 @@ func (pm *PingerManager) ReplaceUnhealthy() bool {
 
 			// Reset the promoted spare's state (it entered the active set
 			// at position activeCount-1 after the shift)
-			newState := pm.states[pm.reflectors[activeCount-1]]
+			spare := pm.reflectors[activeCount-1]
+			promoted = append(promoted, spare)
+			newState := pm.states[spare]
 			if newState != nil {
 				newState.mu.Lock()
-				newState.BaselineRTT = 0
-				newState.DeltaEWMA = 0
 				newState.MissedWindow = make([]bool, pm.cfg.ReflectorMisbehavingDetectionWindow)
 				newState.MissedIdx = 0
 				newState.mu.Unlock()
 			}
-			replaced = true
 			i-- // re-evaluate this index since a new reflector shifted in
 		}
 	}
-	return replaced
-}
-
-// UpdateBaseline updates the baseline RTT for a reflector using EWMA.
-func (pm *PingerManager) UpdateBaseline(reflector string, rttUs float64) {
-	state := pm.GetState(reflector)
-	if state == nil {
-		return
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	if state.BaselineRTT == 0 {
-		// First measurement — initialize baseline
-		state.BaselineRTT = rttUs
-		return
-	}
-
-	if rttUs < state.BaselineRTT {
-		// Delay decreased — track new minimum quickly
-		state.BaselineRTT = pm.cfg.AlphaBaselineDecrease*rttUs +
-			(1-pm.cfg.AlphaBaselineDecrease)*state.BaselineRTT
-	} else {
-		// Delay increased — baseline moves slowly
-		state.BaselineRTT = pm.cfg.AlphaBaselineIncrease*rttUs +
-			(1-pm.cfg.AlphaBaselineIncrease)*state.BaselineRTT
-	}
-}
-
-// UpdateDeltaEWMA updates the delay delta EWMA for a reflector.
-func (pm *PingerManager) UpdateDeltaEWMA(reflector string, deltaUs float64) {
-	state := pm.GetState(reflector)
-	if state == nil {
-		return
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	state.DeltaEWMA = pm.cfg.AlphaDeltaEWMA*deltaUs +
-		(1-pm.cfg.AlphaDeltaEWMA)*state.DeltaEWMA
+	return promoted
 }

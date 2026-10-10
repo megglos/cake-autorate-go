@@ -1,0 +1,439 @@
+// SPDX-License-Identifier: GPL-2.0
+//
+// This file is part of cake-autorate-go, a Go rewrite of cake-autorate.
+// Original project: https://github.com/lynxthecat/cake-autorate
+// Original author: lynxthecat and contributors
+// Licensed under GPL-2.0
+
+package main
+
+import (
+	"math"
+	"time"
+)
+
+// State is the operating state of the controller.
+type State int
+
+const (
+	StateRunning State = iota
+	StateIdle
+	StateStall
+)
+
+func (s State) String() string {
+	switch s {
+	case StateRunning:
+		return "RUNNING"
+	case StateIdle:
+		return "IDLE"
+	case StateStall:
+		return "STALL"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+const defaultMTU = 1500
+
+// Actuator applies the decisions of Core. In production, it sets the shaper
+// rate and starts or stops the pingers. Tests and the simulator record or
+// model these decisions.
+type Actuator interface {
+	SetRate(dir Direction, rateKbps int)
+	StartPingers()
+	StopPingers()
+	// InvalidateShaper removes the cached shaper state. The system can
+	// create the qdisc again during a stall (link flap, hotplug).
+	InvalidateShaper()
+}
+
+// dirState is the runtime state for one direction.
+type dirState struct {
+	shaperRateKbps   float64
+	loadPercent      float64
+	mtuBytes         int
+	delayWindow      []bool // true: the delay was more than the threshold
+	delayWindowIdx   int
+	delayWindowCount int // number of true entries (no O(n) scan)
+	bbDetected       bool
+	lastBBTime       time.Time
+	lastDecayTime    time.Time
+}
+
+// reflectorDelay is the delay data for one reflector.
+type reflectorDelay struct {
+	baselineUs float64
+	deltaEWMA  float64
+}
+
+// Core is the cake-autorate control algorithm for one WAN link.
+//
+// Core is deterministic. It does no I/O, starts no goroutines and does not
+// read the wall clock. The time comes from the timestamps of the events.
+// Thus, the same events always give the same decisions.
+// Do not call Core from more than one goroutine at the same time.
+type Core struct {
+	name   string
+	link   *LinkConfig
+	cfg    *Config
+	act    Actuator
+	logger *Logger
+
+	state               State
+	dl                  dirState
+	ul                  dirState
+	reflectors          map[string]*reflectorDelay
+	lastPingTime        time.Time
+	idleSince           time.Time
+	consecutiveTimeouts int
+}
+
+// NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
+// Core uses them for the wire packet compensation.
+func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logger *Logger) *Core {
+	return &Core{
+		name:       link.Name,
+		link:       link,
+		cfg:        cfg,
+		act:        act,
+		logger:     logger,
+		state:      StateRunning,
+		reflectors: make(map[string]*reflectorDelay),
+		dl: dirState{
+			shaperRateKbps: float64(link.Download.BaseRateKbps),
+			mtuBytes:       dlMTU,
+			delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
+		},
+		ul: dirState{
+			shaperRateKbps: float64(link.Upload.BaseRateKbps),
+			mtuBytes:       ulMTU,
+			delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
+		},
+	}
+}
+
+// Start applies the initial shaper rates. Core starts with the assumption
+// that the link operates. Thus, now is the time of the last good ping.
+func (c *Core) Start(now time.Time) {
+	c.lastPingTime = now
+	c.applyRate(DL)
+	c.applyRate(UL)
+}
+
+// State returns the current operating state.
+func (c *Core) State() State { return c.state }
+
+// ShaperRateKbps returns the current shaper rate for a direction.
+func (c *Core) ShaperRateKbps(dir Direction) float64 {
+	return c.getDirState(dir).shaperRateKbps
+}
+
+// ResetReflector removes the delay data for a reflector. Use it when a spare
+// reflector becomes active, because its old baseline is not correct.
+func (c *Core) ResetReflector(reflector string) {
+	delete(c.reflectors, reflector)
+}
+
+// HandleRate processes a sample of the measured throughput.
+func (c *Core) HandleRate(stats RateStats) {
+	// Update load percentages
+	if c.dl.shaperRateKbps > 0 {
+		c.dl.loadPercent = stats.DlRateKbps / c.dl.shaperRateKbps
+	}
+	if c.ul.shaperRateKbps > 0 {
+		c.ul.loadPercent = stats.UlRateKbps / c.ul.shaperRateKbps
+	}
+
+	switch c.state {
+	case StateRunning:
+		// Check for transition to idle
+		if c.cfg.EnableSleepFunction &&
+			stats.DlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) &&
+			stats.UlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) {
+			if c.idleSince.IsZero() {
+				c.idleSince = stats.Timestamp
+			} else if stats.Timestamp.Sub(c.idleSince).Seconds() > c.cfg.SustainedIdleSleepThrS {
+				c.transitionTo(StateIdle)
+				c.act.StopPingers()
+				if c.cfg.MinShaperRatesEnforcement {
+					c.setRates(c.link.Download.MinRateKbps, c.link.Upload.MinRateKbps)
+				}
+			}
+		} else {
+			c.idleSince = time.Time{}
+		}
+
+	case StateIdle:
+		// Check for transition back to running
+		if stats.DlRateKbps >= float64(c.cfg.ConnectionActiveThrKbps) ||
+			stats.UlRateKbps >= float64(c.cfg.ConnectionActiveThrKbps) {
+			c.transitionTo(StateRunning)
+			c.idleSince = time.Time{}
+			c.consecutiveTimeouts = 0
+			c.lastPingTime = stats.Timestamp
+			c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
+			c.act.StartPingers()
+		}
+
+	case StateStall:
+		// Go back to running when there is traffic
+		if stats.DlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) ||
+			stats.UlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) {
+			c.transitionTo(StateRunning)
+			c.consecutiveTimeouts = 0
+			c.lastPingTime = stats.Timestamp
+			c.act.InvalidateShaper()
+			c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
+			c.act.StartPingers()
+		}
+	}
+}
+
+// HandlePing processes a ping reply or timeout.
+func (c *Core) HandlePing(result PingResult) {
+	if c.state != StateRunning {
+		return
+	}
+
+	if result.Timeout {
+		c.handleTimeout(result)
+		return
+	}
+
+	// Update lastPingTime only for replies. The sweeper sends the timeouts.
+	// If timeouts update lastPingTime, the stall detection does not operate.
+	c.lastPingTime = result.Timestamp
+	c.consecutiveTimeouts = 0
+
+	rttUs := float64(result.RTT.Microseconds())
+
+	// Update baseline RTT
+	rd := c.updateBaseline(result.Reflector, rttUs)
+
+	// The OWD delta is the delay increase above the baseline.
+	// RTT/2 is an approximate OWD (the same as fping mode in the original).
+	deltaUs := (rttUs - rd.baselineUs) / 2.0
+	if deltaUs < 0 {
+		deltaUs = 0
+	}
+
+	// Update the delta EWMA only when the load is below the threshold.
+	// High load increases the RTT, and this must not change the EWMA.
+	if c.dl.loadPercent < c.cfg.HighLoadThr && c.ul.loadPercent < c.cfg.HighLoadThr {
+		rd.deltaEWMA = c.cfg.AlphaDeltaEWMA*deltaUs + (1-c.cfg.AlphaDeltaEWMA)*rd.deltaEWMA
+	}
+
+	// Process the two directions. With RTT, they get the same delta.
+	c.processDelay(DL, deltaUs, result.Timestamp)
+	c.processDelay(UL, deltaUs, result.Timestamp)
+}
+
+// updateBaseline updates the baseline RTT of a reflector with an EWMA. It
+// returns the delay data of the reflector.
+func (c *Core) updateBaseline(reflector string, rttUs float64) *reflectorDelay {
+	rd, ok := c.reflectors[reflector]
+	if !ok {
+		// First measurement: set the baseline
+		rd = &reflectorDelay{baselineUs: rttUs}
+		c.reflectors[reflector] = rd
+		return rd
+	}
+
+	if rttUs < rd.baselineUs {
+		// Delay decreased: follow the new minimum quickly
+		rd.baselineUs = c.cfg.AlphaBaselineDecrease*rttUs +
+			(1-c.cfg.AlphaBaselineDecrease)*rd.baselineUs
+	} else {
+		// Delay increased: the baseline moves slowly
+		rd.baselineUs = c.cfg.AlphaBaselineIncrease*rttUs +
+			(1-c.cfg.AlphaBaselineIncrease)*rd.baselineUs
+	}
+	return rd
+}
+
+func (c *Core) handleTimeout(result PingResult) {
+	c.consecutiveTimeouts++
+
+	// Two conditions are necessary: enough consecutive timeouts, and more time
+	// since the last good ping than the global timeout threshold.
+	if c.consecutiveTimeouts >= c.cfg.StallDetectionThr &&
+		!c.lastPingTime.IsZero() &&
+		result.Timestamp.Sub(c.lastPingTime).Seconds() > c.cfg.GlobalPingResponseTimeoutS {
+		c.transitionTo(StateStall)
+		c.act.StopPingers()
+		if c.cfg.MinShaperRatesEnforcement {
+			c.setRates(c.link.Download.MinRateKbps, c.link.Upload.MinRateKbps)
+		}
+	}
+}
+
+func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
+	ds := c.getDirState(dir)
+	dc := c.link.DirConfig(dir)
+
+	// Calculate the compensated delay threshold
+	compensationUs := WirePacketCompensationUs(ds.mtuBytes, int(ds.shaperRateKbps))
+	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
+
+	// Record the result in the sliding window. Keep the count in O(1).
+	exceeded := deltaUs > thresholdUs
+	old := ds.delayWindow[ds.delayWindowIdx]
+	ds.delayWindow[ds.delayWindowIdx] = exceeded
+	ds.delayWindowIdx = (ds.delayWindowIdx + 1) % len(ds.delayWindow)
+
+	// Update the count: remove the old entry, add the new entry
+	if old && !exceeded {
+		ds.delayWindowCount--
+	} else if !old && exceeded {
+		ds.delayWindowCount++
+	}
+	bbCount := ds.delayWindowCount
+
+	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
+
+	if bbDetected {
+		ds.bbDetected = true
+		ds.lastBBTime = now
+		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
+	} else if ds.loadPercent >= c.cfg.HighLoadThr {
+		// High load and no bufferbloat: increase the rate
+		refractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
+		if !ds.bbDetected || now.Sub(ds.lastBBTime) > refractoryDur {
+			ds.bbDetected = false
+			c.adjustRateHighLoad(dir, deltaUs, thresholdUs)
+		}
+	} else {
+		// Low load: move the rate toward the base rate
+		refractoryDur := time.Duration(c.cfg.DecayRefractoryPeriodMs) * time.Millisecond
+		if now.Sub(ds.lastDecayTime) > refractoryDur {
+			ds.lastDecayTime = now
+			ds.bbDetected = false
+			c.adjustRateDecay(dir)
+		}
+	}
+}
+
+// adjustRateBufferbloat decreases the shaper rate when Core finds bufferbloat.
+func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64) {
+	ds := c.getDirState(dir)
+	dc := c.link.DirConfig(dir)
+
+	// Calculate how much the delta is above the threshold, relative to the max threshold
+	maxThrUs := dc.AvgOWDDeltaMaxAdjDownThrMs * 1000.0
+	if maxThrUs <= thresholdUs {
+		maxThrUs = thresholdUs + 1000 // prevent a division by zero
+	}
+
+	factor := (deltaUs - thresholdUs) / (maxThrUs - thresholdUs)
+	factor = clamp(factor, 0, 1)
+
+	minAdj := c.cfg.ShaperRateMinAdjustDownBufferbloat
+	maxAdj := c.cfg.ShaperRateMaxAdjustDownBufferbloat
+
+	adjustment := minAdj - factor*(minAdj-maxAdj)
+	newRate := ds.shaperRateKbps * adjustment
+
+	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+
+	if newRate != ds.shaperRateKbps {
+		c.logger.Debugf("[%s] [%s] bufferbloat: rate %.0f -> %.0f kbps (delta=%.0fus thr=%.0fus factor=%.2f)",
+			c.name, dir, ds.shaperRateKbps, newRate, deltaUs, thresholdUs, factor)
+		ds.shaperRateKbps = newRate
+		c.applyRate(dir)
+	}
+}
+
+// adjustRateHighLoad increases the shaper rate at high load without bufferbloat.
+func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
+	ds := c.getDirState(dir)
+	dc := c.link.DirConfig(dir)
+
+	// The factor shows the remaining headroom below the delay threshold
+	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
+	if maxUpThrUs <= 0 {
+		maxUpThrUs = 1
+	}
+	factor := 1.0 - (deltaUs / maxUpThrUs)
+	factor = clamp(factor, 0, 1)
+
+	minAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh
+	maxAdj := c.cfg.ShaperRateMaxAdjustUpLoadHigh
+
+	adjustment := minAdj + factor*(maxAdj-minAdj)
+	newRate := ds.shaperRateKbps * adjustment
+
+	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+
+	if newRate != ds.shaperRateKbps {
+		c.logger.Debugf("[%s] [%s] high load: rate %.0f -> %.0f kbps (factor=%.2f)",
+			c.name, dir, ds.shaperRateKbps, newRate, factor)
+		ds.shaperRateKbps = newRate
+		c.applyRate(dir)
+	}
+}
+
+// adjustRateDecay moves the shaper rate toward the base rate at low load.
+func (c *Core) adjustRateDecay(dir Direction) {
+	ds := c.getDirState(dir)
+	dc := c.link.DirConfig(dir)
+
+	baseRate := float64(dc.BaseRateKbps)
+	var newRate float64
+
+	if ds.shaperRateKbps > baseRate {
+		newRate = ds.shaperRateKbps * c.cfg.ShaperRateAdjustDownLoadLow
+		newRate = math.Max(newRate, baseRate)
+	} else if ds.shaperRateKbps < baseRate {
+		newRate = ds.shaperRateKbps * c.cfg.ShaperRateAdjustUpLoadLow
+		newRate = math.Min(newRate, baseRate)
+	} else {
+		return
+	}
+
+	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+
+	if newRate != ds.shaperRateKbps {
+		c.logger.Debugf("[%s] [%s] decay: rate %.0f -> %.0f kbps (base=%.0f)",
+			c.name, dir, ds.shaperRateKbps, newRate, baseRate)
+		ds.shaperRateKbps = newRate
+		c.applyRate(dir)
+	}
+}
+
+// setRates sets and applies the two shaper rates.
+func (c *Core) setRates(dlKbps, ulKbps int) {
+	c.dl.shaperRateKbps = float64(dlKbps)
+	c.ul.shaperRateKbps = float64(ulKbps)
+	c.applyRate(DL)
+	c.applyRate(UL)
+}
+
+func (c *Core) applyRate(dir Direction) {
+	if !c.link.DirConfig(dir).Adjust {
+		return
+	}
+	c.act.SetRate(dir, int(math.Round(c.getDirState(dir).shaperRateKbps)))
+}
+
+func (c *Core) getDirState(dir Direction) *dirState {
+	if dir == DL {
+		return &c.dl
+	}
+	return &c.ul
+}
+
+func (c *Core) transitionTo(newState State) {
+	c.logger.Infof("[%s] state: %s -> %s", c.name, c.state, newState)
+	c.state = newState
+}
+
+func clamp(v, min, max float64) float64 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
