@@ -58,7 +58,7 @@ Do two types of recordings:
 
 ### Equipment
 
-- A router with CAKE on the 5G link, and cake-autorate-go.
+- A router with CAKE on the 5G link, and cake-autorate-go. If you do not have a router, use a Linux PC that connects directly to the modem. See [Record from a PC without a router](#record-from-a-pc-without-a-router).
 - A PC on the LAN of the router, with `load-gen.sh` (in this repository) and `curl`.
 - Optional: access to the signal data of the modem (RSRP, SINR, band, cell ID).
 
@@ -130,6 +130,64 @@ done > /tmp/5g-signal-<date>.txt
 ```
 
 For other modems, use the tool of the modem manufacturer. Make sure that each line has a timestamp.
+
+### Record from a PC without a router
+
+You can connect the modem directly to a Linux PC (USB or Ethernet). The PC then does the work of the router: it runs CAKE, cake-autorate-go and the load generator.
+
+#### Requirements
+
+- Linux with the kernel modules `sch_cake`, `ifb` and `act_mirred`.
+- `iproute2` (`tc`), `curl`, root access.
+- cake-autorate-go (`go build .` in this repository).
+
+#### Preparation
+
+1. Find the interface of the modem:
+
+   ```sh
+   ip -br link
+   ```
+
+   Examples: `wwan0` (QMI or MBIM), `usb0` or `enx...` (RNDIS or ECM), `enp...` (Ethernet).
+
+2. Make sure that all internet traffic of the PC goes through the modem. Disconnect the other networks (Wi-Fi, Ethernet), or give the route of the modem the lowest metric. Then, make sure that this command shows the modem interface:
+
+   ```sh
+   ip route get 1.1.1.1
+   ```
+
+3. Set up CAKE. For link recordings without autorate, use no rates (the default is `unlimited`):
+
+   ```sh
+   sudo ./scripts/cake-pc.sh up <modem-interface>
+   ```
+
+   For autorate recordings, give the start rates for download and upload:
+
+   ```sh
+   sudo ./scripts/cake-pc.sh up <modem-interface> 200mbit 30mbit
+   ```
+
+   The script shows the interface names for the config. The download interface is `ifb4<modem-interface>`.
+
+4. Write a config with these interface names. Set `ping_interface` to the modem interface.
+
+#### Recordings
+
+Do the steps in [Link recordings without autorate](#link-recordings-without-autorate) and [Autorate recordings](#autorate-recordings). Run `load-gen.sh` on the same PC. Do not do the `tc qdisc change` commands. The script sets the CAKE bandwidth.
+
+When you complete the recordings, remove CAKE:
+
+```sh
+sudo ./scripts/cake-pc.sh down <modem-interface>
+```
+
+#### Differences from a router
+
+- On a PC, the load generator and CAKE are on the same computer. For upload, the TCP sender gets back pressure from the local queue. On a router, the sender is on a different computer and CAKE drops packets. Thus, the upload behavior with autorate can be a little different.
+- The download behavior is the same as on a router.
+- The link recordings without autorate are not affected. They measure the modem and the 5G network.
 
 ### Send the recordings
 
