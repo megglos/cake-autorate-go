@@ -31,6 +31,9 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	showDefaults := flag.Bool("defaults", false, "print default configuration and exit")
 	debug := flag.Bool("debug", false, "enable debug logging (overrides config)")
+	recordPath := flag.String("record", "", "write all controller events to this JSONL file (gzip if the name ends with .gz)")
+	recordMaxMB := flag.Int("record-max-mb", 0, "stop the recording when the file gets to this size in MB (0: no limit)")
+	noAdjust := flag.Bool("no-adjust", false, "do not change the shaper rates (overrides adjust in config); use with --record to measure a link")
 	flag.Parse()
 
 	if *showVersion {
@@ -51,6 +54,12 @@ func main() {
 
 	if *debug {
 		cfg.Debug = true
+	}
+	if *noAdjust {
+		for i := range cfg.Links {
+			cfg.Links[i].Download.Adjust = false
+			cfg.Links[i].Upload.Adjust = false
+		}
 	}
 
 	logFilePath := cfg.LogFilePath
@@ -78,6 +87,22 @@ func main() {
 		cancel()
 	}()
 
+	// Optional recording of all controller events, for replay and analysis
+	var recorder *Recorder
+	if *recordPath != "" {
+		recorder, err = NewRecorder(*recordPath, int64(*recordMaxMB)*1024*1024, cfg, logger)
+		if err != nil {
+			logger.Errorf("%v", err)
+			os.Exit(1)
+		}
+		logger.Infof("recording events to %s", *recordPath)
+		defer func() {
+			if err := recorder.Close(); err != nil {
+				logger.Errorf("%v", err)
+			}
+		}()
+	}
+
 	// Shared shaper — uses a persistent netlink socket, safe for concurrent use
 	shaper := NewShaper(logger)
 	defer shaper.Close()
@@ -86,7 +111,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i := range cfg.Links {
 		link := &cfg.Links[i]
-		lc := NewLinkController(link, cfg, shaper, logger)
+		lc := NewLinkController(link, cfg, shaper, recorder, logger)
 
 		wg.Add(1)
 		go func(ctrl *LinkController, linkName string) {

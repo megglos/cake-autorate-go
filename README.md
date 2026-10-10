@@ -370,11 +370,18 @@ sudo ./cake-autorate-go --config /path/to/config.yaml
 # Enable debug logging
 sudo ./cake-autorate-go --debug
 
+# Record all controller events (see docs/recording.md)
+sudo ./cake-autorate-go --record /tmp/session.jsonl.gz
+
 # Print version
 ./cake-autorate-go --version
 ```
 
 Root privileges (or `CAP_NET_RAW` + `CAP_NET_ADMIN`) are required for ICMP pinging and netlink-based CAKE bandwidth control.
+
+### Recording
+
+The `--record FILE` option writes all controller events to a JSONL file. A replay of the file through the controller gives the same decisions. Use recordings to analyze a session, to calibrate the link simulator and to tune the controller. For the file format and a recording procedure, see [docs/recording.md](docs/recording.md).
 
 ## Prerequisites
 
