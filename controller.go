@@ -27,7 +27,7 @@ type LinkController struct {
 	pingerMgr *PingerManager
 	monitor   *Monitor
 	logger    *Logger
-	core      *Core
+	core      *RecordingCore
 
 	// Channels
 	pingCh chan PingResult
@@ -40,7 +40,8 @@ type LinkController struct {
 }
 
 // NewLinkController creates a new LinkController for a single WAN link.
-func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, logger *Logger) *LinkController {
+// recorder can be nil.
+func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, recorder *Recorder, logger *Logger) *LinkController {
 	c := &LinkController{
 		name:      link.Name,
 		link:      link,
@@ -52,10 +53,10 @@ func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, logger *Lo
 		pingCh:    make(chan PingResult, 100),
 		rateCh:    make(chan RateStats, 10),
 	}
-	c.core = NewCore(link, cfg,
+	c.core = NewRecordingCore(link, cfg,
 		readInterfaceMTU(link.Download.Interface, logger),
 		readInterfaceMTU(link.Upload.Interface, logger),
-		c, logger)
+		c, recorder, logger)
 	return c
 }
 
@@ -85,7 +86,7 @@ func (c *LinkController) Run(ctx context.Context) error {
 	healthTicker := time.NewTicker(time.Duration(c.cfg.ReflectorResponseDeadlineS * float64(time.Second)))
 	defer healthTicker.Stop()
 
-	c.logger.Infof("[%s] controller started in %s state", c.name, c.core.State())
+	c.logger.Infof("[%s] controller started in %s state", c.name, c.core.Core().State())
 	c.logger.Infof("[%s] dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps",
 		c.name,
 		c.link.Download.Interface, c.link.Download.MinRateKbps, c.link.Download.BaseRateKbps, c.link.Download.MaxRateKbps,
@@ -106,8 +107,9 @@ func (c *LinkController) Run(ctx context.Context) error {
 
 		case <-healthTicker.C:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
+				now := time.Now()
 				for _, r := range promoted {
-					c.core.ResetReflector(r)
+					c.core.ResetReflector(r, now)
 				}
 				// Restart pingers to pick up the new active set
 				c.StopPingers()

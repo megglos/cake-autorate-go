@@ -166,6 +166,8 @@ type simScenario struct {
 	link LinkConfig
 	// tune changes the controller config (optional).
 	tune func(cfg *Config)
+	// recordPath is the file for a recording of the run (optional).
+	recordPath string
 }
 
 // simPolicy selects what sets the shaper rate.
@@ -255,11 +257,19 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	at := func(t float64) time.Time { return epoch.Add(time.Duration(t * float64(time.Millisecond))) }
 
-	var core *Core
+	var core *RecordingCore
 	if policy == policyAutorate {
 		logger := NewDiscardLogger()
 		defer logger.Close()
-		core = NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, logger)
+		var rec *Recorder
+		if sc.recordPath != "" {
+			var err error
+			if rec, err = newRecorderAt(sc.recordPath, 0, cfg, epoch, logger); err != nil {
+				panic(err)
+			}
+			defer rec.Close()
+		}
+		core = NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, rec, logger)
 		core.Start(at(0))
 	}
 

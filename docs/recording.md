@@ -1,0 +1,142 @@
+# Recording
+
+With the `--record` option, cake-autorate-go writes all controller events to a file. Use a recording to:
+
+- Replay a real session through the controller. The replay gives the same decisions as the real session.
+- Compare the link simulator with a real link, and calibrate the simulator.
+- Make test traces for the tuning of the controller.
+
+## Options
+
+| Option | Description |
+|---|---|
+| `--record FILE` | Write all controller events to `FILE` (JSONL). If `FILE` ends with `.gz`, the program writes gzip. |
+| `--record-max-mb N` | Stop the recording when the file gets to `N` MB. The controller continues. `0` (default) is no limit. |
+
+The recording does not change the behavior of the controller.
+
+## File size
+
+A link with load gives approximately 40 events each second (pings, throughput samples and shaper changes).
+
+| Format | Size for each hour |
+|---|---|
+| `.jsonl` | approximately 13 MB |
+| `.jsonl.gz` | approximately 1.5 MB |
+
+On a router with little storage, use `.gz` and `--record-max-mb`. Do not write the file to flash memory for a long time. Write it to `/tmp` (RAM) or to a USB drive.
+
+## File format
+
+Each line is one JSON object. The first line is the header. The header contains the format version, the program version, the start time (wall clock, RFC 3339) and the full config.
+
+All other lines have these fields:
+
+- `t`: the time of the event in microseconds after the start. The value uses the monotonic clock. Thus, a change of the wall clock (for example from NTP) does not change it.
+- `type`: the event type.
+- `link`: the name of the link.
+
+| Type | Fields | Description |
+|---|---|---|
+| `start` | — | The controller started for the link. |
+| `ping` | `reflector`, `rtt_us`, `timeout` | A ping reply or a ping timeout. |
+| `rate` | `dl_kbps`, `ul_kbps` | A sample of the measured throughput. |
+| `reflector_reset` | `reflector` | The controller removed the delay data of a reflector (a spare reflector became active). |
+| `shaper` | `dir`, `rate_kbps` | The controller set a shaper rate. |
+| `state` | `state` | The controller changed its state (`RUNNING`, `IDLE`, `STALL`). |
+
+The `start`, `ping`, `rate` and `reflector_reset` events are the inputs of the controller. The `shaper` and `state` events are the decisions of the controller.
+
+When `adjust` is `false` for a direction, the controller does not set the shaper rate for that direction. Thus, the recording has no `shaper` events for that direction.
+
+## Procedure: record a 5G link
+
+Do two types of recordings:
+
+1. **Link recordings without autorate.** They show the capacity and the bufferbloat of the link.
+2. **Autorate recordings.** They show the behavior of the controller on the link.
+
+### Equipment
+
+- A router with CAKE on the 5G link, and cake-autorate-go.
+- A PC on the LAN of the router, with `load-gen.sh` (in this repository) and `curl`.
+- Optional: access to the signal data of the modem (RSRP, SINR, band, cell ID).
+
+### Preparation
+
+1. Make sure that no other device uses the link during the test.
+2. Write down the modem model, the provider, the location and the time of each recording.
+3. Make sure that the clock of the router is correct (NTP).
+
+### Link recordings without autorate
+
+For these recordings, the shaper must not limit the link. Thus, the measured throughput is the capacity of the link.
+
+1. In the config, set `adjust: false` for download and upload.
+2. Set the CAKE bandwidth of the two interfaces to `unlimited`:
+
+   ```sh
+   tc qdisc change dev <upload-interface> root cake unlimited
+   tc qdisc change dev <download-interface> root cake unlimited
+   ```
+
+3. Start the recording:
+
+   ```sh
+   cake-autorate-go --config <config> --record /tmp/5g-link-<date>.jsonl.gz
+   ```
+
+4. On the PC, do these steps one after the other. Use 5 minutes for each step:
+
+   | Step | Command | Measures |
+   |---|---|---|
+   | a | No load. Wait 5 minutes. | Base RTT and jitter without load |
+   | b | `./load-gen.sh -m dl -d 300` | Download capacity and download bufferbloat |
+   | c | `./load-gen.sh -m ul -d 300` | Upload capacity and upload bufferbloat |
+   | d | `./load-gen.sh -m both -d 300` | The two directions together |
+
+5. Stop cake-autorate-go with Ctrl+C. The program writes all events to the file before it stops.
+6. Set the CAKE bandwidth back to the usual values.
+
+### Autorate recordings
+
+1. Use your usual config, with `adjust: true`.
+2. Start the recording:
+
+   ```sh
+   cake-autorate-go --config <config> --record /tmp/5g-autorate-<date>.jsonl.gz
+   ```
+
+3. Do the same steps (a to d) as for the link recordings.
+4. Stop cake-autorate-go with Ctrl+C.
+
+### Repeat at different times
+
+The capacity of a 5G cell changes during the day. If possible, do the recordings at these times:
+
+- In the morning or at midday (low use of the cell).
+- In the evening (high use of the cell).
+
+### Optional: signal data
+
+If the modem uses ModemManager, record the signal data each second in a different file:
+
+```sh
+mmcli -m 0 --signal-setup=1
+while true; do
+  echo "$(date +%s.%N) $(mmcli -m 0 --signal-get --output-keyvalue | tr '\n' ' ')"
+  sleep 1
+done > /tmp/5g-signal-<date>.txt
+```
+
+For other modems, use the tool of the modem manufacturer. Make sure that each line has a timestamp.
+
+### Send the recordings
+
+Send these items:
+
+- The recording files (`.jsonl.gz`).
+- The signal files (optional).
+- The notes from the preparation (modem, provider, location, times).
+
+The recordings contain the IP addresses of the reflectors and the config. They do not contain the contents of your traffic.
