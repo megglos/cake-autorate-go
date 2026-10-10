@@ -5,23 +5,27 @@
 
 package main
 
-// Trace-driven link simulator for evaluating the controller without a real
-// connection.
+// This file contains a link simulator. It uses capacity traces to test the
+// controller without a real connection.
 //
-// Each direction is a fluid model of two queues in series: the CAKE shaper
-// (rate set by the controller) and the ISP bottleneck (rate from a capacity
-// trace). On upload the shaper sits before the bottleneck; on download it sits
-// after it (ingress shaping on an IFB). A greedy bulk sender with a
-// window-based AIMD model (self-clocked: rate = cwnd / RTT) drives each
-// direction. It backs off on CAKE drops (CoDel-like: sojourn above target for
-// an interval) and on bottleneck tail drops.
+// The simulator uses a fluid model with two queues in series for each
+// direction. The first queue is the CAKE shaper, with the rate from the
+// controller. The second queue is the ISP bottleneck, with the rate from a
+// capacity trace. On upload, the shaper is before the bottleneck. On
+// download, the shaper is after the bottleneck (ingress shaping on an IFB).
 //
-// Pings and latency-sensitive traffic are sparse flows that CAKE isolates from
-// the bulk queue, so their delay is the base RTT plus the bottleneck queue
-// delay in both directions. Keeping that delay low while maximizing
-// throughput is exactly what autorate is for.
+// In each direction, a bulk sender sends as much data as it can. It uses a
+// window-based AIMD model, and its rate is cwnd / RTT. The sender decreases
+// its window when CAKE drops packets (CoDel: the sojourn time stays above the
+// target for one interval). It also decreases its window when the
+// bottleneck buffer is full.
 //
-// Units: rates in kbit/s and time in ms, so rate*time is bits.
+// Pings and latency-sensitive traffic are sparse flows. CAKE keeps these
+// flows away from the bulk queue. Thus, their delay is the base RTT plus the
+// bottleneck queue delay in the two directions. Autorate must keep this
+// delay low and the throughput high.
+//
+// Units: rates are in kbit/s and times are in ms. Thus, rate*time is bits.
 
 import (
 	"math"
@@ -37,27 +41,27 @@ const (
 	simCodelIntvlMs  = 100.0
 	simUnshapedKbps  = 1e9
 	simProbeEveryMs  = 10
-	simBloatThrMs    = 30.0 // probe excess delay above this counts as bloat time
+	simBloatThrMs    = 30.0 // excess probe delay above this value is bloat time
 )
 
-// simDirection models one traffic direction.
+// simDirection is the model of one traffic direction.
 type simDirection struct {
 	capacity    func(t float64) float64 // kbps at time t (ms)
-	demand      func(t float64) bool    // bulk transfer active
+	demand      func(t float64) bool    // true when a bulk transfer is active
 	shaperFirst bool                    // UL: shaper, then bottleneck
-	bufferMs    float64                 // bottleneck buffer depth at current capacity
+	bufferMs    float64                 // bottleneck buffer size, in ms at the current capacity
 	flows       int
 
 	shaperKbps  float64
 	qShaper     float64 // bits
 	qBottleneck float64 // bits
-	cwnd        float64 // bits, aggregate across flows
+	cwnd        float64 // bits, total for all flows
 	slowStart   bool
 	lastSignal  float64
-	codelAbove  float64 // time CAKE sojourn went above target, -1 if below
+	codelAbove  float64 // time when the CAKE sojourn went above the target, -1 if below
 
-	shaperOut float64 // cumulative bits leaving CAKE (interface counter)
-	delivered float64 // cumulative bits leaving the path
+	shaperOut float64 // total bits out of CAKE (interface counter)
+	delivered float64 // total bits out of the path
 }
 
 func (d *simDirection) bottleneckDelayMs(t float64) float64 {
@@ -68,10 +72,10 @@ func (d *simDirection) shaperDelayMs() float64 {
 	return d.qShaper / math.Max(d.shaperKbps, 1)
 }
 
-// step advances the direction by dt ms. baseRTTMs is the path RTT without
-// queueing; reverseMs is the reverse direction's bottleneck delay, which ACKs
-// wait in (CAKE isolates ACKs from the reverse bulk queue, the bottleneck
-// does not).
+// step moves the direction forward by dt ms. baseRTTMs is the path RTT
+// without queues. reverseMs is the bottleneck delay of the reverse direction.
+// The ACKs wait in that queue. CAKE keeps the ACKs away from the reverse
+// bulk queue, but the bottleneck does not.
 func (d *simDirection) step(t, dt, baseRTTMs, reverseMs float64) {
 	capKbps := d.capacity(t)
 	rtt := baseRTTMs + d.shaperDelayMs() + d.bottleneckDelayMs(t) + reverseMs
@@ -84,7 +88,7 @@ func (d *simDirection) step(t, dt, baseRTTMs, reverseMs float64) {
 		d.lastSignal = t
 	}
 
-	// Self-clocked sender: at most cwnd bits in flight per RTT.
+	// Self-clocked sender: a maximum of cwnd bits in flight for each RTT.
 	in := d.cwnd / rtt * dt
 
 	q1, r1 := &d.qShaper, d.shaperKbps
@@ -125,7 +129,7 @@ func (d *simDirection) step(t, dt, baseRTTMs, reverseMs float64) {
 	}
 	switch {
 	case congested && t-d.lastSignal > rtt:
-		// One flow backs off per signal (CUBIC beta = 0.7).
+		// For each signal, one flow decreases its window (CUBIC beta = 0.7).
 		d.lastSignal = t
 		if d.slowStart {
 			d.slowStart = false
@@ -136,7 +140,7 @@ func (d *simDirection) step(t, dt, baseRTTMs, reverseMs float64) {
 	case d.slowStart:
 		d.cwnd += d.cwnd * dt / rtt
 	default:
-		// Reno: each flow adds one MSS per RTT.
+		// Reno: each flow adds one MSS for each RTT.
 		d.cwnd += float64(d.flows) * simMSSBits * dt / rtt
 	}
 	d.cwnd = math.Max(d.cwnd, float64(2*d.flows)*simMSSBits)
@@ -153,18 +157,18 @@ type simScenario struct {
 	bufferMs               float64
 	flows                  int
 
-	// baseRTT returns the unloaded RTT to reflector i at time t (ms).
+	// baseRTT returns the RTT without load to reflector i at time t (ms).
 	baseRTT func(t float64, i int) float64
-	// jitterMs is the mean of exponentially distributed per-ping jitter.
+	// jitterMs is the mean jitter for each ping (exponential distribution).
 	jitterMs float64
 
-	// link carries rate limits and thresholds; Adjust is forced on.
+	// link contains the rate limits and thresholds. The simulator sets Adjust=true.
 	link LinkConfig
-	// tune optionally modifies the controller config.
+	// tune changes the controller config (optional).
 	tune func(cfg *Config)
 }
 
-// simPolicy selects what drives the shaper.
+// simPolicy selects what sets the shaper rate.
 type simPolicy string
 
 const (
@@ -173,26 +177,26 @@ const (
 	policyFixed    simPolicy = "fixed-base"
 )
 
-// simResult holds the scorecard for one run.
+// simResult is the scorecard for one run.
 type simResult struct {
 	scenario string
 	policy   simPolicy
 
-	// Excess delay (ms) seen by a sparse flow, sampled every 10ms while any
-	// bulk transfer is active.
+	// Excess delay (ms) of a sparse flow. The simulator samples it every 10ms
+	// while a bulk transfer is active.
 	latP50, latP95, latP99 float64
-	// bloatS is the total time the sparse flow's excess delay exceeded 30ms.
+	// bloatS is the total time with an excess delay of more than 30ms.
 	bloatS float64
-	// Delivered bits / capacity bits while the direction had demand.
+	// Delivered bits / capacity bits, while the direction has demand.
 	dlUtil, ulUtil float64
 
-	// Shaper rate timeline (sampled every 100ms) for inspection.
+	// Shaper rate over time (one sample every 100ms), for analysis.
 	dlShaper, ulShaper []float64
 	// Number of SetRate calls.
 	rateChanges int
 }
 
-// simActuator applies Core decisions to the simulated shaper.
+// simActuator applies the decisions of Core to the simulated shaper.
 type simActuator struct {
 	dl, ul  *simDirection
 	pinging bool
@@ -216,7 +220,7 @@ type simPendingPing struct {
 	result PingResult
 }
 
-// runSim runs a scenario under a policy and returns its scorecard.
+// runSim runs a scenario with a policy and returns the scorecard.
 func runSim(sc simScenario, policy simPolicy) simResult {
 	rng := rand.New(rand.NewPCG(sc.seed, 0))
 
@@ -259,7 +263,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		core.Start(at(0))
 	}
 
-	// Pingers: PingerCount reflectors, staggered across the interval.
+	// Pingers: PingerCount reflectors, with start times spread across the interval.
 	nPingers := min(cfg.PingerCount, len(link.Reflectors))
 	pingIntvl := float64(cfg.PingIntervalMs)
 	nextPing := make([]float64, nPingers)
@@ -316,7 +320,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					},
 				})
 			}
-			// Deliver replies due by now, in arrival order
+			// Deliver the replies that are due, in the order of arrival
 			sort.Slice(pending, func(a, b int) bool { return pending[a].at < pending[b].at })
 			n := 0
 			for n < len(pending) && pending[n].at <= t {
@@ -362,7 +366,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	return res
 }
 
-// percentile returns the p-quantile of sorted values.
+// percentile returns the p-quantile of the sorted values.
 func percentile(sorted []float64, p float64) float64 {
 	if len(sorted) == 0 {
 		return 0

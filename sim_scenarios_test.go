@@ -19,8 +19,8 @@ import (
 
 func constant(v float64) func(float64) float64 { return func(float64) float64 { return v } }
 
-// steps returns a piecewise-constant function: values[i] applies from
-// at[i] seconds onward (at[0] must be 0).
+// steps returns a piecewise-constant function. values[i] applies from
+// at[i] seconds until the next step. at[0] must be 0.
 func steps(at []float64, values []float64) func(float64) float64 {
 	return func(t float64) float64 {
 		v := values[0]
@@ -33,9 +33,10 @@ func steps(at []float64, values []float64) func(float64) float64 {
 	}
 }
 
-// randomWalk returns a seeded, precomputed capacity trace that changes every
-// stepMs, moving multiplicatively within [lo, hi]. fadeProb is the per-step
-// chance of a deep fade to lo for 1-3s (cell edge, handover, blockage).
+// randomWalk returns a capacity trace from a seeded random walk. The value
+// changes every stepMs by a random factor and stays in [lo, hi]. fadeProb is
+// the probability for each step of a deep fade to lo for 1-3s (cell edge,
+// handover, blockage).
 func randomWalk(seed uint64, dur time.Duration, stepMs, lo, hi, volatility, fadeProb float64) func(float64) float64 {
 	rng := rand.New(rand.NewPCG(seed, 1))
 	n := int(float64(dur.Milliseconds())/stepMs) + 1
@@ -58,9 +59,10 @@ func randomWalk(seed uint64, dur time.Duration, stepMs, lo, hi, volatility, fade
 	return func(t float64) float64 { return vals[min(int(t/stepMs), n-1)] }
 }
 
-// starlinkHandovers returns a capacity trace that changes at each Starlink
-// reconfiguration boundary (seconds 12/27/42/57 of every minute), and a
-// matching per-reflector base RTT that steps to a new floor at each boundary.
+// starlinkHandovers returns a capacity trace and a base RTT for each
+// reflector. The two change at each Starlink reconfiguration boundary
+// (seconds 12/27/42/57 of each minute). At each boundary, the base RTT
+// changes to a new floor.
 func starlinkHandovers(seed uint64, dur time.Duration, lo, hi, baseLo, baseHi float64) (capacity func(float64) float64, baseRTT func(float64, int) float64) {
 	rng := rand.New(rand.NewPCG(seed, 2))
 	slots := int(dur.Seconds()/15) + 2
@@ -70,7 +72,7 @@ func starlinkHandovers(seed uint64, dur time.Duration, lo, hi, baseLo, baseHi fl
 		caps[i] = lo + (hi-lo)*rng.Float64()
 		bases[i] = baseLo + (baseHi-baseLo)*rng.Float64()
 	}
-	slot := func(t float64) int { return int((t/1000 + 3) / 15) } // first boundary at 12s
+	slot := func(t float64) int { return int((t/1000 + 3) / 15) } // the first boundary is at 12s
 	capacity = func(t float64) float64 { return caps[slot(t)] }
 	baseRTT = func(t float64, i int) float64 { return bases[slot(t)] + 2*float64(i) }
 	return capacity, baseRTT
@@ -110,7 +112,7 @@ func simScenarios() []simScenario {
 
 	return []simScenario{
 		{
-			// Sanity check: constant capacity, download load only.
+			// Basic check: constant capacity, load on download only.
 			name: "steady-dl", duration: dur, seed: 1,
 			dlCapacity: constant(120000), ulCapacity: constant(25000),
 			dlDemand: between(2, 118), ulDemand: never,
@@ -118,8 +120,8 @@ func simScenarios() []simScenario {
 			link: link5G,
 		},
 		{
-			// Capacity collapses 200 → 40 Mbit/s and recovers (finding #2:
-			// cuts from shaper rate converge slowly).
+			// The capacity decreases from 200 to 40 Mbit/s and then increases
+			// again (finding #2: cuts from the shaper rate converge slowly).
 			name: "capacity-drop", duration: dur, seed: 2,
 			dlCapacity: steps([]float64{0, 40, 80}, []float64{200000, 40000, 200000}),
 			ulCapacity: constant(25000),
@@ -128,8 +130,8 @@ func simScenarios() []simScenario {
 			link: link5G,
 		},
 		{
-			// Upload saturated alongside download (finding #4: RTT/2 makes
-			// UL bloat cut DL as well).
+			// Upload and download are both saturated (finding #4: with RTT/2,
+			// UL bloat also cuts DL).
 			name: "bidir-saturated", duration: dur, seed: 3,
 			dlCapacity: constant(150000), ulCapacity: constant(20000),
 			dlDemand: between(2, 118), ulDemand: between(2, 118),
@@ -137,8 +139,8 @@ func simScenarios() []simScenario {
 			link: link5G,
 		},
 		{
-			// 5G-like: capacity random walk with occasional deep fades, both
-			// directions loaded, large cellular buffers.
+			// Similar to 5G: random walk capacity with some deep fades, load in
+			// the two directions, large cellular buffers.
 			name: "5g-variable", duration: dur, seed: 4,
 			dlCapacity: randomWalk(10, dur, 200, 30000, 300000, 0.08, 0.004),
 			ulCapacity: randomWalk(11, dur, 200, 5000, 50000, 0.08, 0.004),
@@ -147,8 +149,8 @@ func simScenarios() []simScenario {
 			link: link5G,
 		},
 		{
-			// Starlink-like: capacity and RTT floor change at the 15s
-			// reconfiguration boundaries, heavy jitter (findings #3, #5).
+			// Similar to Starlink: the capacity and the RTT floor change at the
+			// 15s reconfiguration boundaries, with large jitter (findings #3, #5).
 			name: "starlink-like", duration: dur, seed: 5,
 			dlCapacity: slCap, ulCapacity: slUlCap,
 			dlDemand: between(2, 118), ulDemand: between(30, 90),
@@ -159,8 +161,8 @@ func simScenarios() []simScenario {
 			},
 		},
 		{
-			// A 300ms latency spike that is not caused by queueing (finding #1:
-			// every ping during the spike cuts the rate again).
+			// A 300ms latency spike that queues do not cause (finding #1: each
+			// ping during the spike cuts the rate again).
 			name: "latency-spike", duration: dur, seed: 6,
 			dlCapacity: constant(120000), ulCapacity: constant(25000),
 			dlDemand: between(2, 118), ulDemand: never,
@@ -188,8 +190,8 @@ func scenarioByName(t *testing.T, name string) simScenario {
 	return simScenario{}
 }
 
-// TestSimScorecard runs every scenario under each policy and prints a
-// scorecard. Run with: go test -run TestSimScorecard -v
+// TestSimScorecard runs each scenario with each policy and shows a
+// scorecard. To run it, use: go test -run TestSimScorecard -v
 func TestSimScorecard(t *testing.T) {
 	if testing.Short() {
 		t.Skip("simulation scorecard skipped in -short mode")
@@ -213,7 +215,7 @@ func TestSimScorecard(t *testing.T) {
 	}
 }
 
-// --- Simulator sanity checks ---
+// --- Basic checks of the simulator ---
 
 func TestSim_Deterministic(t *testing.T) {
 	sc := scenarioByName(t, "5g-variable")
@@ -225,7 +227,7 @@ func TestSim_Deterministic(t *testing.T) {
 }
 
 func TestSim_UnshapedBloats(t *testing.T) {
-	// Without a shaper, a greedy sender fills the bottleneck buffer.
+	// Without a shaper, a bulk sender fills the bottleneck buffer.
 	sc := scenarioByName(t, "steady-dl")
 	sc.duration = 30 * time.Second
 	sc.dlDemand = between(2, 30)
@@ -239,13 +241,13 @@ func TestSim_UnshapedBloats(t *testing.T) {
 }
 
 func TestSim_ShapedBelowCapacityStaysLow(t *testing.T) {
-	// A fixed shaper below capacity keeps the bottleneck queue empty.
+	// A fixed shaper rate below the capacity keeps the bottleneck queue empty.
 	sc := scenarioByName(t, "steady-dl")
 	sc.duration = 30 * time.Second
 	sc.dlDemand = between(2, 30)
 	r := runSim(sc, policyFixed) // base 100M < capacity 120M
-	// p99 includes the slow-start overshoot at flow start, before CAKE's
-	// CoDel reacts; p95 reflects steady state.
+	// p99 includes the slow-start overshoot at the start of the flows,
+	// before CoDel in CAKE reacts. p95 shows the steady state.
 	if r.latP95 > 5 {
 		t.Errorf("expected low latency with shaper below capacity, got p95=%.1fms", r.latP95)
 	}
@@ -256,10 +258,10 @@ func TestSim_ShapedBelowCapacityStaysLow(t *testing.T) {
 
 // --- Known issues ---
 //
-// Each test asserts the behavior we want. While the issue is present the test
-// logs it and passes; once a fix makes the assertion hold, the test fails to
-// force flipping it into a regular regression test. Numbers refer to the
-// findings in the improvement plan.
+// Each test examines the behavior that we want. While the issue occurs, the
+// test logs the issue and passes. When a fix makes the check true, the test
+// fails. Then, change the test into a usual regression test. The numbers
+// refer to the findings in the improvement plan.
 
 func knownIssue(t *testing.T, id string, ok bool, format string, args ...any) {
 	t.Helper()
@@ -271,7 +273,7 @@ func knownIssue(t *testing.T, id string, ok bool, format string, args ...any) {
 	t.Logf("known issue %s still present: %s", id, detail)
 }
 
-// sliceS returns timeline samples (100ms resolution) between fromS and toS.
+// sliceS returns the samples (100ms resolution) between fromS and toS.
 func sliceS(v []float64, fromS, toS float64) []float64 {
 	return v[int(fromS*10):min(int(toS*10), len(v))]
 }
@@ -284,9 +286,9 @@ func minOf(v []float64) float64 {
 	return m
 }
 
-// #1: a short latency spike that is not queueing should cost little rate.
-// Every ping while the detection window is full cuts again, so a 300ms spike
-// stacks several cuts.
+// #1: a short latency spike that queues do not cause must cut the rate only
+// a little. Each ping cuts the rate again while the detection window is full.
+// Thus, a 300ms spike causes many cuts.
 func TestKnownIssue1_LatencySpikeOvercut(t *testing.T) {
 	r := runSim(scenarioByName(t, "latency-spike"), policyAutorate)
 	low := minOf(sliceS(r.dlShaper, 60, 63))
@@ -295,8 +297,8 @@ func TestKnownIssue1_LatencySpikeOvercut(t *testing.T) {
 		"300ms spike cut DL shaper to %.0f kbps (%.0f%% of %.0f kbps capacity)", low, 100*low/capacity, capacity)
 }
 
-// #1/#2: after capacity collapses, the shaper should converge near the new
-// capacity quickly without plunging far below it.
+// #1/#2: after a large capacity decrease, the shaper rate must quickly go
+// near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
 	r := runSim(scenarioByName(t, "capacity-drop"), policyAutorate)
 	const capacity = 40000.0
@@ -307,8 +309,8 @@ func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
 		"after 200→40 Mbit/s drop: shaper %.0f kbps 1s later, minimum %.0f kbps in the next 10s", after1s, low)
 }
 
-// #4: saturating upload should not throttle download. RTT/2 attributes UL
-// queueing to both directions.
+// #4: a saturated upload must not decrease the download rate. With RTT/2,
+// the UL queue delay applies to the two directions.
 func TestKnownIssue4_UploadBloatThrottlesDownload(t *testing.T) {
 	r := runSim(scenarioByName(t, "bidir-saturated"), policyAutorate)
 	knownIssue(t, "#4", r.dlUtil >= 0.75,
@@ -316,7 +318,8 @@ func TestKnownIssue4_UploadBloatThrottlesDownload(t *testing.T) {
 }
 
 // #5: a step in the RTT floor (Starlink reconfiguration, route change) is not
-// queueing and should not cost throughput once the new floor is learned.
+// a queue. After Core learns the new floor, the step must not decrease the
+// throughput.
 func TestKnownIssue5_BaselineStepCostsThroughput(t *testing.T) {
 	sc := scenarioByName(t, "steady-dl")
 	sc.name = "baseline-step"
