@@ -297,6 +297,38 @@ func TestKnownIssue1_LatencySpikeOvercut(t *testing.T) {
 		"300ms spike cut DL shaper to %.0f kbps (%.0f%% of %.0f kbps capacity)", low, 100*low/capacity, capacity)
 }
 
+// With refractory_on_decrease, the same spike cuts the rate only a little.
+func TestSimRefractoryOnDecrease_LatencySpike(t *testing.T) {
+	sc := scenarioByName(t, "latency-spike")
+	sc.tune = func(cfg *Config) { cfg.RefractoryOnDecrease = true }
+	r := runSim(sc, policyAutorate)
+	low := minOf(sliceS(r.dlShaper, 60, 63))
+	const capacity = 120000.0
+	if low < 0.75*capacity {
+		t.Errorf("300ms spike cut DL shaper to %.0f kbps (%.0f%% of capacity), want 75%% or more", low, 100*low/capacity)
+	}
+}
+
+// With one-way delays, the cut starts from the achieved rate (F2).
+func TestSimOWD_CutFromAchievedRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.state = StateRunning
+	c.lastPingOWD = true
+	c.dl.shaperRateKbps, c.dl.achievedKbps = 40000, 20000
+	c.adjustRateBufferbloat(DL, 31000, 30000)
+	if c.dl.shaperRateKbps > 20000 {
+		t.Errorf("rate %.0f after a cut with achieved 20000, want 20000 or less", c.dl.shaperRateKbps)
+	}
+
+	// Without one-way delays, the cut starts from the shaper rate.
+	c.lastPingOWD = false
+	c.dl.shaperRateKbps = 40000
+	c.adjustRateBufferbloat(DL, 31000, 30000)
+	if c.dl.shaperRateKbps < 39000 {
+		t.Errorf("rate %.0f after a small cut without one-way delays, want approximately 40000", c.dl.shaperRateKbps)
+	}
+}
+
 // F1/F2: after a large capacity decrease, the shaper rate must quickly go
 // near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {

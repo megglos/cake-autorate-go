@@ -29,12 +29,12 @@ func Directions() [2]Direction { return [2]Direction{DL, UL} }
 
 // DirectionConfig holds rate limits for one direction.
 type DirectionConfig struct {
-	Interface     string  `yaml:"interface"`
-	Adjust        bool    `yaml:"adjust"`
-	MinRateKbps   int     `yaml:"min_rate_kbps"`
-	BaseRateKbps  int     `yaml:"base_rate_kbps"`
-	MaxRateKbps   int     `yaml:"max_rate_kbps"`
-	OWDDeltaDelayThrMs       float64 `yaml:"owd_delta_delay_thr_ms"`
+	Interface                  string  `yaml:"interface"`
+	Adjust                     bool    `yaml:"adjust"`
+	MinRateKbps                int     `yaml:"min_rate_kbps"`
+	BaseRateKbps               int     `yaml:"base_rate_kbps"`
+	MaxRateKbps                int     `yaml:"max_rate_kbps"`
+	OWDDeltaDelayThrMs         float64 `yaml:"owd_delta_delay_thr_ms"`
 	AvgOWDDeltaMaxAdjUpThrMs   float64 `yaml:"avg_owd_delta_max_adjust_up_thr_ms"`
 	AvgOWDDeltaMaxAdjDownThrMs float64 `yaml:"avg_owd_delta_max_adjust_down_thr_ms"`
 }
@@ -63,11 +63,11 @@ type Config struct {
 	Links []LinkConfig `yaml:"links"`
 
 	// Legacy single-link fields (for backward compatibility)
-	Download DirectionConfig `yaml:"download"`
-	Upload   DirectionConfig `yaml:"upload"`
-	Reflectors        []string `yaml:"reflectors"`
-	PingSourceAddr    string   `yaml:"ping_source_addr"`
-	PingInterfaceName string   `yaml:"ping_interface"`
+	Download          DirectionConfig `yaml:"download"`
+	Upload            DirectionConfig `yaml:"upload"`
+	Reflectors        []string        `yaml:"reflectors"`
+	PingSourceAddr    string          `yaml:"ping_source_addr"`
+	PingInterfaceName string          `yaml:"ping_interface"`
 
 	// Shared pinger settings
 	PingerCount    int `yaml:"pinger_count"`
@@ -101,9 +101,13 @@ type Config struct {
 	HighLoadThr float64 `yaml:"high_load_thr"`
 
 	// Timing
-	MonitorIntervalMs          int `yaml:"monitor_interval_ms"`
+	MonitorIntervalMs             int `yaml:"monitor_interval_ms"`
 	BufferbloatRefractoryPeriodMs int `yaml:"bufferbloat_refractory_period_ms"`
-	DecayRefractoryPeriodMs      int `yaml:"decay_refractory_period_ms"`
+	// RefractoryOnDecrease applies the bufferbloat refractory period also
+	// to decreases: one decrease in each period (as in the original). If
+	// false, each ping with bufferbloat decreases the rate.
+	RefractoryOnDecrease    bool `yaml:"refractory_on_decrease"`
+	DecayRefractoryPeriodMs int  `yaml:"decay_refractory_period_ms"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`

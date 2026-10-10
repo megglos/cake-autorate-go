@@ -51,6 +51,7 @@ type Actuator interface {
 // dirState is the runtime state for one direction.
 type dirState struct {
 	shaperRateKbps   float64
+	achievedKbps     float64 // last measured throughput
 	loadPercent      float64
 	mtuBytes         int
 	delayWindow      []bool // true: the delay was more than the threshold
@@ -93,6 +94,8 @@ type Core struct {
 	lastPingTime        time.Time
 	idleSince           time.Time
 	consecutiveTimeouts int
+	// lastPingOWD is true if the last ping reply had one-way delays.
+	lastPingOWD bool
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -143,6 +146,9 @@ func (c *Core) ResetReflector(reflector string) {
 
 // HandleRate processes a sample of the measured throughput.
 func (c *Core) HandleRate(stats RateStats) {
+	c.dl.achievedKbps = stats.DlRateKbps
+	c.ul.achievedKbps = stats.UlRateKbps
+
 	// Update load percentages
 	if c.dl.shaperRateKbps > 0 {
 		c.dl.loadPercent = stats.DlRateKbps / c.dl.shaperRateKbps
@@ -223,6 +229,7 @@ func (c *Core) HandlePing(result PingResult) {
 	// the delta of the other direction.
 	deltaUs := math.Max((rttUs-rd.baselineUs)/2.0, 0)
 	dlDeltaUs, ulDeltaUs := deltaUs, deltaUs
+	c.lastPingOWD = result.OWD
 	if result.OWD {
 		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
 	}
@@ -317,15 +324,23 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	bbCount := ds.delayWindowCount
 
 	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
+	bbRefractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
 
 	if bbDetected {
+		// With RefractoryOnDecrease, decrease the rate only one time in
+		// each refractory period. After a decrease, the detection window
+		// keeps the old delayed pings for some time. Without the refractory
+		// period, each new ping decreases the rate again before the
+		// decrease can have an effect.
+		if c.cfg.RefractoryOnDecrease && ds.bbDetected && now.Sub(ds.lastBBTime) <= bbRefractoryDur {
+			return
+		}
 		ds.bbDetected = true
 		ds.lastBBTime = now
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
 	} else if ds.loadPercent >= c.cfg.HighLoadThr {
 		// High load and no bufferbloat: increase the rate
-		refractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
-		if !ds.bbDetected || now.Sub(ds.lastBBTime) > refractoryDur {
+		if !ds.bbDetected || now.Sub(ds.lastBBTime) > bbRefractoryDur {
 			ds.bbDetected = false
 			c.adjustRateHighLoad(dir, deltaUs, thresholdUs)
 		}
@@ -358,13 +373,29 @@ func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64
 	maxAdj := c.cfg.ShaperRateMaxAdjustDownBufferbloat
 
 	adjustment := minAdj - factor*(minAdj-maxAdj)
-	newRate := ds.shaperRateKbps * adjustment
+
+	// Decrease from the achieved rate if it is lower than the shaper rate.
+	// Then the queue in the bottleneck empties: the new rate is below the
+	// rate that the link transmits now. A decrease from a shaper rate far
+	// above the capacity has no effect, and the queue stays full.
+	// If the achieved rate is below the minimum rate, it is not a good
+	// measurement of the capacity (for example, the load stopped). Then use
+	// the shaper rate.
+	// Use the achieved rate only with one-way delays. With RTT/2, a queue
+	// in the other direction also gives bufferbloat in this direction. Then
+	// the achieved rate shows only the demand, and each decrease goes lower
+	// until the rate is at the minimum.
+	fromRate := ds.shaperRateKbps
+	if c.lastPingOWD && ds.achievedKbps > float64(dc.MinRateKbps) && ds.achievedKbps < fromRate {
+		fromRate = ds.achievedKbps
+	}
+	newRate := fromRate * adjustment
 
 	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
 
 	if newRate != ds.shaperRateKbps {
-		c.logger.Debugf("[%s] [%s] bufferbloat: rate %.0f -> %.0f kbps (delta=%.0fus thr=%.0fus factor=%.2f)",
-			c.name, dir, ds.shaperRateKbps, newRate, deltaUs, thresholdUs, factor)
+		c.logger.Debugf("[%s] [%s] bufferbloat: rate %.0f -> %.0f kbps (achieved=%.0f delta=%.0fus thr=%.0fus factor=%.2f)",
+			c.name, dir, ds.shaperRateKbps, newRate, ds.achievedKbps, deltaUs, thresholdUs, factor)
 		ds.shaperRateKbps = newRate
 		c.applyRate(dir)
 	}
