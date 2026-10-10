@@ -131,6 +131,8 @@ done > /tmp/5g-signal-<date>.txt
 
 For other modems, use the tool of the modem manufacturer. Make sure that each line has a timestamp.
 
+A modem that connects through Ethernet (a 5G CPE or a router with a 5G modem) does not use ModemManager. Get the signal data from the web interface or from the API of the modem. If this is not possible, write down the signal values from the web interface at the start and at the end of each recording.
+
 ### Record from a PC without a router
 
 You can connect the modem directly to a Linux PC (USB or Ethernet). The PC then does the work of the router: it runs CAKE, cake-autorate-go and the load generator.
@@ -187,6 +189,7 @@ sudo ./scripts/cake-pc.sh down <modem-interface>
 
 - On a PC, the load generator and CAKE are on the same computer. For upload, the TCP sender gets back pressure from the local queue. On a router, the sender is on a different computer and CAKE drops packets. Thus, the upload behavior with autorate can be a little different.
 - The download behavior is the same as on a router.
+- If the PC has only one network interface, all traffic of the PC goes through the modem during the test. Stop all other programs that use the network (browser, cloud sync, updates). Their traffic changes the measurements.
 - The link recordings without autorate are not affected. They measure the modem and the 5G network.
 
 ### Send the recordings
