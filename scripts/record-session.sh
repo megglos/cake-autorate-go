@@ -48,6 +48,15 @@
 #   NN-MODE-POLICY.jsonl.gz    recording of each block
 #   NN-MODE-POLICY.log         log of cake-autorate-go and load-gen.sh
 #
+# Environment:
+#   BLOCK_START_HOOK   a command that the script runs at the start of each
+#                      block, with the arguments BLOCK MODE POLICY.
+#                      scripts/emulate-link.sh uses it to start the capacity
+#                      trace again, so that each block gets the same trace.
+#
+# After each block, the script shows a summary (scripts/summarize-session.sh).
+# This needs jq.
+#
 # Requirements: bash, tc, curl, awk. Run from the repository root.
 
 set -euo pipefail
@@ -282,6 +291,9 @@ for round in $(seq 1 "$ROUNDS"); do
             esac
 
             log "Block $block/$total: round $round, $mode, $policy"
+            if [ -n "${BLOCK_START_HOOK:-}" ]; then
+                $BLOCK_START_HOOK "$block" "$mode" "$policy"
+            fi
             start=$(date +%s)
             "$BINARY" "${args[@]}" > "$blog" 2>&1 &
             CAR_PID=$!
@@ -305,8 +317,15 @@ for round in $(seq 1 "$ROUNDS"); do
             printf '%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n' \
                 "$block" "$round" "$mode" "$policy" "$start" "$load_start" "$load_end" "$end" \
                 "$cake_dl" "$cake_ul" "$(basename "$rec")" >> "$BLOCKS"
+            if command -v jq >/dev/null; then
+                "$SCRIPT_DIR/summarize-session.sh" "$OUTDIR" "$block" | tail -n 1 | sed 's/^/    /' || true
+            fi
         done
     done
 done
 
 log "All $total blocks are complete."
+if command -v jq >/dev/null; then
+    echo
+    "$SCRIPT_DIR/summarize-session.sh" "$OUTDIR" || true
+fi
