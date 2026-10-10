@@ -23,6 +23,19 @@ jobs:
       - name: Run tests
         run: go test -v -race -count=1 ./...
 
+      # Show the simulator scorecard and the known issues in the job summary.
+      - name: Simulator scorecard
+        run: |
+          SIM_SCORECARD_OUT=scorecard.txt go test -count=1 -v -run 'TestSimScorecard|TestKnownIssue' . > sim.log
+          {
+            echo '## Simulator scorecard'
+            echo '```'
+            cat scorecard.txt
+            echo '```'
+            echo '## Known issues'
+            grep -o 'known issue .*' sim.log | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     needs: test
     runs-on: ubuntu-latest
