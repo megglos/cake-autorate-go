@@ -1,0 +1,44 @@
+{
+  "5g-variable": {
+    "lat_p95_ms": 81.68,
+    "lat_p99_ms": 538,
+    "bloat_s": 52.01,
+    "dl_util": 82.32,
+    "ul_util": 56.08
+  },
+  "bidir-saturated": {
+    "lat_p95_ms": 70.06,
+    "lat_p99_ms": 71.63,
+    "bloat_s": 71.59,
+    "dl_util": 50.59,
+    "ul_util": 96.64
+  },
+  "capacity-drop": {
+    "lat_p95_ms": 64.69,
+    "lat_p99_ms": 149.55,
+    "bloat_s": 71.24,
+    "dl_util": 97.45,
+    "ul_util": 0
+  },
+  "latency-spike": {
+    "lat_p95_ms": 63.72,
+    "lat_p99_ms": 65.26,
+    "bloat_s": 77.37,
+    "dl_util": 98.34,
+    "ul_util": 0
+  },
+  "starlink-like": {
+    "lat_p95_ms": 60.52,
+    "lat_p99_ms": 83.11,
+    "bloat_s": 36.14,
+    "dl_util": 73.46,
+    "ul_util": 69.55
+  },
+  "steady-dl": {
+    "lat_p95_ms": 63.67,
+    "lat_p99_ms": 65.19,
+    "bloat_s": 80.22,
+    "dl_util": 99.02,
+    "ul_util": 0
+  }
+}
