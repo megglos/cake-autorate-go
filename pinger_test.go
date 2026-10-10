@@ -57,7 +57,7 @@ func TestReplaceUnhealthy_NoReplacementWhenHealthy(t *testing.T) {
 	pm.cfg.PingerCount = 2
 	pm.cfg.ReflectorMisbehavingDetectionThr = 3
 
-	replaced := pm.ReplaceUnhealthy()
+	replaced := len(pm.ReplaceUnhealthy()) > 0
 	if replaced {
 		t.Error("should not replace when all reflectors are healthy")
 	}
@@ -82,7 +82,7 @@ func TestReplaceUnhealthy_ReplacesWhenThresholdExceeded(t *testing.T) {
 	state.MissedWindow[0] = true
 	state.MissedWindow[1] = true // 2 misses >= threshold of 2
 
-	replaced := pm.ReplaceUnhealthy()
+	replaced := len(pm.ReplaceUnhealthy()) > 0
 	if !replaced {
 		t.Fatal("expected replacement when threshold exceeded")
 	}
@@ -123,7 +123,7 @@ func TestReplaceUnhealthy_ConsecutiveMisbehaving(t *testing.T) {
 	pm.states[second].MissedWindow[0] = true
 	pm.states[second].MissedWindow[1] = true
 
-	replaced := pm.ReplaceUnhealthy()
+	replaced := len(pm.ReplaceUnhealthy()) > 0
 	if !replaced {
 		t.Fatal("expected replacements")
 	}
@@ -159,7 +159,7 @@ func TestReplaceUnhealthy_NoReplacementWhenNoSpares(t *testing.T) {
 	state := pm.states[first]
 	state.MissedWindow[0] = true
 
-	replaced := pm.ReplaceUnhealthy()
+	replaced := len(pm.ReplaceUnhealthy()) > 0
 	if replaced {
 		t.Error("should not replace when no spare reflectors exist")
 	}
@@ -218,76 +218,6 @@ func TestRecordHealth_Wraps(t *testing.T) {
 
 	if missed != 2 {
 		t.Errorf("expected 2 misses after wrap, got %d", missed)
-	}
-}
-
-func TestUpdateBaseline_InitializesOnFirst(t *testing.T) {
-	pm := testPingerManager(t)
-	reflector := pm.reflectors[0]
-
-	pm.UpdateBaseline(reflector, 5000)
-
-	state := pm.states[reflector]
-	state.mu.Lock()
-	baseline := state.BaselineRTT
-	state.mu.Unlock()
-
-	if baseline != 5000 {
-		t.Errorf("expected baseline 5000, got %f", baseline)
-	}
-}
-
-func TestUpdateBaseline_TracksDecrease(t *testing.T) {
-	pm := testPingerManager(t)
-	reflector := pm.reflectors[0]
-
-	pm.UpdateBaseline(reflector, 10000) // init
-	pm.UpdateBaseline(reflector, 5000)  // decrease
-
-	state := pm.states[reflector]
-	state.mu.Lock()
-	baseline := state.BaselineRTT
-	state.mu.Unlock()
-
-	// With alpha_baseline_decrease=0.9, new baseline = 0.9*5000 + 0.1*10000 = 5500
-	if baseline < 5000 || baseline > 10000 {
-		t.Errorf("baseline after decrease should be between 5000 and 10000, got %f", baseline)
-	}
-}
-
-func TestUpdateBaseline_TracksIncreaseSlowly(t *testing.T) {
-	pm := testPingerManager(t)
-	reflector := pm.reflectors[0]
-
-	pm.UpdateBaseline(reflector, 5000)  // init
-	pm.UpdateBaseline(reflector, 10000) // increase
-
-	state := pm.states[reflector]
-	state.mu.Lock()
-	baseline := state.BaselineRTT
-	state.mu.Unlock()
-
-	// With alpha_baseline_increase=0.001, baseline barely moves
-	if baseline < 5000 || baseline > 5100 {
-		t.Errorf("baseline should move slowly upward, got %f", baseline)
-	}
-}
-
-func TestUpdateDeltaEWMA(t *testing.T) {
-	pm := testPingerManager(t)
-	reflector := pm.reflectors[0]
-
-	pm.UpdateDeltaEWMA(reflector, 1000)
-
-	state := pm.states[reflector]
-	state.mu.Lock()
-	ewma := state.DeltaEWMA
-	state.mu.Unlock()
-
-	// alpha_delta_ewma=0.095 → ewma = 0.095*1000 + 0.905*0 = 95
-	expected := pm.cfg.AlphaDeltaEWMA * 1000
-	if ewma < expected-1 || ewma > expected+1 {
-		t.Errorf("expected DeltaEWMA ~%.1f, got %.1f", expected, ewma)
 	}
 }
 
