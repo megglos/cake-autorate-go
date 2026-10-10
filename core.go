@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// State represents the controller's operating state.
+// State is the operating state of the controller.
 type State int
 
 const (
@@ -36,43 +36,43 @@ func (s State) String() string {
 
 const defaultMTU = 1500
 
-// Actuator receives the side effects of control decisions. The production
-// implementation drives the shaper and pingers; tests and the simulator
-// record or model them instead.
+// Actuator applies the decisions of Core. In production, it sets the shaper
+// rate and starts or stops the pingers. Tests and the simulator record or
+// model these decisions.
 type Actuator interface {
 	SetRate(dir Direction, rateKbps int)
 	StartPingers()
 	StopPingers()
-	// InvalidateShaper drops cached shaper state; the qdisc may have been
-	// recreated while the link was stalled (link flap, hotplug).
+	// InvalidateShaper removes the cached shaper state. The system can
+	// create the qdisc again during a stall (link flap, hotplug).
 	InvalidateShaper()
 }
 
-// dirState holds per-direction runtime state.
+// dirState is the runtime state for one direction.
 type dirState struct {
 	shaperRateKbps   float64
 	loadPercent      float64
 	mtuBytes         int
-	delayWindow      []bool // true = delay exceeded threshold
+	delayWindow      []bool // true: the delay was more than the threshold
 	delayWindowIdx   int
-	delayWindowCount int // running count of true entries (avoids O(n) scan)
+	delayWindowCount int // number of true entries (no O(n) scan)
 	bbDetected       bool
 	lastBBTime       time.Time
 	lastDecayTime    time.Time
 }
 
-// reflectorDelay holds per-reflector delay tracking.
+// reflectorDelay is the delay data for one reflector.
 type reflectorDelay struct {
 	baselineUs float64
 	deltaEWMA  float64
 }
 
-// Core is the cake-autorate control algorithm for a single WAN link.
+// Core is the cake-autorate control algorithm for one WAN link.
 //
-// It is deterministic: it performs no I/O, starts no goroutines and never
-// reads the wall clock. Time comes from the timestamps on incoming events, so
-// the same event sequence always produces the same decisions. Callers must
-// not invoke it concurrently.
+// Core is deterministic. It does no I/O, starts no goroutines and does not
+// read the wall clock. The time comes from the timestamps of the events.
+// Thus, the same events always give the same decisions.
+// Do not call Core from more than one goroutine at the same time.
 type Core struct {
 	name   string
 	link   *LinkConfig
@@ -89,8 +89,8 @@ type Core struct {
 	consecutiveTimeouts int
 }
 
-// NewCore creates a controller core. dlMTU and ulMTU are the interface MTUs
-// used for wire packet compensation.
+// NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
+// Core uses them for the wire packet compensation.
 func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logger *Logger) *Core {
 	return &Core{
 		name:       link.Name,
@@ -113,8 +113,8 @@ func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logg
 	}
 }
 
-// Start applies the initial shaper rates. Connectivity is assumed until
-// proven otherwise, so now counts as the last successful ping.
+// Start applies the initial shaper rates. Core starts with the assumption
+// that the link operates. Thus, now is the time of the last good ping.
 func (c *Core) Start(now time.Time) {
 	c.lastPingTime = now
 	c.applyRate(DL)
@@ -129,13 +129,13 @@ func (c *Core) ShaperRateKbps(dir Direction) float64 {
 	return c.getDirState(dir).shaperRateKbps
 }
 
-// ResetReflector discards delay tracking for a reflector, e.g. when it is
-// promoted from the spare pool and its old baseline is stale.
+// ResetReflector removes the delay data for a reflector. Use it when a spare
+// reflector becomes active, because its old baseline is not correct.
 func (c *Core) ResetReflector(reflector string) {
 	delete(c.reflectors, reflector)
 }
 
-// HandleRate processes an achieved-throughput sample.
+// HandleRate processes a sample of the measured throughput.
 func (c *Core) HandleRate(stats RateStats) {
 	// Update load percentages
 	if c.dl.shaperRateKbps > 0 {
@@ -177,7 +177,7 @@ func (c *Core) HandleRate(stats RateStats) {
 		}
 
 	case StateStall:
-		// Resume if we see significant traffic
+		// Go back to running when there is traffic
 		if stats.DlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) ||
 			stats.UlRateKbps >= float64(c.cfg.ConnectionStallThrKbps) {
 			c.transitionTo(StateRunning)
@@ -201,8 +201,8 @@ func (c *Core) HandlePing(result PingResult) {
 		return
 	}
 
-	// Only update lastPingTime on successful replies — timeouts are emitted
-	// by the sweeper and would mask stall detection if counted here.
+	// Update lastPingTime only for replies. The sweeper sends the timeouts.
+	// If timeouts update lastPingTime, the stall detection does not operate.
 	c.lastPingTime = result.Timestamp
 	c.consecutiveTimeouts = 0
 
@@ -211,41 +211,41 @@ func (c *Core) HandlePing(result PingResult) {
 	// Update baseline RTT
 	rd := c.updateBaseline(result.Reflector, rttUs)
 
-	// OWD delta (how much delay increased from baseline)
-	// Using RTT/2 as OWD approximation (same as fping mode in original)
+	// The OWD delta is the delay increase above the baseline.
+	// RTT/2 is an approximate OWD (the same as fping mode in the original).
 	deltaUs := (rttUs - rd.baselineUs) / 2.0
 	if deltaUs < 0 {
 		deltaUs = 0
 	}
 
-	// Update delta EWMA only when load is below threshold
-	// (high load naturally increases RTT, shouldn't affect EWMA)
+	// Update the delta EWMA only when the load is below the threshold.
+	// High load increases the RTT, and this must not change the EWMA.
 	if c.dl.loadPercent < c.cfg.HighLoadThr && c.ul.loadPercent < c.cfg.HighLoadThr {
 		rd.deltaEWMA = c.cfg.AlphaDeltaEWMA*deltaUs + (1-c.cfg.AlphaDeltaEWMA)*rd.deltaEWMA
 	}
 
-	// Process both directions (with RTT, both get the same delta)
+	// Process the two directions. With RTT, they get the same delta.
 	c.processDelay(DL, deltaUs, result.Timestamp)
 	c.processDelay(UL, deltaUs, result.Timestamp)
 }
 
-// updateBaseline updates the baseline RTT for a reflector using EWMA and
-// returns its delay tracking state.
+// updateBaseline updates the baseline RTT of a reflector with an EWMA. It
+// returns the delay data of the reflector.
 func (c *Core) updateBaseline(reflector string, rttUs float64) *reflectorDelay {
 	rd, ok := c.reflectors[reflector]
 	if !ok {
-		// First measurement — initialize baseline
+		// First measurement: set the baseline
 		rd = &reflectorDelay{baselineUs: rttUs}
 		c.reflectors[reflector] = rd
 		return rd
 	}
 
 	if rttUs < rd.baselineUs {
-		// Delay decreased — track new minimum quickly
+		// Delay decreased: follow the new minimum quickly
 		rd.baselineUs = c.cfg.AlphaBaselineDecrease*rttUs +
 			(1-c.cfg.AlphaBaselineDecrease)*rd.baselineUs
 	} else {
-		// Delay increased — baseline moves slowly
+		// Delay increased: the baseline moves slowly
 		rd.baselineUs = c.cfg.AlphaBaselineIncrease*rttUs +
 			(1-c.cfg.AlphaBaselineIncrease)*rd.baselineUs
 	}
@@ -255,8 +255,8 @@ func (c *Core) updateBaseline(reflector string, rttUs float64) *reflectorDelay {
 func (c *Core) handleTimeout(result PingResult) {
 	c.consecutiveTimeouts++
 
-	// Require both: enough consecutive timeouts AND elapsed time since last
-	// successful ping exceeds the global timeout threshold.
+	// Two conditions are necessary: enough consecutive timeouts, and more time
+	// since the last good ping than the global timeout threshold.
 	if c.consecutiveTimeouts >= c.cfg.StallDetectionThr &&
 		!c.lastPingTime.IsZero() &&
 		result.Timestamp.Sub(c.lastPingTime).Seconds() > c.cfg.GlobalPingResponseTimeoutS {
@@ -272,17 +272,17 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	ds := c.getDirState(dir)
 	dc := c.link.DirConfig(dir)
 
-	// Calculate compensated delay threshold
+	// Calculate the compensated delay threshold
 	compensationUs := WirePacketCompensationUs(ds.mtuBytes, int(ds.shaperRateKbps))
 	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
 
-	// Record in sliding window with O(1) running count
+	// Record the result in the sliding window. Keep the count in O(1).
 	exceeded := deltaUs > thresholdUs
 	old := ds.delayWindow[ds.delayWindowIdx]
 	ds.delayWindow[ds.delayWindowIdx] = exceeded
 	ds.delayWindowIdx = (ds.delayWindowIdx + 1) % len(ds.delayWindow)
 
-	// Update running count: subtract evicted, add new
+	// Update the count: remove the old entry, add the new entry
 	if old && !exceeded {
 		ds.delayWindowCount--
 	} else if !old && exceeded {
@@ -297,14 +297,14 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		ds.lastBBTime = now
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
 	} else if ds.loadPercent >= c.cfg.HighLoadThr {
-		// High load, no bufferbloat — can increase rate
+		// High load and no bufferbloat: increase the rate
 		refractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
 		if !ds.bbDetected || now.Sub(ds.lastBBTime) > refractoryDur {
 			ds.bbDetected = false
 			c.adjustRateHighLoad(dir, deltaUs, thresholdUs)
 		}
 	} else {
-		// Low load — decay toward base rate
+		// Low load: move the rate toward the base rate
 		refractoryDur := time.Duration(c.cfg.DecayRefractoryPeriodMs) * time.Millisecond
 		if now.Sub(ds.lastDecayTime) > refractoryDur {
 			ds.lastDecayTime = now
@@ -314,15 +314,15 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	}
 }
 
-// adjustRateBufferbloat reduces the shaper rate when bufferbloat is detected.
+// adjustRateBufferbloat decreases the shaper rate when Core finds bufferbloat.
 func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64) {
 	ds := c.getDirState(dir)
 	dc := c.link.DirConfig(dir)
 
-	// Calculate how far delta exceeds threshold relative to max threshold
+	// Calculate how much the delta is above the threshold, relative to the max threshold
 	maxThrUs := dc.AvgOWDDeltaMaxAdjDownThrMs * 1000.0
 	if maxThrUs <= thresholdUs {
-		maxThrUs = thresholdUs + 1000 // prevent division by zero
+		maxThrUs = thresholdUs + 1000 // prevent a division by zero
 	}
 
 	factor := (deltaUs - thresholdUs) / (maxThrUs - thresholdUs)
@@ -344,12 +344,12 @@ func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64
 	}
 }
 
-// adjustRateHighLoad increases the shaper rate during high load without bufferbloat.
+// adjustRateHighLoad increases the shaper rate at high load without bufferbloat.
 func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	ds := c.getDirState(dir)
 	dc := c.link.DirConfig(dir)
 
-	// Factor based on how much headroom remains before hitting delay threshold
+	// The factor shows the remaining headroom below the delay threshold
 	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
 	if maxUpThrUs <= 0 {
 		maxUpThrUs = 1
@@ -373,7 +373,7 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	}
 }
 
-// adjustRateDecay moves the shaper rate toward the base rate during low load.
+// adjustRateDecay moves the shaper rate toward the base rate at low load.
 func (c *Core) adjustRateDecay(dir Direction) {
 	ds := c.getDirState(dir)
 	dc := c.link.DirConfig(dir)
@@ -401,7 +401,7 @@ func (c *Core) adjustRateDecay(dir Direction) {
 	}
 }
 
-// setRates sets and applies both shaper rates.
+// setRates sets and applies the two shaper rates.
 func (c *Core) setRates(dlKbps, ulKbps int) {
 	c.dl.shaperRateKbps = float64(dlKbps)
 	c.ul.shaperRateKbps = float64(ulKbps)

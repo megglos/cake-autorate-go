@@ -43,7 +43,7 @@ func testConfig() *Config {
 	return cfg
 }
 
-// fakeActuator records the side effects requested by Core.
+// fakeActuator records the decisions of Core.
 type fakeActuator struct {
 	rates       map[Direction][]int
 	starts      int
@@ -61,8 +61,8 @@ func (f *fakeActuator) StartPingers()     { f.starts++ }
 func (f *fakeActuator) StopPingers()      { f.stops++ }
 func (f *fakeActuator) InvalidateShaper() { f.invalidates++ }
 
-// newTestCore creates a Core wired to a fakeActuator.
-// Adjust=false in testConfig, so SetRate is only called when a test enables it.
+// newTestCore creates a Core with a fakeActuator.
+// testConfig sets Adjust=false. Thus, Core calls SetRate only when a test sets Adjust=true.
 func newTestCore(t *testing.T) (*Core, *fakeActuator) {
 	t.Helper()
 	cfg := testConfig()
@@ -749,7 +749,7 @@ func TestProcessDelay_UsesMTUForCompensation(t *testing.T) {
 	}
 }
 
-// --- Reflector delay tracking ---
+// --- Reflector delay data ---
 
 func TestUpdateBaseline_InitializesOnFirst(t *testing.T) {
 	c, _ := newTestCore(t)
@@ -881,7 +881,7 @@ func TestHandleTimeout_UsesEventTimestamp(t *testing.T) {
 	c.cfg.GlobalPingResponseTimeoutS = 1
 	t0 := c.lastPingTime
 
-	// Elapsed time is measured between event timestamps, not the wall clock.
+	// Core measures the time between event timestamps, not with the wall clock.
 	c.HandlePing(PingResult{Reflector: "1.1.1.1", Timestamp: t0.Add(500 * time.Millisecond), Timeout: true})
 	if c.State() != StateRunning {
 		t.Fatalf("should not stall 500ms after last ping, got %s", c.State())
@@ -907,7 +907,7 @@ func TestCore_DeterministicForSameEvents(t *testing.T) {
 			if i%2 == 0 {
 				c.HandleRate(RateStats{DlRateKbps: 9000, UlRateKbps: 1000, Timestamp: now})
 			}
-			// Queue builds up over time, then drains
+			// The queue increases, then decreases
 			rtt := 10*time.Millisecond + time.Duration(i%60)*time.Millisecond
 			c.HandlePing(PingResult{Reflector: cfg.Links[0].Reflectors[i%4], RTT: rtt, Timestamp: now})
 		}

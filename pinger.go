@@ -25,8 +25,8 @@ type PingResult struct {
 	Timeout   bool
 }
 
-// ReflectorState tracks the health of a reflector. Delay tracking (baseline
-// RTT, delta EWMA) lives in Core.
+// ReflectorState is the health data of a reflector. Core keeps the delay
+// data (baseline RTT, delta EWMA).
 type ReflectorState struct {
 	mu           sync.Mutex
 	MissedWindow []bool // sliding window of missed responses
@@ -266,10 +266,10 @@ func (pm *PingerManager) recordHealth(reflector string, missed bool) {
 	state.mu.Unlock()
 }
 
-// ReplaceUnhealthy checks reflector health and replaces misbehaving ones
-// with spare reflectors from the pool. Returns the promoted spares; if any,
-// callers should reset their delay tracking and restart pingers to pick up
-// the new set.
+// ReplaceUnhealthy examines the health of the reflectors. It replaces each
+// reflector that does not operate correctly with a spare from the pool. It
+// returns the spares that it made active. If it returns spares, reset their
+// delay data and start the pingers again with the new set.
 func (pm *PingerManager) ReplaceUnhealthy() []string {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()

@@ -16,9 +16,9 @@ import (
 	"time"
 )
 
-// LinkController runs the control loop for a single WAN link. It owns the
-// goroutines and I/O (pingers, throughput monitor, shaper) and feeds their
-// events into a Core, which makes all control decisions.
+// LinkController runs the control loop for one WAN link. It owns the
+// goroutines and the I/O (pingers, throughput monitor, shaper). It sends
+// their events to a Core. The Core makes all control decisions.
 type LinkController struct {
 	name      string
 	link      *LinkConfig
@@ -33,7 +33,7 @@ type LinkController struct {
 	pingCh chan PingResult
 	rateCh chan RateStats
 
-	// runCtx is the context passed to Run; pingers are started under it.
+	// runCtx is the context of Run. The pingers start in this context.
 	runCtx context.Context
 	// Cancellation for sub-goroutines (pingers)
 	pingerCancel context.CancelFunc
