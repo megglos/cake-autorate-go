@@ -425,3 +425,55 @@ func TestValidate_FloatParamsAtBoundaries(t *testing.T) {
 		t.Errorf("valid boundary values should pass: %v", err)
 	}
 }
+
+func TestLoadConfig_LinkWithoutThresholdsGetsDefaults(t *testing.T) {
+	// Regression test: a link without delay thresholds got thresholds of 0.
+	// Then, each ping showed bufferbloat, and the rate went to the minimum.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `
+links:
+  - name: test
+    download: {interface: ifb4eth0, adjust: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+    upload: {interface: eth0, adjust: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000, owd_delta_delay_thr_ms: 15}
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := DefaultConfig()
+	dl, ul := cfg.Links[0].Download, cfg.Links[0].Upload
+	if dl.OWDDeltaDelayThrMs != def.Download.OWDDeltaDelayThrMs ||
+		dl.AvgOWDDeltaMaxAdjUpThrMs != def.Download.AvgOWDDeltaMaxAdjUpThrMs ||
+		dl.AvgOWDDeltaMaxAdjDownThrMs != def.Download.AvgOWDDeltaMaxAdjDownThrMs {
+		t.Errorf("download thresholds = %v/%v/%v, want the defaults",
+			dl.OWDDeltaDelayThrMs, dl.AvgOWDDeltaMaxAdjUpThrMs, dl.AvgOWDDeltaMaxAdjDownThrMs)
+	}
+	if ul.OWDDeltaDelayThrMs != 15 {
+		t.Errorf("upload owd_delta_delay_thr_ms = %v, want 15 (set in the link)", ul.OWDDeltaDelayThrMs)
+	}
+	if ul.AvgOWDDeltaMaxAdjDownThrMs != def.Upload.AvgOWDDeltaMaxAdjDownThrMs {
+		t.Errorf("upload avg_owd_delta_max_adjust_down_thr_ms = %v, want the default", ul.AvgOWDDeltaMaxAdjDownThrMs)
+	}
+}
+
+func TestValidate_ThresholdNotPositive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*DirectionConfig)
+	}{
+		{"owd_delta_delay_thr_ms", func(d *DirectionConfig) { d.OWDDeltaDelayThrMs = 0 }},
+		{"avg_owd_delta_max_adjust_up_thr_ms", func(d *DirectionConfig) { d.AvgOWDDeltaMaxAdjUpThrMs = -1 }},
+		{"avg_owd_delta_max_adjust_down_thr_ms", func(d *DirectionConfig) { d.AvgOWDDeltaMaxAdjDownThrMs = 0 }},
+	} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		tc.set(&cfg.Links[0].Upload)
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.name) {
+			t.Errorf("%s: expected error, got: %v", tc.name, err)
+		}
+	}
+}

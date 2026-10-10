@@ -237,6 +237,11 @@ func (c *Config) migrateLinks() {
 			if len(c.Links[i].Reflectors) == 0 {
 				c.Links[i].Reflectors = c.Reflectors
 			}
+			// The YAML parser creates each link from zero values. Thus, a
+			// threshold that the link does not set is 0. Use the top-level
+			// value (the default, or the legacy setting) instead.
+			inheritThresholds(&c.Links[i].Download, &c.Download)
+			inheritThresholds(&c.Links[i].Upload, &c.Upload)
 			if c.Links[i].Name == "" {
 				c.Links[i].Name = fmt.Sprintf("link%d", i)
 			}
@@ -254,6 +259,20 @@ func (c *Config) migrateLinks() {
 			PingSourceAddr:    c.PingSourceAddr,
 			PingInterfaceName: c.PingInterfaceName,
 		}}
+	}
+}
+
+// inheritThresholds sets each delay threshold of dc that is 0 to the value
+// in from.
+func inheritThresholds(dc, from *DirectionConfig) {
+	if dc.OWDDeltaDelayThrMs == 0 {
+		dc.OWDDeltaDelayThrMs = from.OWDDeltaDelayThrMs
+	}
+	if dc.AvgOWDDeltaMaxAdjUpThrMs == 0 {
+		dc.AvgOWDDeltaMaxAdjUpThrMs = from.AvgOWDDeltaMaxAdjUpThrMs
+	}
+	if dc.AvgOWDDeltaMaxAdjDownThrMs == 0 {
+		dc.AvgOWDDeltaMaxAdjDownThrMs = from.AvgOWDDeltaMaxAdjDownThrMs
 	}
 }
 
@@ -302,6 +321,17 @@ func (c *Config) Validate() error {
 			}
 			if dc.dir.MaxRateKbps < dc.dir.BaseRateKbps {
 				return fmt.Errorf("%s max_rate_kbps must be >= base_rate_kbps", dc.name)
+			}
+			// With a threshold of 0, each ping shows bufferbloat, and the
+			// shaper rate goes to min_rate_kbps.
+			if dc.dir.OWDDeltaDelayThrMs <= 0 {
+				return fmt.Errorf("%s owd_delta_delay_thr_ms must be positive", dc.name)
+			}
+			if dc.dir.AvgOWDDeltaMaxAdjUpThrMs <= 0 {
+				return fmt.Errorf("%s avg_owd_delta_max_adjust_up_thr_ms must be positive", dc.name)
+			}
+			if dc.dir.AvgOWDDeltaMaxAdjDownThrMs <= 0 {
+				return fmt.Errorf("%s avg_owd_delta_max_adjust_down_thr_ms must be positive", dc.name)
 			}
 		}
 		if len(link.Reflectors) == 0 {
