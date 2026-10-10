@@ -23,11 +23,18 @@ jobs:
       - name: Run tests
         run: go test -v -race -count=1 ./...
 
-      # Show the simulator scorecard and the known issues in the job summary.
+      # Show the baseline comparison, the simulator scorecard and the known
+      # issues in the job summary. This step also runs when the tests fail.
       - name: Simulator scorecard
+        if: ${{ !cancelled() }}
         run: |
+          SIM_BASELINE_OUT=baseline.md go test -count=1 -run TestSimBaseline . > /dev/null || true
           SIM_SCORECARD_OUT=scorecard.txt go test -count=1 -v -run 'TestSimScorecard|TestKnownIssue' . > sim.log
           {
+            echo '## Simulator baseline comparison'
+            echo 'To accept new scores, run `go test -run TestSimBaseline -update` and commit `testdata/sim_baseline.json`.'
+            echo
+            cat baseline.md 2>/dev/null || echo 'No comparison. Look at the test log.'
             echo '## Simulator scorecard'
             echo '```'
             cat scorecard.txt
