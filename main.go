@@ -33,6 +33,7 @@ func main() {
 	debug := flag.Bool("debug", false, "enable debug logging (overrides config)")
 	recordPath := flag.String("record", "", "write all controller events to this JSONL file (gzip if the name ends with .gz)")
 	recordMaxMB := flag.Int("record-max-mb", 0, "stop the recording when the file gets to this size in MB (0: no limit)")
+	noAdjust := flag.Bool("no-adjust", false, "do not change the shaper rates (overrides adjust in config); use with --record to measure a link")
 	flag.Parse()
 
 	if *showVersion {
@@ -53,6 +54,12 @@ func main() {
 
 	if *debug {
 		cfg.Debug = true
+	}
+	if *noAdjust {
+		for i := range cfg.Links {
+			cfg.Links[i].Download.Adjust = false
+			cfg.Links[i].Upload.Adjust = false
+		}
 	}
 
 	logFilePath := cfg.LogFilePath

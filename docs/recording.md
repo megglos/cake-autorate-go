@@ -12,6 +12,7 @@ With the `--record` option, cake-autorate-go writes all controller events to a f
 |---|---|
 | `--record FILE` | Write all controller events to `FILE` (JSONL). If `FILE` ends with `.gz`, the program writes gzip. |
 | `--record-max-mb N` | Stop the recording when the file gets to `N` MB. The controller continues. `0` (default) is no limit. |
+| `--no-adjust` | Do not change the shaper rates. This option overrides `adjust` in the config. Use it with `--record` to measure a link without autorate. |
 
 The recording does not change the behavior of the controller.
 
@@ -173,11 +174,77 @@ You can connect the modem directly to a Linux PC (USB or Ethernet). The PC then 
 
    The script shows the interface names for the config. The download interface is `ifb4<modem-interface>`.
 
-4. Write a config with these interface names. Set `ping_interface` to the modem interface.
+4. Write a config with these interface names. Set `ping_interface` to the modem interface. Example for the interface `enp7s0`:
 
-#### Recordings
+   ```yaml
+   links:
+     - name: test
+       download:
+         interface: ifb4enp7s0
+         adjust: true
+         min_rate_kbps: 20000      # change these rates for your link
+         base_rate_kbps: 200000
+         max_rate_kbps: 600000
+       upload:
+         interface: enp7s0
+         adjust: true
+         min_rate_kbps: 5000
+         base_rate_kbps: 30000
+         max_rate_kbps: 100000
+       ping_interface: enp7s0
+   log_to_file: false
+   ```
 
-Do the steps in [Link recordings without autorate](#link-recordings-without-autorate) and [Autorate recordings](#autorate-recordings). Run `load-gen.sh` on the same PC. Do not do the `tc qdisc change` commands. The script sets the CAKE bandwidth.
+   The other settings and the reflectors use the default values. To see them, run `./cake-autorate-go --defaults`.
+
+#### Recordings with the session script (recommended)
+
+`scripts/record-session.sh` does all steps automatically. It measures the bufferbloat and the throughput with different shaper policies:
+
+| Policy | CAKE bandwidth | Shows |
+|---|---|---|
+| `unshaped` | unlimited | The capacity of the link (the bandwidth reference) and the bufferbloat without a shaper |
+| `fixed` (optional, `-F`) | a fixed percentage of the capacity | A static shaper |
+| `autorate` | set by cake-autorate-go | The result of the controller |
+
+The goal of autorate is low bufferbloat and a throughput near the capacity. Thus, compare `autorate` with `unshaped` for the throughput, and with `unshaped` and `fixed` for the bufferbloat.
+
+The capacity of a link can change during the session. Thus, the script alternates the policies in short blocks. Each block has a time without load (for the base RTT) and a time with load.
+
+Before the blocks, the script does a saturation check. It applies the load with 4, 8 and 16 workers, and finds the number of workers that fills the link. If the throughput still increases from 8 to 16 workers, the script shows a warning. Then, the link is possibly not full, and the measured capacity is too low.
+
+1. Build the binary: `go build .`
+2. Do the steps in [Preparation](#preparation-1). You do not have to run `cake-pc.sh up`. The session script does it.
+3. Start the session:
+
+   ```sh
+   sudo ./scripts/record-session.sh -i <interface> -c <config> -F 85
+   ```
+
+   With the default values, the session has 2 rounds x 3 load modes (`dl`, `ul`, `both`) x 3 policies = 18 blocks. It takes approximately 55 minutes. For a shorter session, use `-r 1` or `-m "dl ul"`.
+
+4. Do not use the network during the session.
+5. The script writes all files to `recordings/<date>-<interface>/`:
+   - `session.txt`: the settings, the saturation check and system data.
+   - `blocks.tsv`: one line for each block, with the start and end times of the load (Unix time).
+   - `NN-MODE-POLICY.jsonl.gz`: the recording of each block.
+   - `NN-MODE-POLICY.log`: the log of cake-autorate-go and load-gen.sh.
+
+If you stop the script with Ctrl+C, it stops all programs and removes CAKE.
+
+#### Test the procedure on a different connection first
+
+Before you record the 5G link, do a short session on the usual connection of the PC (for example, fiber through the home router). This makes sure that the tools operate correctly:
+
+```sh
+sudo ./scripts/record-session.sh -i <interface> -c <config> -r 1 -m "dl ul" -b 60 -F 85
+```
+
+This session takes approximately 10 minutes. On a connection through a home router, the bottleneck can be the home router or the ISP. If the home router has a shaper (SQM, QoS), the `unshaped` blocks measure that shaper.
+
+#### Manual recordings
+
+You can also do the steps in [Link recordings without autorate](#link-recordings-without-autorate) and [Autorate recordings](#autorate-recordings) manually. Run `load-gen.sh` on the same PC, with `-i <interface>` to show the throughput. Do not do the `tc qdisc change` commands. `cake-pc.sh` sets the CAKE bandwidth. For the link recordings, use `cake-autorate-go --no-adjust`. Then you do not have to change `adjust` in the config.
 
 When you complete the recordings, remove CAKE:
 
