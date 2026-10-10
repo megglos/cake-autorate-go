@@ -383,6 +383,8 @@ Root privileges (or `CAP_NET_RAW` + `CAP_NET_ADMIN`) are required for ICMP pingi
 
 The `--record FILE` option writes all controller events to a JSONL file. A replay of the file through the controller gives the same decisions. Use recordings to analyze a session, to calibrate the link simulator and to tune the controller. For the file format and a recording procedure, see [docs/recording.md](docs/recording.md).
 
+To test the controller on an emulated 5G link on a fast connection, see [docs/emulation.md](docs/emulation.md).
+
 ## Prerequisites
 
 - **CAKE qdisc** must already be configured on your interfaces. This tool only adjusts the bandwidth parameter — it does not set up CAKE itself.
