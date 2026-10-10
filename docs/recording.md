@@ -252,6 +252,14 @@ When you complete the recordings, remove CAKE:
 sudo ./scripts/cake-pc.sh down <modem-interface>
 ```
 
+#### Modem in passthrough or bridge mode
+
+In passthrough mode (also: IP passthrough, bridge mode), the modem does not route. The PC gets the public IP address (or the carrier-grade NAT address) of the mobile connection. Thus, the PC operates as the router, as on a real installation.
+
+- **Firewall:** the PC is directly on the internet. Before you connect the modem, make sure that the firewall of the PC blocks all incoming connections. For example, with ufw: `sudo ufw status verbose` must show `deny (incoming)`. Examine also the allow rules of programs (for example KDE Connect).
+- **IPv6:** the modem can give an IPv6 address. Then, the load traffic can use IPv6 while the pings use IPv4. CAKE shapes the two. The measurements stay correct.
+- **Modem web interface:** in passthrough mode, the web interface is frequently at a different address. See the manual of the modem. You need it for the signal data.
+
 #### Differences from a router
 
 - On a PC, the load generator and CAKE are on the same computer. For upload, the TCP sender gets back pressure from the local queue. On a router, the sender is on a different computer and CAKE drops packets. Thus, the upload behavior with autorate can be a little different.
