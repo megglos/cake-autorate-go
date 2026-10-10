@@ -121,7 +121,7 @@ func simScenarios() []simScenario {
 		},
 		{
 			// The capacity decreases from 200 to 40 Mbit/s and then increases
-			// again (finding #2: cuts from the shaper rate converge slowly).
+			// again (finding F2: cuts from the shaper rate converge slowly).
 			name: "capacity-drop", duration: dur, seed: 2,
 			dlCapacity: steps([]float64{0, 40, 80}, []float64{200000, 40000, 200000}),
 			ulCapacity: constant(25000),
@@ -130,7 +130,7 @@ func simScenarios() []simScenario {
 			link: link5G,
 		},
 		{
-			// Upload and download are both saturated (finding #4: with RTT/2,
+			// Upload and download are both saturated (finding F4: with RTT/2,
 			// UL bloat also cuts DL).
 			name: "bidir-saturated", duration: dur, seed: 3,
 			dlCapacity: constant(150000), ulCapacity: constant(20000),
@@ -150,7 +150,7 @@ func simScenarios() []simScenario {
 		},
 		{
 			// Similar to Starlink: the capacity and the RTT floor change at the
-			// 15s reconfiguration boundaries, with large jitter (findings #3, #5).
+			// 15s reconfiguration boundaries, with large jitter (findings F3, F5).
 			name: "starlink-like", duration: dur, seed: 5,
 			dlCapacity: slCap, ulCapacity: slUlCap,
 			dlDemand: between(2, 118), ulDemand: between(30, 90),
@@ -161,7 +161,7 @@ func simScenarios() []simScenario {
 			},
 		},
 		{
-			// A 300ms latency spike that queues do not cause (finding #1: each
+			// A 300ms latency spike that queues do not cause (finding F1: each
 			// ping during the spike cuts the rate again).
 			name: "latency-spike", duration: dur, seed: 6,
 			dlCapacity: constant(120000), ulCapacity: constant(25000),
@@ -286,18 +286,18 @@ func minOf(v []float64) float64 {
 	return m
 }
 
-// #1: a short latency spike that queues do not cause must cut the rate only
+// F1: a short latency spike that queues do not cause must cut the rate only
 // a little. Each ping cuts the rate again while the detection window is full.
 // Thus, a 300ms spike causes many cuts.
 func TestKnownIssue1_LatencySpikeOvercut(t *testing.T) {
 	r := runSim(scenarioByName(t, "latency-spike"), policyAutorate)
 	low := minOf(sliceS(r.dlShaper, 60, 63))
 	const capacity = 120000.0
-	knownIssue(t, "#1", low >= 0.75*capacity,
+	knownIssue(t, "F1", low >= 0.75*capacity,
 		"300ms spike cut DL shaper to %.0f kbps (%.0f%% of %.0f kbps capacity)", low, 100*low/capacity, capacity)
 }
 
-// #1/#2: after a large capacity decrease, the shaper rate must quickly go
+// F1/F2: after a large capacity decrease, the shaper rate must quickly go
 // near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
 	r := runSim(scenarioByName(t, "capacity-drop"), policyAutorate)
@@ -305,19 +305,19 @@ func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
 	low := minOf(sliceS(r.dlShaper, 40, 50))
 	after1s := r.dlShaper[41*10]
 	ok := low >= 0.5*capacity && after1s <= 1.25*capacity
-	knownIssue(t, "#2", ok,
+	knownIssue(t, "F2", ok,
 		"after 200→40 Mbit/s drop: shaper %.0f kbps 1s later, minimum %.0f kbps in the next 10s", after1s, low)
 }
 
-// #4: a saturated upload must not decrease the download rate. With RTT/2,
+// F4: a saturated upload must not decrease the download rate. With RTT/2,
 // the UL queue delay applies to the two directions.
 func TestKnownIssue4_UploadBloatThrottlesDownload(t *testing.T) {
 	r := runSim(scenarioByName(t, "bidir-saturated"), policyAutorate)
-	knownIssue(t, "#4", r.dlUtil >= 0.75,
+	knownIssue(t, "F4", r.dlUtil >= 0.75,
 		"DL utilization %.0f%% while UL is saturated", 100*r.dlUtil)
 }
 
-// #5: a step in the RTT floor (Starlink reconfiguration, route change) is not
+// F5: a step in the RTT floor (Starlink reconfiguration, route change) is not
 // a queue. After Core learns the new floor, the step must not decrease the
 // throughput.
 func TestKnownIssue5_BaselineStepCostsThroughput(t *testing.T) {
@@ -333,7 +333,7 @@ func TestKnownIssue5_BaselineStepCostsThroughput(t *testing.T) {
 	r := runSim(sc, policyAutorate)
 	before := mean(sliceS(r.dlShaper, 30, 60))
 	after := mean(sliceS(r.dlShaper, 70, 118))
-	knownIssue(t, "#5", after >= 0.9*before,
+	knownIssue(t, "F5", after >= 0.9*before,
 		"mean DL shaper %.0f kbps before a +40ms RTT floor step, %.0f kbps after", before, after)
 }
 
