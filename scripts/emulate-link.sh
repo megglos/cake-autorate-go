@@ -296,7 +296,10 @@ PLAYER_PID=$!
 
 # --- Session ---------------------------------------------------------------
 
-ip netns exec "$NS" env BLOCK_START_HOOK="touch $RUN/restart" \
+# The hook gets the arguments BLOCK MODE POLICY. It does not use them.
+printf '#!/bin/sh\ntouch "%s/restart"\n' "$RUN" > "$RUN/block-start"
+chmod +x "$RUN/block-start"
+ip netns exec "$NS" env BLOCK_START_HOOK="$RUN/block-start" \
     "$SCRIPT_DIR/record-session.sh" -i "$VETH_NS" -c "$CONFIG" -o "$OUTDIR" \
     -s -w 8 -C "$DL_MED,$UL_MED" "${SESSION_ARGS[@]}"
 
