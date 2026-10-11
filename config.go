@@ -359,7 +359,7 @@ func unknownKeys(node *yaml.Node, t reflect.Type, path string) []string {
 	var msgs []string
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key, value := node.Content[i].Value, resolveAlias(node.Content[i+1])
-		if key == "<<" {
+		if node.Content[i].Tag == "!!merge" {
 			// YAML merge key: examine the keys of each merged mapping.
 			merged := []*yaml.Node{value}
 			if value.Kind == yaml.SequenceNode {

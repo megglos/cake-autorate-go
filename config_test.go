@@ -539,6 +539,24 @@ links:
 		t.Errorf("the merge key gives a warning:\n%s", w)
 	}
 
+	// A quoted "<<" is a usual string key, not a merge key: it is unknown.
+	quoted := `
+links:
+  - name: wan
+    download: {interface: ifb-wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+    upload: {interface: wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+"<<": {pinger_count: 4}
+`
+	if err := os.WriteFile(path, []byte(quoted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	if w := strings.Join(cfg.Warnings(), "\n"); !strings.Contains(w, `"<<"`) {
+		t.Errorf("a quoted \"<<\" key gives no warning:\n%s", w)
+	}
+
 	// The example config has no unknown keys.
 	cfg, err = LoadConfig("config.example.yaml")
 	if err != nil {
