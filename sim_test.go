@@ -346,7 +346,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		couplingMs := (sc.ulCouplingMs + sc.ulCouplingJitterMs) * couplingActive
 		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)
 		dl.step(t, simStepMs, base0, dlRev)
-		ul.step(t, simStepMs, base0, ulRev)
+		// The upload TCP flows also see the coupling delay on their
+		// forward path.
+		ul.step(t, simStepMs, base0+couplingMs, ulRev)
 		dlUse += 0.01 * ((dl.delivered-dlBefore)/simStepMs/math.Max(dl.capacity(t), 1) - dlUse)
 		if dl.demand(t) {
 			dlDelivered += dl.delivered - dlBefore

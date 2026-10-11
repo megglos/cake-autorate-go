@@ -1,10 +1,10 @@
 {
   "5g-coupled": {
-    "lat_p95_ms": 65.16,
-    "lat_p99_ms": 71.21,
-    "bloat_s": 88.83,
-    "dl_util": 96.01,
-    "ul_util": 84.5
+    "lat_p95_ms": 66.59,
+    "lat_p99_ms": 73.56,
+    "bloat_s": 88.97,
+    "dl_util": 95.83,
+    "ul_util": 84.4
   },
   "5g-recorded-a": {
     "lat_p95_ms": 67.16,
