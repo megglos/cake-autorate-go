@@ -161,6 +161,12 @@ type simScenario struct {
 	baseRTT func(t float64, i int) float64
 	// jitterMs is the mean jitter for each ping (exponential distribution).
 	jitterMs float64
+	// pingLoss is the probability that a ping gets no reply. Core then gets
+	// a timeout after reflector_response_deadline_s.
+	pingLoss float64
+	// outage returns true while the link transmits nothing (optional). Then
+	// the capacity is almost zero and no ping gets a reply.
+	outage func(t float64) bool
 
 	// link contains the rate limits and thresholds. The simulator sets Adjust=true.
 	link LinkConfig
@@ -199,6 +205,10 @@ type simResult struct {
 	dlShaper, ulShaper []float64
 	// Number of SetRate calls.
 	rateChanges int
+	// stallS is the total time in StateStall. stallEnd is the time (ms) of
+	// the last change from StateStall to StateRunning, or -1.
+	stallS   float64
+	stallEnd float64
 }
 
 // simActuator applies the decisions of Core to the simulated shaper.
@@ -245,6 +255,23 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	if flows == 0 {
 		flows = 4
 	}
+	if sc.outage != nil {
+		// During an outage, the link transmits almost nothing.
+		dlCap, ulCap, down := sc.dlCapacity, sc.ulCapacity, sc.outage
+		sc.dlCapacity = func(t float64) float64 {
+			if down(t) {
+				return 1
+			}
+			return dlCap(t)
+		}
+		sc.ulCapacity = func(t float64) float64 {
+			if down(t) {
+				return 1
+			}
+			return ulCap(t)
+		}
+	}
+	deadlineMs := cfg.ReflectorResponseDeadlineS * 1000
 
 	dl := &simDirection{capacity: sc.dlCapacity, demand: sc.dlDemand, bufferMs: sc.bufferMs, flows: flows, codelAbove: -1}
 	ul := &simDirection{capacity: sc.ulCapacity, demand: sc.ulDemand, bufferMs: sc.bufferMs, flows: flows, codelAbove: -1, shaperFirst: true}
@@ -292,6 +319,8 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 
 	var lat []float64
 	var res simResult
+	res.stallEnd = -1
+	wasStall := false
 	res.scenario, res.policy = sc.name, policy
 	var dlDelivered, dlCap, ulDelivered, ulCap float64
 
@@ -343,6 +372,12 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
 					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond
 				}
+				if rng.Float64() < sc.pingLoss || (sc.outage != nil && sc.outage(t)) {
+					// No reply: the pinger sends a timeout after the deadline.
+					result = PingResult{Reflector: result.Reflector, Timestamp: at(t + deadlineMs), Timeout: true}
+					pending = append(pending, simPendingPing{at: t + deadlineMs, result: result})
+					continue
+				}
 				pending = append(pending, simPendingPing{at: t + rtt, result: result})
 			}
 			// Deliver the replies that are due, in the order of arrival
@@ -370,6 +405,14 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 			lat = append(lat, queueMs)
 			if queueMs > simBloatThrMs {
 				res.bloatS += simProbeEveryMs / 1000.0
+			}
+		}
+		if core != nil {
+			if core.Core().State() == StateStall {
+				res.stallS += simStepMs / 1000
+				wasStall = true
+			} else if wasStall {
+				res.stallEnd, wasStall = t, false
 			}
 		}
 		if step%100 == 0 {
