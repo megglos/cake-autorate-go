@@ -1078,11 +1078,12 @@ func TestObserveLatency_ChangesThresholds(t *testing.T) {
 	if got := ds.scale(); got != latencyTargetStepUp {
 		t.Fatalf("scale after p95 10 ms = %.2f, want %.2f", got, latencyTargetStepUp)
 	}
-	// The thresholds of the controller use the factor.
-	c.processDelay(DL, 0, ts)
-	want := c.link.Download.OWDDeltaDelayThrMs * latencyTargetStepUp
-	if got := c.link.Download.OWDDeltaDelayThrMs * ds.scale(); got != want {
-		t.Errorf("delay threshold %.1f ms, want %.1f", got, want)
+	// The thresholds of the controller use the factor: a delta 5 % above
+	// the configured threshold is below the scaled threshold (× 1.1).
+	before := ds.delayWindowCount
+	c.processDelay(DL, 1.05*c.link.Download.OWDDeltaDelayThrMs*1000, ts)
+	if ds.delayWindowCount > before {
+		t.Errorf("delta 5 %% above the configured threshold counted as bufferbloat, want not (scaled threshold × %.1f)", latencyTargetStepUp)
 	}
 }
 
@@ -1272,6 +1273,33 @@ func TestObserveLatency_RTTReferenceNeedsTwoLowLoads(t *testing.T) {
 	}
 	if got := c.dl.scale(); got >= 1 {
 		t.Errorf("download scale %.2f, want a decrease (p95 80 ms, target 50 ms)", got)
+	}
+}
+
+// With one-way delays, the upload reference does not follow the baseline
+// while the download is loaded: download activity adds upload delay (5G
+// cross delay).
+func TestObserveLatency_ULReferenceNeedsLowDownload(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Upload.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	c.lastPingOWD = true
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(UL, "r1", 10000, 10000, ts)
+	// Download load for a long time: the upload baseline increases to 40 ms.
+	c.dl.loadPercent = 1
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(UL, "r1", 40000, 40000, ts)
+	}
+	// Then upload load too: 70 ms above the reference without load.
+	c.ul.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(UL, "r1", 80000, 40000, ts)
+	}
+	if got := c.ul.scale(); got >= 1 {
+		t.Errorf("upload scale %.2f, want a decrease (p95 70 ms, target 50 ms)", got)
 	}
 }
 

@@ -390,11 +390,15 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// the next low-load ping corrects it.
 	ref, ok := ds.ltBase[reflector]
 	// Without one-way delays, the RTT also contains the queue of the other
-	// direction. Then the reference follows the baseline only if the two
-	// directions have a low load.
-	lowLoad := ds.loadPercent < latencyTargetRefMaxLoad
-	if !c.lastPingOWD {
-		lowLoad = c.dl.loadPercent < latencyTargetRefMaxLoad && c.ul.loadPercent < latencyTargetRefMaxLoad
+	// direction. The upload delay also contains the delay from download
+	// activity (5G cross delay). Then the reference follows the baseline
+	// only if the two directions have a low load. The cutoff is not more
+	// than high_load_thr: else one sample is reference data and target
+	// data.
+	cutoff := math.Min(latencyTargetRefMaxLoad, c.cfg.HighLoadThr)
+	lowLoad := ds.loadPercent < cutoff
+	if !c.lastPingOWD || dir == UL {
+		lowLoad = c.dl.loadPercent < cutoff && c.ul.loadPercent < cutoff
 	}
 	if !ok || baselineUs < ref || lowLoad {
 		ref = baselineUs
