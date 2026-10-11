@@ -74,6 +74,21 @@ type reflectorDelay struct {
 	owdInit      bool
 	dlBaselineUs float64
 	ulBaselineUs float64
+
+	// starlink_reconfiguration: an EWMA of the deltas of the last pings.
+	recentInit                            bool
+	recentDeltaUs, recentDlUs, recentUlUs float64
+}
+
+// reconfigState is the state of starlink_reconfiguration.
+type reconfigState struct {
+	init       bool
+	slot       int64     // reconfiguration interval of the last ping
+	measuring  bool      // in the measure time after a reconfiguration
+	measureEnd time.Time // end of the measure time (send time of the pings)
+	// minStep is the smallest delta increase in the measure time (RTT/2,
+	// download, upload).
+	minStep [3]float64
 }
 
 // Core is the cake-autorate control algorithm for one WAN link.
@@ -83,11 +98,12 @@ type reflectorDelay struct {
 // Thus, the same events always give the same decisions.
 // Do not call Core from more than one goroutine at the same time.
 type Core struct {
-	name   string
-	link   *LinkConfig
-	cfg    *Config
-	act    Actuator
-	logger *Logger
+	reconfig reconfigState
+	name     string
+	link     *LinkConfig
+	cfg      *Config
+	act      Actuator
+	logger   *Logger
 
 	state               State
 	dl                  dirState
@@ -239,9 +255,12 @@ func (c *Core) HandlePing(result PingResult) {
 	c.lastPingOWD = result.OWD
 	if result.OWD {
 		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
-		if c.cfg.LearnCrossDelay {
-			ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
-		}
+	}
+	if c.cfg.StarlinkReconfiguration && result.OWD {
+		deltaUs, dlDeltaUs, ulDeltaUs = c.reconfigurationBaseline(rd, result, deltaUs, dlDeltaUs, ulDeltaUs)
+	}
+	if result.OWD && c.cfg.LearnCrossDelay {
+		ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
 	}
 
 	// Update the delta EWMA only when the load is below the threshold.
@@ -268,6 +287,123 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
 	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
 	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
+}
+
+const (
+	// Starlink reconfigures the satellite links every 15 s, at the seconds
+	// 12, 27, 42 and 57 of each minute (UTC). Then the delay floor can
+	// change by tens of milliseconds.
+	reconfigPeriodMs = 15000
+	reconfigOffsetMs = 12000
+	// reconfigSettle: a ping that was sent less than this time after a
+	// reconfiguration counts for the interval before it.
+	reconfigSettle = 100 * time.Millisecond
+	// reconfigMeasure is the time after a reconfiguration in which Core
+	// measures the floor change.
+	reconfigMeasure = 600 * time.Millisecond
+	// reconfigIdleLoad: below this load (achieved rate / shaper rate), a
+	// direction has no queue of its own.
+	reconfigIdleLoad = 0.2
+	// recentDeltaAlpha is the EWMA alpha of the deltas before a
+	// reconfiguration (for each ping of a reflector).
+	recentDeltaAlpha = 0.3
+)
+
+// reconfigurationBaseline changes the baselines after a Starlink
+// reconfiguration. The baseline increases slowly. Thus, without this
+// change, a higher delay floor after a reconfiguration looks like
+// bufferbloat for a long time, and Core decreases the rate.
+//
+// A floor change is the same for all reflectors and occurs at once. A
+// queue increases over some time. Thus, for reconfigMeasure after the
+// reconfiguration, Core compares the delta of each ping with the delta of
+// the same reflector before the reconfiguration. The smallest increase of
+// all these pings is the floor change. During this time, Core subtracts
+// the smallest increase so far from the deltas. At the end, the baselines
+// of all reflectors increase by the floor change. A decrease of the floor
+// needs no change: the baseline decreases quickly (alpha_baseline_decrease).
+//
+// Only with one-way delays: with RTT/2, Core cannot separate the floor
+// change from a queue change.
+//
+// The time comes from the ping timestamps (the clock of the host). The
+// host clock must be synchronized (NTP).
+func (c *Core) reconfigurationBaseline(rd *reflectorDelay, result PingResult, deltaUs, dlDeltaUs, ulDeltaUs float64) (float64, float64, float64) {
+	sent := result.Timestamp.Add(-result.RTT)
+	ms := sent.UnixMilli() - reconfigOffsetMs
+	slot := floorDiv(ms, reconfigPeriodMs)
+	// A ping sent near a reconfiguration can contain the old or the new
+	// floor (and the host clock has an error). It does not count.
+	pos := ms - slot*reconfigPeriodMs
+	near := pos < reconfigSettle.Milliseconds() || pos >= reconfigPeriodMs-reconfigSettle.Milliseconds()
+	rc := &c.reconfig
+	if rc.init && slot != rc.slot {
+		rc.measuring = true
+		rc.measureEnd = time.UnixMilli(slot*reconfigPeriodMs + reconfigOffsetMs).Add(reconfigSettle + reconfigMeasure)
+		rc.minStep = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+	}
+	rc.init, rc.slot = true, slot
+
+	if rc.measuring && !near && rd.recentInit {
+		rc.minStep[0] = math.Min(rc.minStep[0], deltaUs-rd.recentDeltaUs)
+		rc.minStep[1] = math.Min(rc.minStep[1], dlDeltaUs-rd.recentDlUs)
+		rc.minStep[2] = math.Min(rc.minStep[2], ulDeltaUs-rd.recentUlUs)
+	}
+	var step [3]float64
+	if rc.measuring {
+		for k, v := range rc.minStep {
+			if !math.IsInf(v, 1) {
+				step[k] = math.Max(v, 0)
+			}
+		}
+		// The floor change is the same in the two directions. A queue
+		// change is usually in one direction only. Thus, use the smaller
+		// step. Exception: a queue in a loaded direction can also decrease
+		// (and hide the floor change). If only one direction has no load,
+		// its step is the floor change.
+		m := math.Min(step[1], step[2])
+		dlIdle := c.dl.loadPercent < reconfigIdleLoad
+		ulIdle := c.ul.loadPercent < reconfigIdleLoad
+		if ulIdle && !dlIdle {
+			m = step[2]
+		} else if dlIdle && !ulIdle {
+			m = step[1]
+		}
+		step = [3]float64{m, m, m}
+		if !sent.Before(rc.measureEnd) {
+			rc.measuring = false
+			for _, r := range c.reflectors {
+				r.baselineUs += 2 * step[0]
+				r.dlBaselineUs += step[1]
+				r.ulBaselineUs += step[2]
+			}
+		}
+	}
+	deltaUs = math.Max(deltaUs-step[0], 0)
+	dlDeltaUs = math.Max(dlDeltaUs-step[1], 0)
+	ulDeltaUs = math.Max(ulDeltaUs-step[2], 0)
+
+	// The deltas before a reconfiguration: only outside of the measure
+	// time, so that they do not contain the floor change.
+	if !rc.measuring && !near {
+		if !rd.recentInit {
+			rd.recentInit = true
+			rd.recentDeltaUs, rd.recentDlUs, rd.recentUlUs = deltaUs, dlDeltaUs, ulDeltaUs
+		}
+		rd.recentDeltaUs += recentDeltaAlpha * (deltaUs - rd.recentDeltaUs)
+		rd.recentDlUs += recentDeltaAlpha * (dlDeltaUs - rd.recentDlUs)
+		rd.recentUlUs += recentDeltaAlpha * (ulDeltaUs - rd.recentUlUs)
+	}
+	return deltaUs, dlDeltaUs, ulDeltaUs
+}
+
+// floorDiv returns a/b rounded down (b > 0).
+func floorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b < 0 {
+		q--
+	}
+	return q
 }
 
 const (

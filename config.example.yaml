@@ -121,6 +121,7 @@ monitor_interval_ms: 200                  # How often to check interface through
 bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases after BB
 refractory_on_decrease: false             # true: also only one rate decrease in each refractory period
 learn_cross_delay: false                  # true: ignore the upload delay from download activity (icmp-timestamp only)
+starlink_reconfiguration: false           # true: follow the delay floor changes of Starlink (icmp-timestamp only)
 decay_refractory_period_ms: 1000          # Minimum time between decay adjustments
 
 # -- Reflector Health ---------------------------------------------------------

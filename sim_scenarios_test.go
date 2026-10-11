@@ -673,3 +673,62 @@ func TestSimOWD_LearnCrossDelay_UploadCapacityDrop(t *testing.T) {
 		t.Errorf("learned cross delay increased from %.1f to %.1f ms after the upload capacity decrease", before/1000, after/1000)
 	}
 }
+
+// F5 with starlink_reconfiguration: the delay floor increases by 40 ms
+// (RTT) at a Starlink reconfiguration (second 57). With one-way delays,
+// Core changes the baselines by the floor change, and the download rate
+// stays.
+func TestSimOWD_StarlinkReconfigurationFloorStep(t *testing.T) {
+	sc := scenarioByName(t, "steady-dl")
+	sc.name = "starlink-floor-step"
+	sc.baseRTT = func(t float64, i int) float64 {
+		base := 20 + 3*float64(i)
+		if t >= 57000 {
+			base += 40
+		}
+		return base
+	}
+	run := func(on bool) (before, after float64) {
+		sc.tune = func(cfg *Config) { cfg.StarlinkReconfiguration = on }
+		r := runSim(sc, policyAutorateOWD)
+		return mean(sliceS(r.dlShaper, 30, 57)), mean(sliceS(r.dlShaper, 67, 118))
+	}
+	offBefore, offAfter := run(false)
+	onBefore, onAfter := run(true)
+	t.Logf("DL shaper before / after the step: off %.0f / %.0f kbps, on %.0f / %.0f kbps", offBefore, offAfter, onBefore, onAfter)
+	if onAfter < 0.9*onBefore {
+		t.Errorf("with starlink_reconfiguration: DL shaper %.0f kbps after the step, %.0f before, want 90%% or more", onAfter, onBefore)
+	}
+}
+
+// starlink_reconfiguration must not make starlink-like much worse. There,
+// the capacity also changes at each reconfiguration. Mean of 4 seeds: the
+// result of one seed changes much.
+func TestSimOWD_StarlinkReconfigurationNoRegression(t *testing.T) {
+	run := func(on bool) simResult {
+		var m simResult
+		const n = 4
+		for v := range uint64(n) {
+			for _, sc := range simScenariosVariant(v) {
+				if sc.name != "starlink-like" {
+					continue
+				}
+				sc.tune = func(cfg *Config) { cfg.StarlinkReconfiguration = on }
+				r := runSim(sc, policyAutorateOWD)
+				m.latP95 += r.latP95 / n
+				m.dlUtil += r.dlUtil / n
+				m.ulUtil += r.ulUtil / n
+			}
+		}
+		return m
+	}
+	off, on := run(false), run(true)
+	t.Logf("p95 %.1f / %.1f ms, DL %.0f / %.0f %%, UL %.0f / %.0f %% (off / on)",
+		off.latP95, on.latP95, 100*off.dlUtil, 100*on.dlUtil, 100*off.ulUtil, 100*on.ulUtil)
+	if on.latP95 > math.Max(1.1*off.latP95, off.latP95+5) {
+		t.Errorf("p95 %.1f ms with starlink_reconfiguration, %.1f ms without", on.latP95, off.latP95)
+	}
+	if on.dlUtil < off.dlUtil-0.03 || on.ulUtil < off.ulUtil-0.03 {
+		t.Errorf("utilization DL %.0f / UL %.0f %% with starlink_reconfiguration, %.0f / %.0f %% without", 100*on.dlUtil, 100*on.ulUtil, 100*off.dlUtil, 100*off.ulUtil)
+	}
+}

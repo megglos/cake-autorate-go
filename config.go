@@ -114,6 +114,11 @@ type Config struct {
 	// activity causes, and ignore it. Only with one-way delays.
 	LearnCrossDelay bool `yaml:"learn_cross_delay"`
 
+	// StarlinkReconfiguration: after each Starlink reconfiguration (every
+	// 15 s), change the baselines by the change of the delay floor. Off by
+	// default.
+	StarlinkReconfiguration bool `yaml:"starlink_reconfiguration"`
+
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`
 	ReflectorMisbehavingDetectionWindow int     `yaml:"reflector_misbehaving_detection_window"`

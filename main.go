@@ -192,6 +192,7 @@ func printDefaults() {
 	fmt.Printf("refractory_on_decrease: %v\n", cfg.RefractoryOnDecrease)
 	fmt.Printf("decay_refractory_period_ms: %d\n", cfg.DecayRefractoryPeriodMs)
 	fmt.Printf("learn_cross_delay: %v\n", cfg.LearnCrossDelay)
+	fmt.Printf("starlink_reconfiguration: %v\n", cfg.StarlinkReconfiguration)
 	fmt.Printf("\nreflector_response_deadline_s: %g\n", cfg.ReflectorResponseDeadlineS)
 	fmt.Printf("reflector_misbehaving_detection_window: %d\n", cfg.ReflectorMisbehavingDetectionWindow)
 	fmt.Printf("reflector_misbehaving_detection_thr: %d\n", cfg.ReflectorMisbehavingDetectionThr)
