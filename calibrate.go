@@ -750,7 +750,7 @@ func runCalibrate(args []string) int {
 		}
 		return 2
 	}
-	if *session == "" {
+	if *session == "" || fs.NArg() > 0 {
 		fs.Usage()
 		return 2
 	}

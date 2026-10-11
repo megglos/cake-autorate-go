@@ -586,6 +586,15 @@ func TestCalibrateSession_NoUploadCapacityNote(t *testing.T) {
 	}
 }
 
+// Arguments that are not options stop the command (for example a typo).
+func TestRunCalibrate_ExtraArgs(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	out := filepath.Join(t.TempDir(), "out.yaml")
+	if got := runCalibrate([]string{"-session", dir, "extra", "-out", out}); got != 2 {
+		t.Errorf("exit code %d, want 2", got)
+	}
+}
+
 // calibrate -h is a help request, not an error.
 func TestRunCalibrate_Help(t *testing.T) {
 	if got := runCalibrate([]string{"-h"}); got != 0 {
