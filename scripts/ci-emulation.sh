@@ -106,11 +106,14 @@ log() { echo "[ci-emu] [$(date '+%H:%M:%S')] $*"; }
 
 [ "$(id -u)" -eq 0 ] || die "run this script as root"
 
-PIDS=()
+# The background jobs that run now. A job leaves the list after its wait:
+# a later kill could hit a new process with the same PID.
+WAVE_PID=""
+AUTORATE_PID=""
 
 teardown() {
-    for pid in "${PIDS[@]}"; do
-        kill "$pid" 2>/dev/null || true
+    for pid in "$WAVE_PID" "$AUTORATE_PID"; do
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null
     done
     # Stop all processes in the namespaces (iperf3 servers and clients,
     # ping, cake-autorate-go) before the wait: else the wait blocks until
@@ -217,7 +220,11 @@ log "Emulated link: dl ${DL_KBPS} and $((DL_KBPS / 2)) kbit/s, ul ${UL_KBPS} and
 # of it for PERIOD_S. It starts with the high rate.
 rate_wave() {
     trap - EXIT
-    trap 'exit 0' INT TERM
+    # The sleep runs in the background with an interruptible wait: else
+    # bash runs the trap only after the sleep, and the phase takes up to
+    # PERIOD_S more.
+    local sleep_pid=""
+    trap '[ -n "$sleep_pid" ] && kill "$sleep_pid" 2>/dev/null; exit 0' INT TERM
     local f=1
     while true; do
         for spec in "$LAN $DL_KBPS" "$UP $UL_KBPS"; do
@@ -225,7 +232,9 @@ rate_wave() {
             rate=$(( rate / f ))
             m tc qdisc change dev "$dev" root handle 1: tbf rate "${rate}kbit" burst "$(burst_bytes "$rate")" limit 1000000
         done
-        sleep "$PERIOD_S"
+        sleep "$PERIOD_S" &
+        sleep_pid=$!
+        wait "$sleep_pid"
         f=$(( 3 - f ))
     done
 }
@@ -242,8 +251,7 @@ phase() {
     local ping_pid=$!
     sleep "$IDLE_S"
     rate_wave &
-    local wave_pid=$!
-    PIDS+=("$wave_pid")
+    WAVE_PID=$!
     r iperf3 -c 10.210.1.2 -p 5201 -R -P 4 -t "$LOAD_S" -J > "$dir/iperf-dl.json" 2>&1 &
     local dl_pid=$!
     r iperf3 -c 10.210.1.2 -p 5202 -P 4 -t "$LOAD_S" -J > "$dir/iperf-ul.json" 2>&1 &
@@ -251,9 +259,10 @@ phase() {
     wait "$dl_pid" "$ul_pid" || log "warning: iperf3 failed (see $dir/iperf-*.json)"
     # The wave runs until this kill. If it stopped before (a tc error), the
     # phase did not have the square wave.
-    kill -0 "$wave_pid" 2>/dev/null || die "phase $name: the rate changes stopped (tc error)"
-    kill "$wave_pid" 2>/dev/null || true
-    wait "$wave_pid" 2>/dev/null || true
+    kill -0 "$WAVE_PID" 2>/dev/null || die "phase $name: the rate changes stopped (tc error)"
+    kill "$WAVE_PID" 2>/dev/null || true
+    wait "$WAVE_PID" 2>/dev/null || true
+    WAVE_PID=""
     wait "$ping_pid" || true
     sleep 2
 }
@@ -294,13 +303,13 @@ log_to_file: false
 EOF
 r "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
 AUTORATE_PID=$!
-PIDS+=("$AUTORATE_PID")
 sleep 5
 kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped"; }
 phase autorate
 kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped during the load"; }
 kill "$AUTORATE_PID"
 wait "$AUTORATE_PID" 2>/dev/null || true
+AUTORATE_PID=""
 
 # --- Results ---------------------------------------------------------------
 
