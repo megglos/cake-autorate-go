@@ -110,6 +110,9 @@ type Config struct {
 	// false, each ping with bufferbloat decreases the rate.
 	RefractoryOnDecrease    bool `yaml:"refractory_on_decrease"`
 	DecayRefractoryPeriodMs int  `yaml:"decay_refractory_period_ms"`
+	// LearnCrossDelay makes Core learn the upload delay that download
+	// activity causes, and ignore it. Only with one-way delays.
+	LearnCrossDelay bool `yaml:"learn_cross_delay"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`

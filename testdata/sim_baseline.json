@@ -1,4 +1,11 @@
 {
+  "autorate-owd/5g-coupled": {
+    "lat_p95_ms": 51.27,
+    "lat_p99_ms": 52.55,
+    "bloat_s": 84.86,
+    "dl_util": 99.04,
+    "ul_util": 14.01
+  },
   "autorate-owd/5g-recorded-a": {
     "lat_p95_ms": 36.79,
     "lat_p99_ms": 55.25,
@@ -54,6 +61,13 @@
     "bloat_s": 10.75,
     "dl_util": 97.4,
     "ul_util": 0
+  },
+  "autorate/5g-coupled": {
+    "lat_p95_ms": 65.36,
+    "lat_p99_ms": 71.44,
+    "bloat_s": 86.31,
+    "dl_util": 95.45,
+    "ul_util": 76.81
   },
   "autorate/5g-recorded-a": {
     "lat_p95_ms": 67.73,

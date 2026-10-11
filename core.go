@@ -60,6 +60,8 @@ type dirState struct {
 	bbDetected       bool
 	lastBBTime       time.Time
 	lastDecayTime    time.Time
+	crossDelayUs     float64   // learned delay from activity in the other direction
+	lowLoadSince     time.Time // start of the low load for the cross delay, or zero
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -156,6 +158,11 @@ func (c *Core) HandleRate(stats RateStats) {
 	if c.ul.shaperRateKbps > 0 {
 		c.ul.loadPercent = stats.UlRateKbps / c.ul.shaperRateKbps
 	}
+	if c.ul.achievedKbps >= crossDelayMaxLoad*c.ul.shaperRateKbps {
+		c.ul.lowLoadSince = time.Time{}
+	} else if c.ul.lowLoadSince.IsZero() {
+		c.ul.lowLoadSince = stats.Timestamp
+	}
 
 	switch c.state {
 	case StateRunning:
@@ -232,6 +239,9 @@ func (c *Core) HandlePing(result PingResult) {
 	c.lastPingOWD = result.OWD
 	if result.OWD {
 		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
+		if c.cfg.LearnCrossDelay {
+			ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
+		}
 	}
 
 	// Update the delta EWMA only when the load is below the threshold.
@@ -258,6 +268,48 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
 	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
 	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
+}
+
+const (
+	// crossDelayAlpha is the EWMA alpha of the learned cross delay, for each
+	// ping. With 6 reflectors at 300 ms, the time constant is approximately
+	// 1 s.
+	crossDelayAlpha = 0.05
+	// crossDelayMaxLoad is the maximum upload load (achieved rate / shaper
+	// rate) when Core learns the cross delay. At this load, the upload
+	// shaper has no queue.
+	crossDelayMaxLoad = 0.5
+	// crossDelayMinLowLoad is the minimum time with low upload load before
+	// Core learns the cross delay. After an upload capacity decrease, the
+	// load is also low, but only until the first rate decrease (less than
+	// 1 s). In that time, the queue of the upload shaper increases.
+	crossDelayMinLowLoad = 2 * time.Second
+)
+
+// removeCrossDelay returns the upload delta without the delay that
+// download activity causes. On 5G, the scheduler gives fewer upload grants
+// when the download is busy. The upload shaper cannot remove this delay.
+//
+// Core learns this delay while the download is active and the upload load
+// was low for crossDelayMinLowLoad or more. Then the delay cannot come from
+// the upload shaper. The learned
+// delay is not more than the upload delay threshold. Thus, a larger delay
+// always shows bufferbloat. Core removes the learned delay only while the
+// download is active.
+//
+// Only the upload uses it. After a capacity decrease, the download load
+// can be low while its queue increases. Then the download would learn its
+// own queue.
+func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
+	if c.dl.achievedKbps < float64(c.cfg.ConnectionActiveThrKbps) {
+		return ulDeltaUs
+	}
+	ul := &c.ul
+	if !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
+		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
+	}
+	return math.Max(ulDeltaUs-ul.crossDelayUs, 0)
 }
 
 // updateBaseline updates the baseline RTT of a reflector with an EWMA. It

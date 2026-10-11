@@ -239,6 +239,16 @@ func simScenariosVariant(variant uint64) []simScenario {
 			link: link5GRec,
 		},
 		{
+			// Similar to the 5G link in the recordings: download activity
+			// delays the upload (the 5G scheduler). Load in the two
+			// directions. The upload shaper cannot remove this delay.
+			name: "5g-coupled", duration: dur, seed: 9 + v,
+			dlCapacity: constant(150000), ulCapacity: constant(30000),
+			dlDemand: between(2, 118), ulDemand: between(30, 100),
+			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12,
+			link: link5G,
+		},
+		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
 			// ping during the spike cuts the rate again).
 			name: "latency-spike", duration: dur, seed: 6 + v,
@@ -525,6 +535,54 @@ func TestSim_OutageAndPingLoss(t *testing.T) {
 	}
 }
 
+// With one-way delays, the upload delay from download activity is near the
+// threshold for rate increases, and the upload rate stays low. With
+// learn_cross_delay, the upload gets its capacity. The latency must not
+// increase much: more upload throughput gives a small upload queue.
+func TestSimOWD_LearnCrossDelay_Coupled(t *testing.T) {
+	sc := scenarioByName(t, "5g-coupled")
+	run := func(learn bool) simResult {
+		sc.tune = func(cfg *Config) { cfg.LearnCrossDelay = learn }
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(false), run(true)
+	t.Logf("p95 %.1f / %.1f ms, bloat %.1f / %.1f s, DL %.0f / %.0f %%, UL %.0f / %.0f %% (off / on)",
+		off.latP95, on.latP95, off.bloatS, on.bloatS, 100*off.dlUtil, 100*on.dlUtil, 100*off.ulUtil, 100*on.ulUtil)
+	if on.ulUtil < 0.8 || on.ulUtil < off.ulUtil+0.5 {
+		t.Errorf("UL utilization %.0f%% with learn_cross_delay, %.0f%% without, want 80%% or more and +50 points", 100*on.ulUtil, 100*off.ulUtil)
+	}
+	if on.dlUtil < 0.9 {
+		t.Errorf("DL utilization %.0f%% with learn_cross_delay, want 90%% or more", 100*on.dlUtil)
+	}
+	if on.latP95 > off.latP95+15 {
+		t.Errorf("p95 %.1f ms with learn_cross_delay, %.1f ms without, want not more than +15 ms", on.latP95, off.latP95)
+	}
+}
+
+// With low delay thresholds, the upload delay from download activity is
+// above the threshold in many pings. Then the upload rate stays near the
+// minimum without learn_cross_delay.
+func TestSimOWD_LearnCrossDelay_LowThreshold(t *testing.T) {
+	sc := scenarioByName(t, "5g-coupled")
+	tune := func(learn bool) func(*Config) {
+		return func(cfg *Config) {
+			cfg.LearnCrossDelay = learn
+			cfg.Links[0].Upload.OWDDeltaDelayThrMs = 15
+			cfg.Links[0].Upload.AvgOWDDeltaMaxAdjDownThrMs = 30
+		}
+	}
+	sc.tune = tune(false)
+	off := runSim(sc, policyAutorateOWD)
+	sc.tune = tune(true)
+	on := runSim(sc, policyAutorateOWD)
+	if on.ulUtil < 0.6 || on.ulUtil < off.ulUtil+0.3 {
+		t.Errorf("UL utilization %.0f%% with learn_cross_delay, %.0f%% without, want 60%% or more and +30 points", 100*on.ulUtil, 100*off.ulUtil)
+	}
+	if on.dlUtil < 0.9 {
+		t.Errorf("DL utilization %.0f%% with learn_cross_delay, want 90%% or more", 100*on.dlUtil)
+	}
+}
+
 // F1/F2: after a large capacity decrease, the shaper rate must quickly go
 // near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
@@ -583,4 +641,27 @@ func mean(v []float64) float64 {
 		s += x
 	}
 	return s / float64(len(v))
+}
+
+// learn_cross_delay must not learn the queue of the upload shaper. After an
+// upload capacity decrease, the upload load is less than half of the shaper
+// rate while the queue increases.
+func TestSimOWD_LearnCrossDelay_UploadCapacityDrop(t *testing.T) {
+	sc := scenarioByName(t, "5g-coupled")
+	sc.name = "5g-coupled-ul-drop"
+	sc.ulCapacity = steps([]float64{0, 40, 80}, []float64{30000, 3000, 30000})
+	sc.ulDemand = between(2, 118)
+	run := func(learn bool) simResult {
+		sc.tune = func(cfg *Config) { cfg.LearnCrossDelay = learn }
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(false), run(true)
+	t.Logf("p95 %.1f / %.1f ms, bloat %.1f / %.1f s, UL %.0f / %.0f %% (off / on)",
+		off.latP95, on.latP95, off.bloatS, on.bloatS, 100*off.ulUtil, 100*on.ulUtil)
+	if on.latP95 > math.Max(1.1*off.latP95, off.latP95+5) {
+		t.Errorf("p95 %.1f ms with learn_cross_delay, %.1f ms without", on.latP95, off.latP95)
+	}
+	if on.bloatS > math.Max(1.1*off.bloatS, off.bloatS+1) {
+		t.Errorf("bloat %.1f s with learn_cross_delay, %.1f s without", on.bloatS, off.bloatS)
+	}
 }
