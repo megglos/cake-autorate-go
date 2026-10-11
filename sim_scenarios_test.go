@@ -356,6 +356,10 @@ func TestRunSimSeeds_DirectionP95(t *testing.T) {
 	if !(r.dlLatP95 > 0) {
 		t.Errorf("autorate-owd: download p95 %v, want more than 0", r.dlLatP95)
 	}
+	// steady-dl has no upload demand: no upload samples.
+	if !math.IsNaN(r.ulLatP95) {
+		t.Errorf("autorate-owd: upload p95 %v without upload demand, want NaN", r.ulLatP95)
+	}
 	u, _ := runSimSeeds(i, policyUnshaped, 2)
 	if !math.IsNaN(u.dlLatP95) {
 		t.Errorf("unshaped: download p95 %v, want NaN", u.dlLatP95)
