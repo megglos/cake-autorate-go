@@ -374,7 +374,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up). No 5G tests until the next 5G day pass. Local tests on fiber: CI emulation (no internet), `emulate-link.sh` with 5G traces.
 
 
-1. User: review and merge #26, #27, #29 (after Copilot round 2 on #29).
+1. User: review and merge #26, #27, #29, #34. Review rounds done 2026-10-11 19:45 (3 more rounds after the user request; #34 got "Approval recommended"; #28 merged).
 2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
 4. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
