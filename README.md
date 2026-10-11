@@ -316,7 +316,7 @@ The algorithm uses exponentially weighted moving averages (EWMA) to track delay 
 ```yaml
 alpha_baseline_increase: 0.001   # Baseline moves very slowly when delay rises
 alpha_baseline_decrease: 0.9     # Baseline tracks quickly when delay drops
-alpha_delta_ewma: 0.095          # Smoothing for the delay delta moving average
+alpha_delta_ewma: 0.095          # Not used (kept for config compatibility)
 ```
 
 The asymmetry between `alpha_baseline_increase` (slow) and `alpha_baseline_decrease` (fast) is intentional — the baseline should be slow to rise (to avoid normalizing bufferbloat) but quick to drop (to track genuine improvements in path latency).
@@ -385,7 +385,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `bufferbloat_detection_thr` | `3` | Samples to trigger bufferbloat |
 | `alpha_baseline_increase` | `0.001` | EWMA alpha for rising baseline |
 | `alpha_baseline_decrease` | `0.9` | EWMA alpha for falling baseline |
-| `alpha_delta_ewma` | `0.095` | EWMA alpha for delay delta |
+| `alpha_delta_ewma` | `0.095` | Not used. The original uses it to compare reflectors. Kept for config compatibility |
 | `high_load_thr` | `0.75` | High-load threshold (0.0–1.0) |
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |

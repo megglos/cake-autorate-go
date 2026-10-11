@@ -785,35 +785,6 @@ func TestUpdateBaseline_TracksIncreaseSlowly(t *testing.T) {
 	}
 }
 
-func TestHandlePing_UpdatesDeltaEWMAUnderLowLoad(t *testing.T) {
-	c, _ := newTestCore(t)
-	now := time.Now()
-
-	c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 10 * time.Millisecond, Timestamp: now})
-	c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 12 * time.Millisecond, Timestamp: now})
-
-	// delta = (12000 - baseline) / 2 with baseline ≈ 10002
-	rd := c.reflectors["1.1.1.1"]
-	deltaUs := (12000 - rd.baselineUs) / 2
-	expected := c.cfg.AlphaDeltaEWMA * deltaUs
-	if rd.deltaEWMA < expected-1 || rd.deltaEWMA > expected+1 {
-		t.Errorf("expected deltaEWMA ~%.1f, got %.1f", expected, rd.deltaEWMA)
-	}
-}
-
-func TestHandlePing_SkipsDeltaEWMAUnderHighLoad(t *testing.T) {
-	c, _ := newTestCore(t)
-	c.dl.loadPercent = 0.9
-	now := time.Now()
-
-	c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 10 * time.Millisecond, Timestamp: now})
-	c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 20 * time.Millisecond, Timestamp: now})
-
-	if ewma := c.reflectors["1.1.1.1"].deltaEWMA; ewma != 0 {
-		t.Errorf("deltaEWMA should not update under high load, got %f", ewma)
-	}
-}
-
 func TestResetReflector_ReinitializesBaseline(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.updateBaseline("1.1.1.1", 5000)
