@@ -67,7 +67,6 @@ type dirState struct {
 // reflectorDelay is the delay data for one reflector.
 type reflectorDelay struct {
 	baselineUs float64
-	deltaEWMA  float64
 
 	// Baselines of the one-way delays (ICMP timestamps). owdInit is false
 	// until the first reply with one-way delays.
@@ -242,12 +241,6 @@ func (c *Core) HandlePing(result PingResult) {
 		if c.cfg.LearnCrossDelay {
 			ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
 		}
-	}
-
-	// Update the delta EWMA only when the load is below the threshold.
-	// High load increases the RTT, and this must not change the EWMA.
-	if c.dl.loadPercent < c.cfg.HighLoadThr && c.ul.loadPercent < c.cfg.HighLoadThr {
-		rd.deltaEWMA = c.cfg.AlphaDeltaEWMA*deltaUs + (1-c.cfg.AlphaDeltaEWMA)*rd.deltaEWMA
 	}
 
 	c.processDelay(DL, dlDeltaUs, result.Timestamp)

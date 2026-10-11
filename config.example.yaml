@@ -102,7 +102,7 @@ bufferbloat_detection_thr: 3      # Samples exceeding threshold to trigger detec
 
 alpha_baseline_increase: 0.001    # Baseline moves slowly when delay increases
 alpha_baseline_decrease: 0.9      # Baseline tracks quickly when delay decreases
-alpha_delta_ewma: 0.095           # Smoothing factor for delay delta EWMA
+alpha_delta_ewma: 0.095           # Not used (kept for config compatibility)
 
 # -- Rate Adjustment Factors ---------------------------------------------------
 
