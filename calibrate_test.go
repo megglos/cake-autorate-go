@@ -559,6 +559,33 @@ func TestCalibrateSession_BadBlockNumber(t *testing.T) {
 	}
 }
 
+// Without an unshaped ul block, the note tells that the upload capacity is
+// missing, not the one-way delays or the shaper rate.
+func TestCalibrateSession_NoUploadCapacityNote(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, grantDelayMs: 15})
+	p := filepath.Join(dir, "blocks.tsv")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keep []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if !strings.Contains(l, "\tul\tunshaped\t") {
+			keep = append(keep, l)
+		}
+	}
+	if err := os.WriteFile(p, []byte(strings.Join(keep, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "grant delay is not measured: it needs the upload capacity") }) {
+		t.Errorf("notes %q, want the grant delay note about the missing upload capacity", res.Notes)
+	}
+}
+
 // calibrate -h is a help request, not an error.
 func TestRunCalibrate_Help(t *testing.T) {
 	if got := runCalibrate([]string{"-h"}); got != 0 {

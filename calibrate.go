@@ -278,6 +278,8 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	switch {
 	case res.GrantDelayMs.N == 0 && nGrantBlocks == 0:
 		res.Notes = append(res.Notes, "no autorate ul block: the upload grant delay is not measured")
+	case res.GrantDelayMs.N == 0 && res.UlCapacity.N == 0:
+		res.Notes = append(res.Notes, "the upload grant delay is not measured: it needs the upload capacity of an unshaped ul block")
 	case res.GrantDelayMs.N == 0:
 		res.Notes = append(res.Notes, "the autorate ul blocks have no one-way delays or no low shaper rate: the upload grant delay is not measured")
 	}
