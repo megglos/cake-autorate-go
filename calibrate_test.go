@@ -143,7 +143,7 @@ func TestCalibrateSession(t *testing.T) {
 		t.Errorf("notes = %v, want none", res.Notes)
 	}
 
-	p := res.propose(cfg.PingerCount)
+	p := res.propose(cfg)
 	if p.DlMax != 200000 || p.DlBase != 200000 || p.DlMin != 100000 {
 		t.Errorf("download rates %d/%d/%d, want 100000/200000/200000", p.DlMin, p.DlBase, p.DlMax)
 	}
@@ -163,7 +163,9 @@ func TestCalibrateSession(t *testing.T) {
 
 	// The output must be a valid config without unknown keys.
 	var buf bytes.Buffer
-	writeCalConfig(&buf, dir, cfg, res, p)
+	if err := writeCalConfig(&buf, dir, cfg, res, p); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(t.TempDir(), "out.yaml")
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
@@ -191,7 +193,7 @@ func TestCalibrateSession_Thresholds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := res.propose(cfg.PingerCount)
+	p := res.propose(cfg)
 	// Idle jitter p95 approximately 19 ms → 2 x 19 = 38 ms.
 	if p.DlThrMs < 36 || p.DlThrMs > 40 {
 		t.Errorf("download threshold %.0f ms, want approximately 38 (2 x idle jitter)", p.DlThrMs)
@@ -230,9 +232,105 @@ func TestCalibrateSession_MissingBlocks(t *testing.T) {
 		t.Errorf("notes = %v, want notes for the missing download and upload capacity", res.Notes)
 	}
 	var buf bytes.Buffer
-	writeCalConfig(&buf, dir, cfg, res, res.propose(cfg.PingerCount))
+	if err := writeCalConfig(&buf, dir, cfg, res, res.propose(cfg)); err != nil {
+		t.Fatal(err)
+	}
 	want := fmt.Sprintf("min_rate_kbps: %d", cfg.Links[0].Download.MinRateKbps)
 	if !strings.Contains(buf.String(), want) || !strings.Contains(buf.String(), "# NOTE:") {
 		t.Errorf("output does not keep the session rates or has no notes:\n%s", buf.String())
+	}
+}
+
+// A session with more than one link is rejected: the recordings contain
+// the events of all links.
+func TestCalibrateSession_MultiLink(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
+	cfg := testConfig()
+	cfg.Links = append(cfg.Links, cfg.Links[0])
+	cfg.Links[1].Name = "second"
+	rec, err := newRecorderAt(filepath.Join(dir, "01-dl-unshaped.jsonl"), 0, cfg, time.Unix(1_800_000_000, 0), testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := calibrateSession(dir); err == nil || !strings.Contains(err.Error(), "exactly one link") {
+		t.Errorf("err = %v, want an error for more than one link", err)
+	}
+}
+
+// Strings that YAML reads differently without quotes stay the same after
+// a reload of the generated config.
+func TestWriteCalConfig_QuotesStrings(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Links[0].Name = "wan # backup"
+	cfg.Links[0].PingInterfaceName = "yes"
+	var buf bytes.Buffer
+	if err := writeCalConfig(&buf, dir, cfg, res, res.propose(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "out.yaml")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Links[0].Name != "wan # backup" || got.Links[0].PingInterfaceName != "yes" {
+		t.Errorf("name %q, ping_interface %q after reload", got.Links[0].Name, got.Links[0].PingInterfaceName)
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("disk full") }
+
+func TestWriteCalConfig_ReturnsWriteError(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCalConfig(failWriter{}, dir, cfg, res, res.propose(cfg)); err == nil {
+		t.Error("no error from a failing writer")
+	}
+}
+
+// Without autorate dl blocks, learn_cross_delay keeps the session value.
+func TestCalibrateSession_NoCrossDelayKeepsSessionValue(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
+	data, err := os.ReadFile(filepath.Join(dir, "blocks.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keep []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if !strings.Contains(line, "\tdl\tautorate\t") {
+			keep = append(keep, line)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blocks.tsv"), []byte(strings.Join(keep, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.LearnCrossDelay = true
+	if p := res.propose(cfg); !p.LearnCrossDelay {
+		t.Error("learn_cross_delay = false, want the session value true")
+	}
+	found := false
+	for _, n := range res.Notes {
+		found = found || strings.Contains(n, "learn_cross_delay")
+	}
+	if !found {
+		t.Errorf("notes = %v, want a note for learn_cross_delay", res.Notes)
 	}
 }

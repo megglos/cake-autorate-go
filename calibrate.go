@@ -21,15 +21,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Offline calibration: analyze a session of scripts/record-session.sh and
 // propose config values for the link.
 //
 // The analysis uses these parts of the session:
-//   - Unshaped dl and ul blocks: the load fills the link. The achieved rate
-//     is the capacity. The upload delay in the dl blocks is the upload delay
-//     from download activity (the upload has only ACKs, thus no queue).
+//   - Unshaped dl, ul and both blocks: the load fills the link. The
+//     achieved rate is the capacity (both: the upload capacity with
+//     download load).
+//   - Autorate dl blocks: the upload delay is the upload delay from download
+//     activity. The download shaper keeps the ACK rate low, thus the upload
+//     has no queue. Do not use the unshaped dl blocks for this: there, the
+//     ACKs can fill the upload, and the upload delay is a queue.
 //   - The idle time at the start of each block: the delay jitter of each
 //     reflector without load.
 //   - Autorate ul blocks: the upload delay while the shaper rate is less
@@ -136,6 +142,9 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		}
 		if cfg == nil {
 			cfg = rec.config
+			if cfg == nil || len(cfg.Links) != 1 {
+				return nil, nil, fmt.Errorf("block %d: the session config must have exactly one link (calibrate one link at a time)", b.num)
+			}
 		}
 		for r, n := range rec.echo {
 			echo[r] += n
@@ -159,7 +168,8 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "dl":
 			// The download shaper keeps the ACK rate low. Thus, the upload
 			// has no queue (unshaped, the ACKs can fill the upload).
-			cross = append(cross, loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })...)
+			d, _ := loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })
+			cross = append(cross, d...)
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "ul":
 			grant = append(grant, b.grantDeltas(rec, inLoad)...)
 		}
@@ -220,6 +230,12 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	if res.UlCapacity.N == 0 {
 		res.Notes = append(res.Notes, "no unshaped ul block: the upload rates are not measured")
 	}
+	if res.UlCapacity.N > 0 && res.UlCapacityBoth.N == 0 {
+		res.Notes = append(res.Notes, "no unshaped both block: the upload minimum and base rates come from the upload capacity without download load and can be too high")
+	}
+	if res.CrossDelayMs.N == 0 {
+		res.Notes = append(res.Notes, "no autorate dl block: the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
+	}
 	if res.GrantDelayMs.N == 0 {
 		res.Notes = append(res.Notes, "no autorate ul block with a low shaper rate: the upload grant delay is not measured")
 	}
@@ -260,9 +276,11 @@ func baselinesOf(v []calSample) [2]float64 {
 	return b
 }
 
-// loadDeltas returns the deltas (ms) during the load. The baseline of each
-// reflector is its minimum in the idle time of the same block.
-func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func(calSample) float64) []float64 {
+// loadDeltas returns the deltas (ms) during the load, and the pings that
+// they are for. The baseline of each reflector is its minimum in the idle
+// time of the same block. Pings of a reflector without a baseline are not
+// used.
+func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func(calSample) float64) ([]float64, []calSample) {
 	base := map[string]float64{}
 	for _, p := range pings {
 		if p.t.Before(b.idleEnd) {
@@ -272,35 +290,31 @@ func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func
 		}
 	}
 	var out []float64
+	var used []calSample
 	for _, p := range pings {
 		if bv, ok := base[p.reflector]; ok && in(p.t) {
 			out = append(out, (get(p)-bv)/1000)
+			used = append(used, p)
 		}
 	}
-	return out
+	return out, used
 }
 
 // grantDeltas returns pairs (upload delta in ms, upload shaper rate in
 // kbit/s) for each ping in the load.
 func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []float64 {
-	d := loadDeltas(rec.pings, b, in, func(p calSample) float64 { return p.ulUs })
+	d, pings := loadDeltas(rec.pings, b, in, func(p calSample) float64 { return p.ulUs })
 	var out []float64
-	i := 0
-	for _, p := range rec.pings {
-		if !in(p.t) || i >= len(d) {
-			continue
-		}
-		rate := 0.0
-		for _, r := range rec.ulRates {
-			if r.t.After(p.t) {
-				break
-			}
-			rate = r.rateKbps
+	j := 0
+	rate := 0.0
+	for i, p := range pings {
+		for j < len(rec.ulRates) && !rec.ulRates[j].t.After(p.t) {
+			rate = rec.ulRates[j].rateKbps
+			j++
 		}
 		if rate > 0 {
 			out = append(out, d[i], rate)
 		}
-		i++
 	}
 	return out
 }
@@ -450,8 +464,9 @@ const (
 )
 
 // propose makes the config proposal from the result.
-func (r *calResult) propose(pingerCount int) calProposal {
-	p := calProposal{Why: map[string]string{}}
+func (r *calResult) propose(cfg *Config) calProposal {
+	p := calProposal{Why: map[string]string{}, LearnCrossDelay: cfg.LearnCrossDelay}
+	pingerCount := cfg.PingerCount
 	round := func(kbps float64, step int) int { return max(step, int(math.Round(kbps/float64(step)))*step) }
 
 	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
@@ -512,19 +527,45 @@ func (r *calResult) propose(pingerCount int) calProposal {
 // writeCalConfig writes the proposal as a config file, based on the
 // config of the session (interfaces). Each value has a comment with the
 // measured data.
-func writeCalConfig(w io.Writer, dir string, cfg *Config, r *calResult, p calProposal) {
+// errWriter keeps the first write error.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) Write(b []byte) (int, error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+	n, err := e.w.Write(b)
+	e.err = err
+	return n, err
+}
+
+// yamlString returns s as a YAML scalar. It quotes s if necessary (for
+// example "wan # backup" or "yes").
+func yamlString(s string) string {
+	b, err := yaml.Marshal(s)
+	if err != nil {
+		return strconv.Quote(s)
+	}
+	return strings.TrimSuffix(string(b), "\n")
+}
+
+func writeCalConfig(out io.Writer, dir string, cfg *Config, r *calResult, p calProposal) error {
+	w := &errWriter{w: out}
 	link := cfg.Links[0]
-	fmt.Fprintf(w, "# cake-autorate-go config from the calibration of %s\n", dir)
+	fmt.Fprintf(w, "# cake-autorate-go config from the calibration of %s\n", strings.ReplaceAll(dir, "\n", " "))
 	fmt.Fprintf(w, "# Generated %s. Examine each value before use.\n", time.Now().Format(time.DateOnly))
 	for _, n := range r.Notes {
 		fmt.Fprintf(w, "# NOTE: %s\n", n)
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "links:")
-	fmt.Fprintf(w, "  - name: %s\n", link.Name)
+	fmt.Fprintf(w, "  - name: %s\n", yamlString(link.Name))
 	dir2 := func(name string, dc DirectionConfig, minR, baseR, maxR int, thr float64, why, whyThr string) {
 		fmt.Fprintf(w, "    %s:\n", name)
-		fmt.Fprintf(w, "      interface: %s\n", dc.Interface)
+		fmt.Fprintf(w, "      interface: %s\n", yamlString(dc.Interface))
 		fmt.Fprintf(w, "      adjust: true\n")
 		if why != "" {
 			fmt.Fprintf(w, "      # %s\n", why)
@@ -542,7 +583,7 @@ func writeCalConfig(w io.Writer, dir string, cfg *Config, r *calResult, p calPro
 	dir2("download", link.Download, p.DlMin, p.DlBase, p.DlMax, p.DlThrMs, p.Why["download rates"], p.Why["download threshold"])
 	dir2("upload", link.Upload, p.UlMin, p.UlBase, p.UlMax, p.UlThrMs, p.Why["upload rates"], p.Why["upload threshold"])
 	if link.PingInterfaceName != "" {
-		fmt.Fprintf(w, "    ping_interface: %s\n", link.PingInterfaceName)
+		fmt.Fprintf(w, "    ping_interface: %s\n", yamlString(link.PingInterfaceName))
 	}
 	if len(p.Reflectors) > 0 {
 		fmt.Fprintf(w, "    # %s\n", p.Why["reflectors"])
@@ -557,7 +598,7 @@ func writeCalConfig(w io.Writer, dir string, cfg *Config, r *calResult, p calPro
 			if i == cfg.PingerCount {
 				fmt.Fprintln(w, "      # spares:")
 			}
-			fmt.Fprintf(w, "      - %s%s\n", a, j)
+			fmt.Fprintf(w, "      - %s%s\n", yamlString(a), j)
 		}
 	}
 	fmt.Fprintln(w)
@@ -569,6 +610,7 @@ func writeCalConfig(w io.Writer, dir string, cfg *Config, r *calResult, p calPro
 		fmt.Fprintf(w, "# %s\n", why)
 	}
 	fmt.Fprintf(w, "learn_cross_delay: %v\n", p.LearnCrossDelay)
+	return w.err
 }
 
 // runCalibrate is the "calibrate" command.
@@ -593,20 +635,25 @@ func runCalibrate(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if len(cfg.Links) == 0 {
-		fmt.Fprintln(os.Stderr, "error: the session config has no link")
-		return 1
-	}
-	w := io.Writer(os.Stdout)
-	if *out != "" {
-		f, err := os.Create(*out)
-		if err != nil {
+	if *out == "" {
+		if err := writeCalConfig(os.Stdout, *session, cfg, res, res.propose(cfg)); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		defer f.Close()
-		w = f
+		return 0
 	}
-	writeCalConfig(w, *session, cfg, res, res.propose(cfg.PingerCount))
+	f, err := os.Create(*out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	err = writeCalConfig(f, *session, cfg, res, res.propose(cfg))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s: %v\n", *out, err)
+		return 1
+	}
 	return 0
 }
