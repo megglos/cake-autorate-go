@@ -687,6 +687,19 @@ func TestWriteCalConfig_CarriageReturnInPath(t *testing.T) {
 	}
 }
 
+// On a slow link, the rates are not more than the measured capacity: no
+// floor at the rounding step.
+func TestPropose_SlowLinkRates(t *testing.T) {
+	r := &calResult{
+		DlCapacity: calDist{N: 100, P5: 400, P25: 600, P50: 700, P95: 800},
+		UlCapacity: calDist{N: 100, P5: 200, P25: 300, P50: 350, P95: 400},
+	}
+	p := r.propose(testConfig())
+	if p.DlMax > 800 || p.DlBase > 600 || p.DlMin > 200 || p.UlMax > 400 || p.UlMin > 100 {
+		t.Errorf("rates dl %d/%d/%d, ul %d/%d/%d kbit/s; want not more than the measured values", p.DlMin, p.DlBase, p.DlMax, p.UlMin, p.UlBase, p.UlMax)
+	}
+}
+
 // calibrate -h is a help request, not an error.
 func TestRunCalibrate_Help(t *testing.T) {
 	if got := runCalibrate([]string{"-h"}); got != 0 {

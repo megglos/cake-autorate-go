@@ -618,7 +618,14 @@ const (
 func (r *calResult) propose(cfg *Config) calProposal {
 	p := calProposal{Why: map[string]string{}, LearnCrossDelay: cfg.LearnCrossDelay}
 	pingerCount := cfg.PingerCount
-	round := func(kbps float64, step int) int { return max(step, int(math.Round(kbps/float64(step)))*step) }
+	// Round to the step. Below one step (a slow link), keep the kbit/s:
+	// a floor at the step would give a rate above the measured capacity.
+	round := func(kbps float64, step int) int {
+		if kbps < float64(step) {
+			return max(1, int(math.Round(kbps)))
+		}
+		return int(math.Round(kbps/float64(step))) * step
+	}
 
 	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
 	// usually has), min = p5 / 2 (the shaper must be able to go below the
