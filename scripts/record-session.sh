@@ -303,7 +303,9 @@ printf 'block\tround\tmode\tpolicy\tstart\tload_start\tload_end\tend\tcake_dl_kb
 n_modes=$(wc -w <<< "$MODES")
 n_policies=$(wc -w <<< "$POLICIES")
 total=$((ROUNDS * n_modes * n_policies))
-log "Start of $total blocks, approximately $(( total * (IDLE_S + BLOCK_S + 10) / 60 )) minutes"
+n_both=0
+grep -qw both <<< "$MODES" && n_both=$((ROUNDS * n_policies))
+log "Start of $total blocks, approximately $(( (total * (IDLE_S + BLOCK_S + 10) + n_both * WARMUP_S) / 60 )) minutes"
 
 block=0
 for round in $(seq 1 "$ROUNDS"); do
