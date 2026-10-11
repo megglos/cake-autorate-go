@@ -512,6 +512,33 @@ no_such_option_at_all: true
 		t.Errorf("want 2 suggestions, got:\n%s", w)
 	}
 
+	// YAML anchors, aliases and merge keys: the merge key is not unknown,
+	// and a typing error in a merged mapping gives a warning.
+	merge := `
+dir: &dir {min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000, owd_delta_delay_thr: 20}
+links:
+  - name: wan
+    download: {<<: *dir, interface: ifb-wan}
+    upload:
+      <<: [*dir]
+      interface: wan
+`
+	if err := os.WriteFile(path, []byte(merge), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	w = strings.Join(cfg.Warnings(), "\n")
+	for _, want := range []string{`"dir"`, `"links[0].download.owd_delta_delay_thr"`, `"links[0].upload.owd_delta_delay_thr"`} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warnings do not contain %s:\n%s", want, w)
+		}
+	}
+	if strings.Contains(w, `"<<"`) || strings.Contains(w, `.<<"`) {
+		t.Errorf("the merge key gives a warning:\n%s", w)
+	}
+
 	// The example config has no unknown keys.
 	cfg, err = LoadConfig("config.example.yaml")
 	if err != nil {

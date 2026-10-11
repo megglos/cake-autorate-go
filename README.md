@@ -147,7 +147,7 @@ Generate a default configuration file as a starting point:
 
 See [config.example.yaml](config.example.yaml) for a fully annotated example.
 
-The program shows a warning for each key in the file that it does not know (for example, a typing error), with the line number and the nearest known key. An unknown key has no effect.
+The program shows a warning for each key in the file that it does not know (for example, a typing error), with the line number and, if a known key is similar, that key. An unknown key has no effect.
 
 ### Quick Start (Single WAN)
 

@@ -345,6 +345,7 @@ func inheritThresholds(dc, from *DirectionConfig) {
 // is not a yaml field of the struct type t. It examines nested structs and
 // lists of structs. path is the location of node in the file.
 func unknownKeys(node *yaml.Node, t reflect.Type, path string) []string {
+	node = resolveAlias(node)
 	if node.Kind != yaml.MappingNode || t.Kind() != reflect.Struct {
 		return nil
 	}
@@ -357,7 +358,18 @@ func unknownKeys(node *yaml.Node, t reflect.Type, path string) []string {
 	}
 	var msgs []string
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		key, value := node.Content[i].Value, node.Content[i+1]
+		key, value := node.Content[i].Value, resolveAlias(node.Content[i+1])
+		if key == "<<" {
+			// YAML merge key: examine the keys of each merged mapping.
+			merged := []*yaml.Node{value}
+			if value.Kind == yaml.SequenceNode {
+				merged = value.Content
+			}
+			for _, m := range merged {
+				msgs = append(msgs, unknownKeys(m, t, path)...)
+			}
+			continue
+		}
 		ft, ok := fields[key]
 		if !ok {
 			msg := fmt.Sprintf("unknown config key %q (line %d) has no effect", path+key, node.Content[i].Line)
@@ -377,6 +389,14 @@ func unknownKeys(node *yaml.Node, t reflect.Type, path string) []string {
 		}
 	}
 	return msgs
+}
+
+// resolveAlias returns the node that an alias node refers to.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	return node
 }
 
 // closestKey returns the known key that is nearest to key (edit distance at
