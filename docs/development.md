@@ -7,7 +7,7 @@ This document tells how to test a change to the controller. Each change must sho
 | Part | File | Function |
 |---|---|---|
 | Controller | `core.go` | `Core` makes all decisions. It does no I/O, starts no goroutines and does not read the clock. Thus, the same events always give the same decisions. |
-| Side effects | `controller.go`, `shaper.go`, `pinger.go`, `tsping.go`, `monitor.go` | Pingers, throughput monitor and shaper. They send events to `Core`, and `Core` sends its decisions through the `Actuator` interface. |
+| Side effects | `controller.go`, `shaper.go`, `pinger.go`, `tsping.go`, `monitor.go` | The pingers and the throughput monitor send events to `Core`. `Core` sends its decisions through the `Actuator` interface to the shaper (rates) and to the pingers (start, stop). |
 | Recording | `recorder.go` | `RecordingCore` writes each input event, each shaper rate and each state change to a file (`--record`). It does not record the start and stop of the pingers or the shaper invalidation. See [recording.md](recording.md). |
 | Simulator | `sim_test.go`, `sim_scenarios_test.go` | A fluid model of a link with a bottleneck queue, TCP flows and ping replies. It runs `Core` with simulated time. |
 
@@ -88,7 +88,7 @@ The test always uses its own simulator recording. The helper `replayRecording` i
 
 ## Tests on a real link
 
-The simulator has limits (fluid model, simple jitter, no packet loss). Thus, examine an important change also on a real link or in an emulation:
+The simulator has limits (fluid model, simple jitter, no random packet loss on the radio link; it models only the drops of the queues). Thus, examine an important change also on a real link or in an emulation:
 
 - [recording.md](recording.md): sessions on a real link with `scripts/record-session.sh`. The option `-A NAME=CONFIG[,BINARY]` adds a variant. The blocks of all variants alternate. Thus, the blocks of the variants are near in time, and a slow change of the link has a similar effect on each variant (A/B test). The link conditions are not the same in each block.
 - [emulation.md](emulation.md): a variable link (for example 5G) on a fast connection, with a repeatable capacity trace.
