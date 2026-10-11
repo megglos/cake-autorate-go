@@ -614,6 +614,18 @@ const (
 	calReflectorMaxJitter = 2.0
 )
 
+// mbit formats a rate in kbit/s as Mbit/s for the comments: 3 decimals
+// below 1 Mbit/s (a slow link), 1 decimal below 100 Mbit/s, else none.
+func mbit(kbps float64) string {
+	switch {
+	case kbps < 1000:
+		return fmt.Sprintf("%.3f", kbps/1000)
+	case kbps < 100000:
+		return fmt.Sprintf("%.1f", kbps/1000)
+	}
+	return fmt.Sprintf("%.0f", kbps/1000)
+}
+
 // propose makes the config proposal from the result.
 func (r *calResult) propose(cfg *Config) calProposal {
 	p := calProposal{Why: map[string]string{}, LearnCrossDelay: cfg.LearnCrossDelay}
@@ -632,17 +644,17 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// low capacity values; the 1 s means hide short decreases).
 	if c := r.DlCapacity; c.N > 0 {
 		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), round(c.P25, 1000), round(c.P95, 1000)
-		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %.0f, p25 %.0f, p50 %.0f, p95 %.0f Mbit/s", c.N, c.P5/1000, c.P25/1000, c.P50/1000, c.P95/1000)
+		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95))
 	}
 	if c := r.UlCapacity; c.N > 0 {
 		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), round(c.P25, 500), round(c.P95, 500)
-		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %.1f, p25 %.1f, p50 %.1f, p95 %.1f Mbit/s", c.N, c.P5/1000, c.P25/1000, c.P50/1000, c.P95/1000)
+		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95))
 		// With download load, the upload capacity can be much lower. The
 		// minimum must be below it.
 		if b := r.UlCapacityBoth; b.N > 0 {
 			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
 			p.UlBase = min(p.UlBase, round(b.P50, 500))
-			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %.1f, p50 %.1f Mbit/s (min = min(p5/2), base = min(p25, p50 with download load))", b.P5/1000, b.P50/1000)
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(p25, p50 with download load))", mbit(b.P5), mbit(b.P50))
 		}
 		p.UlBase = max(p.UlBase, p.UlMin)
 	}

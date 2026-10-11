@@ -698,6 +698,13 @@ func TestPropose_SlowLinkRates(t *testing.T) {
 	if p.DlMax > 800 || p.DlBase > 600 || p.DlMin > 200 || p.UlMax > 400 || p.UlMin > 100 {
 		t.Errorf("rates dl %d/%d/%d, ul %d/%d/%d kbit/s; want not more than the measured values", p.DlMin, p.DlBase, p.DlMax, p.UlMin, p.UlBase, p.UlMax)
 	}
+	// The comment shows the capacity, not 0 Mbit/s.
+	if w := p.Why["download rates"]; !strings.Contains(w, "p5 0.400") || !strings.Contains(w, "p95 0.800") {
+		t.Errorf("download comment %q, want p5 0.400 and p95 0.800 Mbit/s", w)
+	}
+	if w := p.Why["upload rates"]; !strings.Contains(w, "p5 0.200") {
+		t.Errorf("upload comment %q, want p5 0.200 Mbit/s", w)
+	}
 }
 
 // calibrate -h is a help request, not an error.
