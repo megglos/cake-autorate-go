@@ -8,7 +8,7 @@ This document tells how to test a change to the controller. Each change must sho
 |---|---|---|
 | Controller | `core.go` | `Core` makes all decisions. It does no I/O, starts no goroutines and does not read the clock. Thus, the same events always give the same decisions. |
 | Side effects | `controller.go`, `shaper.go`, `pinger.go`, `tsping.go`, `monitor.go` | Pingers, throughput monitor and shaper. They send events to `Core`, and `Core` sends its decisions through the `Actuator` interface. |
-| Recording | `recorder.go` | `RecordingCore` writes each event and each decision to a file (`--record`). See [recording.md](recording.md). |
+| Recording | `recorder.go` | `RecordingCore` writes each input event, each shaper rate and each state change to a file (`--record`). It does not record the start and stop of the pingers or the shaper invalidation. See [recording.md](recording.md). |
 | Simulator | `sim_test.go`, `sim_scenarios_test.go` | A fluid model of a link with a bottleneck queue, TCP flows and ping replies. It runs `Core` with simulated time. |
 
 ## Tests
@@ -82,7 +82,7 @@ A `TestKnownIssueN_...` test examines a behavior that we want but that the contr
 
 ### Replay
 
-`TestRecording_ReplayGivesSameDecisions` records a simulator run and gives the recorded events to a new `Core`. The decisions must be the same.
+`TestRecording_ReplayGivesSameDecisions` records a simulator run and gives the recorded events to a new `Core`. The shaper rates and the state changes must be the same. The test does not compare the start and stop of the pingers or the shaper invalidation.
 
 The test always uses its own simulator recording. The helper `replayRecording` in `recorder_test.go` can also replay a recording from a real link, but it reads only uncompressed JSONL. Thus, first decompress the recording (`gunzip -k NN-MODE-POLICY.jsonl.gz`), then call the helper with the path in a temporary test. With a changed `Core`, the replayed decisions are different from the recorded decisions where the change has an effect.
 
