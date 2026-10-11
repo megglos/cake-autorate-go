@@ -256,11 +256,22 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	})
 	res.IdleJitterMs = newCalDist(jitter)
 
+	// A capacity of 0 (the load generator failed, or the link was down) is
+	// not a measurement.
+	for _, c := range []struct {
+		d    *calDist
+		name string
+	}{{&res.DlCapacity, "dl"}, {&res.UlCapacity, "ul"}, {&res.UlCapacityBoth, "both"}} {
+		if c.d.N > 0 && c.d.P95 <= 0 {
+			*c.d = calDist{}
+			res.Notes = append(res.Notes, fmt.Sprintf("the unshaped %s blocks have no throughput (load generator or link failure): their capacity is not used", c.name))
+		}
+	}
 	if res.DlCapacity.N == 0 {
-		res.Notes = append(res.Notes, "no unshaped dl block: the download rates are not measured")
+		res.Notes = append(res.Notes, "no unshaped dl block with throughput: the download rates are not measured")
 	}
 	if res.UlCapacity.N == 0 {
-		res.Notes = append(res.Notes, "no unshaped ul block: the upload rates are not measured")
+		res.Notes = append(res.Notes, "no unshaped ul block with throughput: the upload rates are not measured")
 	}
 	if res.IdleJitterMs.N == 0 {
 		res.Notes = append(res.Notes, "no idle pings with one-way delays: the idle jitter is not measured, the delay thresholds are the default values")
@@ -668,7 +679,7 @@ func yamlString(s string) string {
 func writeCalConfig(out io.Writer, dir string, cfg *Config, r *calResult, p calProposal) error {
 	w := &errWriter{w: out}
 	link := cfg.Links[0]
-	fmt.Fprintf(w, "# cake-autorate-go config from the calibration of %s\n", strings.ReplaceAll(dir, "\n", " "))
+	fmt.Fprintf(w, "# cake-autorate-go config from the calibration of %s\n", strings.NewReplacer("\n", " ", "\r", " ").Replace(dir))
 	fmt.Fprintf(w, "# Generated %s. Examine each value before use.\n", time.Now().Format(time.DateOnly))
 	for _, n := range r.Notes {
 		fmt.Fprintf(w, "# NOTE: %s\n", n)

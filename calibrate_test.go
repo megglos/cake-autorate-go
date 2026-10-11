@@ -595,6 +595,41 @@ func TestRunCalibrate_ExtraArgs(t *testing.T) {
 	}
 }
 
+// A download capacity of 0 (load generator failure) is not a measurement:
+// the session rates stay, with a note.
+func TestCalibrateSession_ZeroCapacity(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 0, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.DlCapacity.N != 0 {
+		t.Errorf("download capacity N %d, want 0 (not measured)", res.DlCapacity.N)
+	}
+	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "unshaped dl blocks have no throughput") }) {
+		t.Errorf("notes %q, want the note about no throughput", res.Notes)
+	}
+	if p := res.propose(cfg); p.DlMax != 0 {
+		t.Errorf("download max %d, want 0 (session value stays)", p.DlMax)
+	}
+}
+
+// A carriage return in the session path does not end the comment line.
+func TestWriteCalConfig_CarriageReturnInPath(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	if err := writeCalConfig(&b, "/tmp/a\rlinks: x", cfg, res, res.propose(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "\r") {
+		t.Errorf("output has a carriage return: %q", strings.SplitN(b.String(), "\n", 2)[0])
+	}
+}
+
 // calibrate -h is a help request, not an error.
 func TestRunCalibrate_Help(t *testing.T) {
 	if got := runCalibrate([]string{"-h"}); got != 0 {
