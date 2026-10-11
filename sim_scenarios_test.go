@@ -548,6 +548,30 @@ func TestSimOWD_CoupledUploadGetsCapacity(t *testing.T) {
 	}
 }
 
+// With low delay thresholds, the upload delay from download activity is
+// above the threshold in many pings. Then F8 alone does not help, and
+// learn_cross_delay is necessary.
+func TestSimOWD_LearnCrossDelay_LowThreshold(t *testing.T) {
+	sc := scenarioByName(t, "5g-coupled")
+	tune := func(learn bool) func(*Config) {
+		return func(cfg *Config) {
+			cfg.LearnCrossDelay = learn
+			cfg.Links[0].Upload.OWDDeltaDelayThrMs = 15
+			cfg.Links[0].Upload.AvgOWDDeltaMaxAdjDownThrMs = 30
+		}
+	}
+	sc.tune = tune(false)
+	off := runSim(sc, policyAutorateOWD)
+	sc.tune = tune(true)
+	on := runSim(sc, policyAutorateOWD)
+	if on.ulUtil < 0.6 || on.ulUtil < off.ulUtil+0.3 {
+		t.Errorf("UL utilization %.0f%% with learn_cross_delay, %.0f%% without, want 60%% or more and +30 points", 100*on.ulUtil, 100*off.ulUtil)
+	}
+	if on.dlUtil < 0.9 {
+		t.Errorf("DL utilization %.0f%% with learn_cross_delay, want 90%% or more", 100*on.dlUtil)
+	}
+}
+
 // F1/F2: after a large capacity decrease, the shaper rate must quickly go
 // near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {

@@ -1012,3 +1012,48 @@ func TestHandlePing_RTTDelayAppliesToBothDirections(t *testing.T) {
 		t.Errorf("download rate %.0f, want a decrease from %.0f with RTT/2", c.dl.shaperRateKbps, dlBefore)
 	}
 }
+
+// With learn_cross_delay, an upload delay that comes with download
+// activity and a low upload load goes into the learned cross delay. Then
+// the same delay does not decrease the upload rate. A larger delay does.
+func TestHandlePing_LearnCrossDelay(t *testing.T) {
+	run := func(learn bool) (*Core, func(int, float64)) {
+		c, _ := newTestCore(t)
+		c.cfg.LearnCrossDelay = learn
+		c.state = StateRunning
+		ts := time.Now()
+		c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+		return c, func(n int, ulMs float64) {
+			for range n {
+				ts = ts.Add(50 * time.Millisecond)
+				c.HandlePing(owdPing("1.1.1.1", ts, 10+ulMs, 10))
+			}
+		}
+	}
+	// Download active, upload load low (ACKs only): learn 25 ms.
+	for _, learn := range []bool{false, true} {
+		c, ping := run(learn)
+		c.dl.achievedKbps, c.ul.achievedKbps = 50000, 500
+		ping(200, 25)
+		// The upload is loaded now. 45 ms is above the 30 ms threshold,
+		// but not above the learned delay plus the threshold.
+		c.ul.achievedKbps, c.ul.loadPercent = 9000, 0.9
+		before := c.ul.shaperRateKbps
+		ping(20, 45)
+		decreased := c.ul.shaperRateKbps < before
+		if learn && decreased {
+			t.Errorf("with learn_cross_delay: rate %.0f -> %.0f at 45 ms (learned %.0f us), want no decrease", before, c.ul.shaperRateKbps, c.ul.crossDelayUs)
+		}
+		if !learn && !decreased {
+			t.Errorf("without learn_cross_delay: rate %.0f -> %.0f at 45 ms, want a decrease", before, c.ul.shaperRateKbps)
+		}
+		if learn {
+			// A delay above learned + threshold decreases the rate.
+			before = c.ul.shaperRateKbps
+			ping(20, 25+30+40)
+			if c.ul.shaperRateKbps >= before {
+				t.Errorf("with learn_cross_delay: rate %.0f -> %.0f at 95 ms, want a decrease", before, c.ul.shaperRateKbps)
+			}
+		}
+	}
+}
