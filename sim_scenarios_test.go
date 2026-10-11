@@ -6,6 +6,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -101,19 +102,31 @@ func dirConfig(minKbps, baseKbps, maxKbps int) DirectionConfig {
 
 // --- Scenarios ---
 
-func simScenarios() []simScenario {
+// simSeeds is the number of seed variants for each scenario in the
+// scorecard. More variants give a result that depends less on one random
+// trace. To use it: go test -run TestSimScorecard -v -sim.seeds 10
+var simSeeds = flag.Int("sim.seeds", 1, "number of seed variants for each scenario in TestSimScorecard")
+
+// simScenarios returns the scenarios with their default seeds (variant 0).
+// The baseline and the tests use these.
+func simScenarios() []simScenario { return simScenariosVariant(0) }
+
+// simScenariosVariant returns the scenarios with different seeds for the
+// random traces and the jitter. Variant 0 gives the default seeds.
+func simScenariosVariant(variant uint64) []simScenario {
 	const dur = 120 * time.Second
+	v := 100 * variant
 	link5G := LinkConfig{
 		Download: dirConfig(10000, 100000, 300000),
 		Upload:   dirConfig(2000, 20000, 60000),
 	}
-	slCap, slBase := starlinkHandovers(4, dur, 60000, 250000, 25, 55)
-	slUlCap, _ := starlinkHandovers(5, dur, 8000, 25000, 25, 55)
+	slCap, slBase := starlinkHandovers(4+v, dur, 60000, 250000, 25, 55)
+	slUlCap, _ := starlinkHandovers(5+v, dur, 8000, 25000, 25, 55)
 
 	return []simScenario{
 		{
 			// Basic check: constant capacity, load on download only.
-			name: "steady-dl", duration: dur, seed: 1,
+			name: "steady-dl", duration: dur, seed: 1 + v,
 			dlCapacity: constant(120000), ulCapacity: constant(25000),
 			dlDemand: between(2, 118), ulDemand: never,
 			bufferMs: 300, baseRTT: reflectorBase(20), jitterMs: 1,
@@ -122,7 +135,7 @@ func simScenarios() []simScenario {
 		{
 			// The capacity decreases from 200 to 40 Mbit/s and then increases
 			// again (finding F2: cuts from the shaper rate converge slowly).
-			name: "capacity-drop", duration: dur, seed: 2,
+			name: "capacity-drop", duration: dur, seed: 2 + v,
 			dlCapacity: steps([]float64{0, 40, 80}, []float64{200000, 40000, 200000}),
 			ulCapacity: constant(25000),
 			dlDemand:   between(2, 118), ulDemand: never,
@@ -132,7 +145,7 @@ func simScenarios() []simScenario {
 		{
 			// Upload and download are both saturated (finding F4: with RTT/2,
 			// UL bloat also cuts DL).
-			name: "bidir-saturated", duration: dur, seed: 3,
+			name: "bidir-saturated", duration: dur, seed: 3 + v,
 			dlCapacity: constant(150000), ulCapacity: constant(20000),
 			dlDemand: between(2, 118), ulDemand: between(2, 118),
 			bufferMs: 300, baseRTT: reflectorBase(20), jitterMs: 1,
@@ -141,9 +154,9 @@ func simScenarios() []simScenario {
 		{
 			// Similar to 5G: random walk capacity with some deep fades, load in
 			// the two directions, large cellular buffers.
-			name: "5g-variable", duration: dur, seed: 4,
-			dlCapacity: randomWalk(10, dur, 200, 30000, 300000, 0.08, 0.004),
-			ulCapacity: randomWalk(11, dur, 200, 5000, 50000, 0.08, 0.004),
+			name: "5g-variable", duration: dur, seed: 4 + v,
+			dlCapacity: randomWalk(10+v, dur, 200, 30000, 300000, 0.08, 0.004),
+			ulCapacity: randomWalk(11+v, dur, 200, 5000, 50000, 0.08, 0.004),
 			dlDemand:   between(2, 118), ulDemand: between(30, 90),
 			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3,
 			link: link5G,
@@ -151,7 +164,7 @@ func simScenarios() []simScenario {
 		{
 			// Similar to Starlink: the capacity and the RTT floor change at the
 			// 15s reconfiguration boundaries, with large jitter (findings F3, F5).
-			name: "starlink-like", duration: dur, seed: 5,
+			name: "starlink-like", duration: dur, seed: 5 + v,
 			dlCapacity: slCap, ulCapacity: slUlCap,
 			dlDemand: between(2, 118), ulDemand: between(30, 90),
 			bufferMs: 300, baseRTT: slBase, jitterMs: 6,
@@ -163,7 +176,7 @@ func simScenarios() []simScenario {
 		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
 			// ping during the spike cuts the rate again).
-			name: "latency-spike", duration: dur, seed: 6,
+			name: "latency-spike", duration: dur, seed: 6 + v,
 			dlCapacity: constant(120000), ulCapacity: constant(25000),
 			dlDemand: between(2, 118), ulDemand: never,
 			bufferMs: 300, jitterMs: 1,
@@ -197,11 +210,14 @@ func TestSimScorecard(t *testing.T) {
 		t.Skip("simulation scorecard skipped in -short mode")
 	}
 	var b strings.Builder
+	if *simSeeds > 1 {
+		fmt.Fprintf(&b, "\nmean of %d seed variants for each scenario", *simSeeds)
+	}
 	fmt.Fprintf(&b, "\n%-16s %-12s %8s %8s %8s %8s %7s %7s %7s\n",
 		"scenario", "policy", "p50 ms", "p95 ms", "p99 ms", "bloat s", "dl %", "ul %", "sets")
-	for _, sc := range simScenarios() {
+	for i := range simScenarios() {
 		for _, p := range []simPolicy{policyUnshaped, policyFixed, policyAutorate, policyAutorateOWD} {
-			r := runSim(sc, p)
+			r := runSimSeeds(i, p, *simSeeds)
 			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7d\n",
 				r.scenario, r.policy, r.latP50, r.latP95, r.latP99, r.bloatS,
 				100*r.dlUtil, 100*r.ulUtil, r.rateChanges)
@@ -212,6 +228,51 @@ func TestSimScorecard(t *testing.T) {
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// runSimSeeds runs scenario i of simScenariosVariant with n seed variants
+// and returns the mean of the scores.
+func runSimSeeds(i int, p simPolicy, n int) simResult {
+	var m simResult
+	for v := range max(n, 1) {
+		r := runSim(simScenariosVariant(uint64(v))[i], p)
+		m.scenario, m.policy = r.scenario, r.policy
+		m.latP50 += r.latP50
+		m.latP95 += r.latP95
+		m.latP99 += r.latP99
+		m.bloatS += r.bloatS
+		m.dlUtil += r.dlUtil
+		m.ulUtil += r.ulUtil
+		m.rateChanges += r.rateChanges
+	}
+	k := float64(max(n, 1))
+	m.latP50 /= k
+	m.latP95 /= k
+	m.latP99 /= k
+	m.bloatS /= k
+	m.dlUtil /= k
+	m.ulUtil /= k
+	m.rateChanges /= max(n, 1)
+	return m
+}
+
+// Variant 0 gives the default seeds, and other variants give other traces.
+func TestSimScenariosVariant(t *testing.T) {
+	a, b := simScenariosVariant(0), simScenarios()
+	for i := range a {
+		if a[i].seed != b[i].seed || a[i].dlCapacity(50000) != b[i].dlCapacity(50000) {
+			t.Errorf("%s: variant 0 is not the default scenario", a[i].name)
+		}
+	}
+	c := simScenariosVariant(1)
+	for i := range a {
+		if a[i].seed == c[i].seed {
+			t.Errorf("%s: variant 1 has the same seed as variant 0", a[i].name)
+		}
+	}
+	if runSim(c[3], policyAutorate).latP95 == runSim(a[3], policyAutorate).latP95 {
+		t.Errorf("%s: variant 1 gives the same result as variant 0", a[3].name)
 	}
 }
 
