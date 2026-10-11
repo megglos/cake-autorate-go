@@ -92,7 +92,7 @@ block_stats() {
 # pct prints a as a percentage of b, or "-" if b is 0.
 pct() { awk -v a="$1" -v b="$2" 'BEGIN { if (b > 0) printf "%.0f%%", 100 * a / b; else printf "-" }'; }
 
-printf '%-5s %-4s %-12s | %-18s | %-17s | %-17s\n' "block" "mode" "policy" "excess RTT p50/95/99" "dl Mbit/s (% ref)" "ul Mbit/s (% ref)"
+printf '%-5s %-4s %-14s | %-18s | %-17s | %-17s\n' "block" "mode" "policy" "excess RTT p50/95/99" "dl Mbit/s (% ref)" "ul Mbit/s (% ref)"
 declare -A ref_dl ref_ul
 tail -n +2 "$DIR/blocks.tsv" | while IFS=$'\t' read -r block round mode policy _start load_start load_end _end _cdl _cul rec; do
     read -r p50 p95 p99 dl ul cap_dl cap_ul <<< "$(block_stats "$DIR/$rec" "$load_start" "$load_end")"
@@ -108,5 +108,5 @@ tail -n +2 "$DIR/blocks.tsv" | while IFS=$'\t' read -r block round mode policy _
     dl_col="-"; ul_col="-"
     case $mode in dl|both) dl_col=$(printf '%.0f (%s)' "$(awk -v v="$dl" 'BEGIN{print v/1000}')" "$(pct "$dl" "$rdl")") ;; esac
     case $mode in ul|both) ul_col=$(printf '%.0f (%s)' "$(awk -v v="$ul" 'BEGIN{print v/1000}')" "$(pct "$ul" "$rul")") ;; esac
-    printf '%-5s %-4s %-12s | %5s %5s %5s ms  | %-17s | %-17s\n' "$block" "$mode" "$policy" "$p50" "$p95" "$p99" "$dl_col" "$ul_col"
+    printf '%-5s %-4s %-14s | %5s %5s %5s ms  | %-17s | %-17s\n' "$block" "$mode" "$policy" "$p50" "$p95" "$p99" "$dl_col" "$ul_col"
 done
