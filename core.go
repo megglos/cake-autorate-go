@@ -70,10 +70,7 @@ type dirState struct {
 	ltWindowStart time.Time
 	// ltBase is the reference delay (us) of each reflector for the latency
 	// target. At high load, it does not increase (see observeLatency).
-	ltBase map[string]float64
-	// ltRefTime is the time of the last low-load ping, or of the last new
-	// references.
-	ltRefTime     time.Time
+	ltBase        map[string]float64
 	ltPrevP95Ms   float64 // p95 of the last window with enough samples
 	ltPrevScale   float64 // thrScale before the last change
 	ltLastDown    bool    // the last change was a decrease
@@ -318,10 +315,6 @@ const (
 	// latencyTargetFloorTime is the time that Core keeps a found floor.
 	// The link conditions change; after this time, Core tries again.
 	latencyTargetFloorTime = 5 * time.Minute
-	// latencyTargetMaxRefAge is the maximum time with high load before the
-	// references of the latency target take the baseline of the controller
-	// again.
-	latencyTargetMaxRefAge = 30 * time.Minute
 	// latencyTargetMaxWindows: if a window has too few samples, it
 	// continues, but not for more than this number of window times.
 	latencyTargetMaxWindows = 10
@@ -382,16 +375,11 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// each reflector follows the baseline of the controller only at low
 	// load (no queue, no delay from load), and when the baseline decreases
 	// (a lower floor, or a clock offset change). At high load, the
-	// reference does not increase. After latencyTargetMaxRefAge of high
-	// load without a low-load ping, it takes the baseline again (for a slow
-	// clock offset drift; the delay that is not from load then becomes the
-	// new floor).
-	if ds.loadPercent < c.cfg.HighLoadThr {
-		ds.ltRefTime = now
-	} else if ds.ltRefTime.IsZero() || now.Sub(ds.ltRefTime) > latencyTargetMaxRefAge {
-		clear(ds.ltBase)
-		ds.ltRefTime = now
-	}
+	// reference does not increase: a baseline from high load contains
+	// delay from the load. Limit: a clock offset that increases during a
+	// long time of high load (ICMP timestamps) increases the measured
+	// delay, and the thresholds decrease. This is the safe direction, and
+	// the next low-load ping corrects it.
 	ref, ok := ds.ltBase[reflector]
 	if !ok || baselineUs < ref || ds.loadPercent < c.cfg.HighLoadThr {
 		ref = baselineUs

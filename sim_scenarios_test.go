@@ -753,16 +753,17 @@ func TestSimOWD_LatencyTarget(t *testing.T) {
 // Under load for a long time, the reference of the latency target must not
 // follow the baseline of the controller: the baseline increases with the
 // delay that no shaper can remove, the measured p95 then is too low, and
-// the thresholds increase above the target. 5g-coupled, 30 minutes of load
+// the thresholds increase above the target. 5g-coupled, 60 minutes of load
 // in the two directions, upload target 70 ms: before the fix, the upload
-// p95 was 79 ms.
+// p95 was 79 ms (30 minutes); with a reset of the references after
+// 30 minutes of load, 75 ms (60 minutes).
 func TestSimOWD_LatencyTargetLongLoad(t *testing.T) {
 	if testing.Short() {
 		t.Skip("long simulation")
 	}
 	sc := scenarioByName(t, "5g-coupled")
-	sc.duration = 1800 * time.Second
-	sc.dlDemand, sc.ulDemand = between(2, 1798), between(2, 1798)
+	sc.duration = 3600 * time.Second
+	sc.dlDemand, sc.ulDemand = between(2, 3598), between(2, 3598)
 	sc.tune = func(cfg *Config) {
 		cfg.RefractoryOnDecrease = true
 		cfg.LearnCrossDelay = true
@@ -771,7 +772,10 @@ func TestSimOWD_LatencyTargetLongLoad(t *testing.T) {
 	}
 	r := runSim(sc, policyAutorateOWD)
 	t.Logf("upload p95 %.1f ms, utilization %.0f %%", r.ulLatP95, 100*r.ulUtil)
-	if r.ulLatP95 > 70*(1+latencyTargetTolerance) {
-		t.Errorf("upload p95 %.1f ms, want %.0f ms or less (target 70 ms + tolerance)", r.ulLatP95, 70*(1+latencyTargetTolerance))
+	// The p95 of the run must not be above the target: a reference that
+	// follows the loaded baseline (also a reset after 30 minutes of load)
+	// gave 75 ms.
+	if r.ulLatP95 > 70 {
+		t.Errorf("upload p95 %.1f ms, want 70 ms or less (target 70 ms)", r.ulLatP95)
 	}
 }
