@@ -132,6 +132,7 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	res := &calResult{}
 	var cfg *Config
 	var dlCap, ulCap, ulCapBoth, cross, grant []float64
+	var nCrossBlocks, nGrantBlocks int
 	idle := map[string][]calSample{} // key: block number and reflector
 	echo := map[string]int{}
 
@@ -140,11 +141,12 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("block %d: %w", b.num, err)
 		}
+		// Each block can have its own config (record-session.sh -A).
+		if rec.config == nil || len(rec.config.Links) != 1 {
+			return nil, nil, fmt.Errorf("block %d: the config must have exactly one link (calibrate one link at a time)", b.num)
+		}
 		if cfg == nil {
 			cfg = rec.config
-			if cfg == nil || len(cfg.Links) != 1 {
-				return nil, nil, fmt.Errorf("block %d: the session config must have exactly one link (calibrate one link at a time)", b.num)
-			}
 		}
 		for r, n := range rec.echo {
 			echo[r] += n
@@ -166,11 +168,13 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		case b.policy == "unshaped" && b.mode == "both":
 			ulCapBoth = append(ulCapBoth, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })...)
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "dl":
+			nCrossBlocks++
 			// The download shaper keeps the ACK rate low. Thus, the upload
 			// has no queue (unshaped, the ACKs can fill the upload).
 			d, _ := loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })
 			cross = append(cross, d...)
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "ul":
+			nGrantBlocks++
 			grant = append(grant, b.grantDeltas(rec, inLoad)...)
 		}
 	}
@@ -233,11 +237,18 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	if res.UlCapacity.N > 0 && res.UlCapacityBoth.N == 0 {
 		res.Notes = append(res.Notes, "no unshaped both block: the upload minimum and base rates come from the upload capacity without download load and can be too high")
 	}
-	if res.CrossDelayMs.N == 0 {
+	// The delay analysis needs one-way delays (ping_method icmp-timestamp).
+	switch {
+	case res.CrossDelayMs.N == 0 && nCrossBlocks == 0:
 		res.Notes = append(res.Notes, "no autorate dl block: the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
+	case res.CrossDelayMs.N == 0:
+		res.Notes = append(res.Notes, "the autorate dl blocks have no one-way delays (use ping_method icmp-timestamp): the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
 	}
-	if res.GrantDelayMs.N == 0 {
-		res.Notes = append(res.Notes, "no autorate ul block with a low shaper rate: the upload grant delay is not measured")
+	switch {
+	case res.GrantDelayMs.N == 0 && nGrantBlocks == 0:
+		res.Notes = append(res.Notes, "no autorate ul block: the upload grant delay is not measured")
+	case res.GrantDelayMs.N == 0:
+		res.Notes = append(res.Notes, "the autorate ul blocks have no one-way delays or no low shaper rate: the upload grant delay is not measured")
 	}
 	return res, cfg, nil
 }
@@ -461,6 +472,12 @@ const (
 	// calMinReflectors is the minimum number of reflectors with ICMP
 	// timestamps for ping_method icmp-timestamp.
 	calMinReflectors = 4
+	// calSpareReflectors is the number of reflectors in the list more than
+	// pinger_count (spares for misbehaving reflectors).
+	calSpareReflectors = 2
+	// calReflectorMaxJitter: a reflector with an idle jitter of more than
+	// this factor times the median is not in the list.
+	calReflectorMaxJitter = 2.0
 )
 
 // propose makes the config proposal from the result.
@@ -507,17 +524,22 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	}
 
 	// Ping method and reflectors.
+	// The program selects the active reflectors at random from the list
+	// (and the spares from the rest). Thus, the list must not contain the
+	// reflectors with a high jitter: keep the best pinger_count + 2, and
+	// leave out the ones with more than 2 x the median jitter.
 	var owd []string
 	for _, rf := range r.Reflectors {
-		if rf.OWD {
+		if rf.OWD && (r.IdleJitterMs.N == 0 || rf.IdleP95Ms <= calReflectorMaxJitter*r.IdleJitterMs.P50) {
 			owd = append(owd, rf.Addr)
 		}
 	}
 	p.PingMethod = "icmp"
 	if len(owd) >= calMinReflectors {
 		p.PingMethod = "icmp-timestamp"
-		p.Reflectors = owd
-		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps; sorted by idle jitter, the first %d are active", len(owd), pingerCount)
+		n := len(owd)
+		p.Reflectors = owd[:min(len(owd), pingerCount+calSpareReflectors)]
+		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), pingerCount)
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}
@@ -585,20 +607,26 @@ func writeCalConfig(out io.Writer, dir string, cfg *Config, r *calResult, p calP
 	if link.PingInterfaceName != "" {
 		fmt.Fprintf(w, "    ping_interface: %s\n", yamlString(link.PingInterfaceName))
 	}
+	if link.PingSourceAddr != "" {
+		fmt.Fprintf(w, "    ping_source_addr: %s\n", yamlString(link.PingSourceAddr))
+	}
 	if len(p.Reflectors) > 0 {
 		fmt.Fprintf(w, "    # %s\n", p.Why["reflectors"])
 		fmt.Fprintln(w, "    reflectors:")
-		for i, a := range p.Reflectors {
+		for _, a := range p.Reflectors {
 			j := ""
 			for _, rf := range r.Reflectors {
 				if rf.Addr == a {
 					j = fmt.Sprintf("  # idle jitter p95 %.1f ms", rf.IdleP95Ms)
 				}
 			}
-			if i == cfg.PingerCount {
-				fmt.Fprintln(w, "      # spares:")
-			}
 			fmt.Fprintf(w, "      - %s%s\n", yamlString(a), j)
+		}
+	} else if len(link.Reflectors) > 0 {
+		fmt.Fprintln(w, "    # not measured: the reflectors of the session config")
+		fmt.Fprintln(w, "    reflectors:")
+		for _, a := range link.Reflectors {
+			fmt.Fprintf(w, "      - %s\n", yamlString(a))
 		}
 	}
 	fmt.Fprintln(w)

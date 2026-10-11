@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ type calTestLink struct {
 	crossDelayMs         float64 // upload delay from download activity
 	grantDelayMs         float64 // upload delay from upload activity
 	drift                bool    // the clock offset changes by 50 ms in each block
+	echo                 bool    // ICMP echo: no one-way delays
+	noisyReflector       bool    // reflector r5 has 5 times the idle jitter
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -84,6 +87,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				}
 				r := reflectors[(ms/150)%len(reflectors)]
 				jit := l.idleJitterMs * rng.Float64()
+				if l.noisyReflector && r == "r5" {
+					jit *= 5
+				}
 				ulMs := 10 + offset + jit
 				dlMs := 10 - offset + jit
 				if dlActive {
@@ -92,11 +98,15 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				if ulActive {
 					ulMs += l.grantDelayMs
 				}
-				rec.Ping("wan", PingResult{
-					Reflector: r, RTT: 20 * time.Millisecond, Timestamp: ts, OWD: true,
+				ping := PingResult{
+					Reflector: r, RTT: 20 * time.Millisecond, Timestamp: ts, OWD: !l.echo,
 					UlOWD: time.Duration(ulMs * float64(time.Millisecond)),
 					DlOWD: time.Duration(dlMs * float64(time.Millisecond)),
-				})
+				}
+				if l.echo {
+					ping.UlOWD, ping.DlOWD = 0, 0
+				}
+				rec.Ping("wan", ping)
 			}
 			if err := rec.Close(); err != nil {
 				t.Fatal(err)
@@ -242,13 +252,14 @@ func TestCalibrateSession_MissingBlocks(t *testing.T) {
 }
 
 // A session with more than one link is rejected: the recordings contain
-// the events of all links.
+// the events of all links. Each block can have its own config, thus the
+// last block has the second link.
 func TestCalibrateSession_MultiLink(t *testing.T) {
 	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
 	cfg := testConfig()
 	cfg.Links = append(cfg.Links, cfg.Links[0])
 	cfg.Links[1].Name = "second"
-	rec, err := newRecorderAt(filepath.Join(dir, "01-dl-unshaped.jsonl"), 0, cfg, time.Unix(1_800_000_000, 0), testLogger(t))
+	rec, err := newRecorderAt(filepath.Join(dir, "06-both-autorate.jsonl"), 0, cfg, time.Unix(1_800_000_000, 0), testLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +281,7 @@ func TestWriteCalConfig_QuotesStrings(t *testing.T) {
 	}
 	cfg.Links[0].Name = "wan # backup"
 	cfg.Links[0].PingInterfaceName = "yes"
+	cfg.Links[0].PingSourceAddr = "192.0.2.1"
 	var buf bytes.Buffer
 	if err := writeCalConfig(&buf, dir, cfg, res, res.propose(cfg)); err != nil {
 		t.Fatal(err)
@@ -282,8 +294,8 @@ func TestWriteCalConfig_QuotesStrings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Links[0].Name != "wan # backup" || got.Links[0].PingInterfaceName != "yes" {
-		t.Errorf("name %q, ping_interface %q after reload", got.Links[0].Name, got.Links[0].PingInterfaceName)
+	if got.Links[0].Name != "wan # backup" || got.Links[0].PingInterfaceName != "yes" || got.Links[0].PingSourceAddr != "192.0.2.1" {
+		t.Errorf("name %q, ping_interface %q, ping_source_addr %q after reload", got.Links[0].Name, got.Links[0].PingInterfaceName, got.Links[0].PingSourceAddr)
 	}
 }
 
@@ -332,5 +344,39 @@ func TestCalibrateSession_NoCrossDelayKeepsSessionValue(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("notes = %v, want a note for learn_cross_delay", res.Notes)
+	}
+}
+
+// With ICMP echo, the autorate blocks have no one-way delays. The notes
+// tell this (and not that the blocks are missing), and the ping method
+// stays icmp.
+func TestCalibrateSession_EchoNotes(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2, echo: true})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := strings.Join(res.Notes, "\n")
+	if strings.Contains(n, "no autorate") || strings.Count(n, "no one-way delays") != 2 {
+		t.Errorf("notes = %v, want two notes for missing one-way delays", res.Notes)
+	}
+	if p := res.propose(cfg); p.PingMethod != "icmp" || len(p.Reflectors) != 0 {
+		t.Errorf("ping_method %s, %d reflectors; want icmp and the session reflectors", p.PingMethod, len(p.Reflectors))
+	}
+}
+
+// The program selects the active reflectors at random from the list. Thus,
+// a reflector with a high idle jitter is not in the list, and the list has
+// at most pinger_count + 2 reflectors.
+func TestCalibrateSession_ReflectorList(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, noisyReflector: true})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PingerCount = 2
+	p := res.propose(cfg)
+	if len(p.Reflectors) != 4 || slices.Contains(p.Reflectors, "r5") {
+		t.Errorf("reflectors = %v, want 4 without r5", p.Reflectors)
 	}
 }
