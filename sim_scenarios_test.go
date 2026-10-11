@@ -774,6 +774,40 @@ func TestSimOWD_LatencyTarget(t *testing.T) {
 	}
 }
 
+// The latency target with the default config (refractory_on_decrease
+// off: each ping with bufferbloat decreases the rate). The results are
+// near the results with the option.
+func TestSimOWD_LatencyTargetDefaultRefractory(t *testing.T) {
+	sc := scenarioByName(t, "steady-dl")
+	sc.duration = 600 * time.Second
+	sc.dlDemand = between(2, 598)
+	sc.tune = func(cfg *Config) { cfg.Links[0].Download.LatencyTargetP95Ms = 20 }
+	r := runSim(sc, policyAutorateOWD)
+	t.Logf("steady-dl, default config, download target 20 ms: p95 %.1f ms, utilization %.0f %%", r.dlLatP95, 100*r.dlUtil)
+	if r.dlLatP95 > 25 || r.dlUtil < 0.95 {
+		t.Errorf("download p95 %.1f ms, utilization %.0f%%; want 25 ms or less and 95%% or more", r.dlLatP95, 100*r.dlUtil)
+	}
+
+	run := func(target float64) simResult {
+		sc := scenarioByName(t, "5g-coupled")
+		sc.duration = 600 * time.Second
+		sc.dlDemand, sc.ulDemand = between(2, 598), between(2, 598)
+		sc.tune = func(cfg *Config) {
+			cfg.LearnCrossDelay = true
+			cfg.Links[0].Upload.LatencyTargetP95Ms = target
+			cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+		}
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(0), run(80)
+	t.Logf("5g-coupled, default config: off p95 %.1f ms, %.0f %%; upload target 80 ms: p95 %.1f ms, %.0f %%",
+		off.ulLatP95, 100*off.ulUtil, on.ulLatP95, 100*on.ulUtil)
+	if on.ulUtil < off.ulUtil+0.05 || on.ulLatP95 > 95 {
+		t.Errorf("upload target 80 ms: p95 %.1f ms, utilization %.0f%% (off: %.0f%%); want more throughput and p95 95 ms or less",
+			on.ulLatP95, 100*on.ulUtil, 100*off.ulUtil)
+	}
+}
+
 // With ping_method icmp (the default), the latency target uses the RTT
 // increase. Download load: the target decreases the download delay at the
 // same throughput. Before the fix, the target used RTT/2 and saw only half
