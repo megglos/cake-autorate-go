@@ -81,8 +81,15 @@ type calRecording struct {
 	config *Config
 	pings  []calSample
 	echo   map[string]int // reflector -> replies without one-way delays
-	sent   map[string]int // reflector -> pings (replies and timeouts)
+	sent   []calSent      // each ping (replies and timeouts)
 	rates  []calRate
+}
+
+// calSent is one ping: a reply (with or without one-way delays) or a
+// timeout.
+type calSent struct {
+	t         time.Time
+	reflector string
 }
 
 type calRate struct {
@@ -167,11 +174,19 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		for r, n := range rec.echo {
 			echo[r] += n
 		}
-		for r, n := range rec.sent {
-			sent[r] += n
+		// The reply ratio: not the load of the unshaped blocks. There, the
+		// queue is intentionally full, and pings time out (more than 1 s of
+		// delay) for all reflectors.
+		counts := func(t time.Time) bool { return b.policy != "unshaped" || t.Before(b.idleEnd) }
+		for _, p := range rec.sent {
+			if counts(p.t) {
+				sent[p.reflector]++
+			}
 		}
 		for _, p := range rec.pings {
-			replied[p.reflector]++
+			if counts(p.t) {
+				replied[p.reflector]++
+			}
 		}
 		loadFrom := b.loadStart.Add(calSkipLoadStart)
 		for _, p := range rec.pings {
@@ -507,7 +522,7 @@ func readCalRecording(path string) (*calRecording, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	rec := &calRecording{config: h.Config, echo: map[string]int{}, sent: map[string]int{}}
+	rec := &calRecording{config: h.Config, echo: map[string]int{}}
 	var dlKbps, ulKbps, ulShaperKbps float64 // the last values in the file
 	for sc.Scan() {
 		var ev struct {
@@ -528,7 +543,7 @@ func readCalRecording(path string) (*calRecording, error) {
 		t := start.Add(time.Duration(ev.T) * time.Microsecond)
 		switch ev.Type {
 		case recPing:
-			rec.sent[ev.Reflector]++
+			rec.sent = append(rec.sent, calSent{t: t, reflector: ev.Reflector})
 			if ev.Timeout {
 				continue
 			}

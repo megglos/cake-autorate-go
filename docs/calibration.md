@@ -154,7 +154,7 @@ The command reads `blocks.tsv`, `session.txt` and the recordings of the session.
 | Delay thresholds | at least 30 ms, at least 2 × the median idle jitter | Below 2 × the jitter, the jitter alone shows bufferbloat. |
 | Upload threshold | also at least the median grant delay + 10 ms | Below it, the upload rate collapses on 5G. |
 | `learn_cross_delay` | on if the median cross delay is more than 10 ms | On 5G it is 25 to 33 ms; on fiber approximately 0. |
-| `ping_method`, `reflectors` | `icmp-timestamp` if 4 or more reflectors reply; the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the median | The program selects the active reflectors at random from the list. Thus, the list must not contain bad reflectors. |
+| `ping_method`, `reflectors` | `icmp-timestamp` if 4 or more reflectors reply (one-way delays in 90 % or more of the pings, not counting the load of the unshaped blocks, where pings time out); the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the median | The program selects the active reflectors at random from the list. Thus, the list must not contain bad reflectors. |
 
 The rules come from 5G sessions in October 2026 (Vodafone, Berlin). For other link types (fiber, cable, Starlink), the rules are not tested yet.
 

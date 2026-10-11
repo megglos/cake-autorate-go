@@ -31,6 +31,7 @@ type calTestLink struct {
 	flakyReflector       bool    // reflector r4 replies to 1 of 10 pings
 	echoReflector        bool    // reflector r4 replies without one-way delays under load
 	sparseReflector      bool    // reflector r4 gets 1 of 3 pings (a long ping interval)
+	unshapedTimeouts     bool    // all pings time out in the load of the unshaped blocks
 	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
 }
@@ -118,6 +119,10 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 					ping.UlOWD, ping.DlOWD = 0, 0
 				}
 				if l.flakyReflector && r == "r4" && (ms/150)%50 != 3 {
+					rec.Ping("wan", PingResult{Reflector: r, Timeout: true, Timestamp: ts})
+					continue
+				}
+				if l.unshapedTimeouts && policy == "unshaped" && load {
 					rec.Ping("wan", PingResult{Reflector: r, Timeout: true, Timestamp: ts})
 					continue
 				}
@@ -538,6 +543,19 @@ func TestCalibrateSession_SparseReflector(t *testing.T) {
 		if rf.Addr == "r4" && rf.OWD {
 			t.Errorf("r4 is a candidate (idle p95 %.1f ms), want not (few samples in each block)", rf.IdleP95Ms)
 		}
+	}
+}
+
+// Timeouts in the load of the unshaped blocks (a full queue, more than 1 s
+// of delay) do not make the reflectors unreliable.
+func TestCalibrateSession_UnshapedTimeouts(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, unshapedTimeouts: true})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.propose(cfg); p.PingMethod != "icmp-timestamp" {
+		t.Errorf("ping_method %q, want icmp-timestamp (reflectors: %+v)", p.PingMethod, res.Reflectors)
 	}
 }
 
