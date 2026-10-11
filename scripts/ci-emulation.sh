@@ -107,9 +107,12 @@ PIDS=()
 
 teardown() {
     # iperf3 -D runs as a daemon: it does not stop with its namespace.
-    for f in "$OUTDIR"/iperf3-*.pid; do
-        [ -f "$f" ] && PIDS+=("$(cat "$f")") && rm -f "$f"
-    done
+    # With -k, OUTDIR is empty: the namespace cleanup below stops them.
+    if [ -n "$OUTDIR" ]; then
+        for f in "$OUTDIR"/iperf3-*.pid; do
+            [ -f "$f" ] && PIDS+=("$(cat "$f")") && rm -f "$f"
+        done
+    fi
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
@@ -138,7 +141,9 @@ for cmd in tc iperf3 ping awk jq ethtool; do
 done
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build -o cake-autorate-go .)"
 BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
-ip netns list | grep -qw "$NS_R" && die "namespace $NS_R exists. Remove the old setup with: sudo $0 -k"
+for ns in "$NS_R" "$NS_M" "$NS_S"; do
+    ip netns list | grep -qw "$ns" && die "namespace $ns exists. Remove the old setup with: sudo $0 -k"
+done
 for m in sch_cake sch_netem sch_tbf ifb act_mirred; do
     modprobe "$m" 2>/dev/null || true
 done
