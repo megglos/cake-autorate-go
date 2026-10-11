@@ -357,8 +357,8 @@ func TestCalibrateSession_EchoNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := strings.Join(res.Notes, "\n")
-	if strings.Contains(n, "no autorate") || strings.Count(n, "no one-way delays") != 2 {
-		t.Errorf("notes = %v, want two notes for missing one-way delays", res.Notes)
+	if strings.Contains(n, "no autorate") || strings.Count(n, "no one-way delays") != 2 || !strings.Contains(n, "idle jitter is not measured") {
+		t.Errorf("notes = %v, want notes for missing one-way delays and the idle jitter", res.Notes)
 	}
 	if p := res.propose(cfg); p.PingMethod != "icmp" || len(p.Reflectors) != 0 {
 		t.Errorf("ping_method %s, %d reflectors; want icmp and the session reflectors", p.PingMethod, len(p.Reflectors))
@@ -378,5 +378,30 @@ func TestCalibrateSession_ReflectorList(t *testing.T) {
 	p := res.propose(cfg)
 	if len(p.Reflectors) != 4 || slices.Contains(p.Reflectors, "r5") {
 		t.Errorf("reflectors = %v, want 4 without r5", p.Reflectors)
+	}
+}
+
+// With pinger_count 1, the list has at least 4 reflectors (the minimum for
+// icmp-timestamp).
+func TestCalibrateSession_MinReflectors(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.PingerCount = 1
+	if p := res.propose(cfg); len(p.Reflectors) < calMinReflectors {
+		t.Errorf("reflectors = %v, want %d or more", p.Reflectors, calMinReflectors)
+	}
+}
+
+// A recording of another format version is rejected.
+func TestReadCalRecording_FormatVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "r.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"header","format_version":99,"start":"2026-01-01T00:00:00Z","config":{}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCalRecording(path); err == nil || !strings.Contains(err.Error(), "format version") {
+		t.Errorf("err = %v, want a format version error", err)
 	}
 }

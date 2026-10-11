@@ -234,6 +234,9 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	if res.UlCapacity.N == 0 {
 		res.Notes = append(res.Notes, "no unshaped ul block: the upload rates are not measured")
 	}
+	if res.IdleJitterMs.N == 0 {
+		res.Notes = append(res.Notes, "no idle pings with one-way delays: the idle jitter is not measured, the delay thresholds are the default values")
+	}
 	if res.UlCapacity.N > 0 && res.UlCapacityBoth.N == 0 {
 		res.Notes = append(res.Notes, "no unshaped both block: the upload minimum and base rates come from the upload capacity without download load and can be too high")
 	}
@@ -398,6 +401,9 @@ func readCalRecording(path string) (*calRecording, error) {
 	if err := json.Unmarshal(sc.Bytes(), &h); err != nil || h.Type != recHeader {
 		return nil, fmt.Errorf("%s: no header", path)
 	}
+	if h.FormatVersion != recordFormatVersion {
+		return nil, fmt.Errorf("%s: recording format version %d, this program reads version %d", path, h.FormatVersion, recordFormatVersion)
+	}
 	start, err := time.Parse(time.RFC3339Nano, h.Start)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -538,7 +544,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	if len(owd) >= calMinReflectors {
 		p.PingMethod = "icmp-timestamp"
 		n := len(owd)
-		p.Reflectors = owd[:min(len(owd), pingerCount+calSpareReflectors)]
+		p.Reflectors = owd[:min(len(owd), max(pingerCount+calSpareReflectors, calMinReflectors))]
 		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), pingerCount)
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
