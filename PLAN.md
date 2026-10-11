@@ -299,9 +299,17 @@ Fix for the test: PR #23 `record-session.sh -W SECONDS` (DL warm-up before both 
 
 Also open (product, not test): if DL and UL are always active together, Core never learns. Possible later: keep the learned value over restarts (state file), or learn at the start of each DL burst before the UL ramps up. Decide after session 6.
 
-### Session 6 (prepared): both mode only, with DL warm-up
+### Session 6 (2026-10-11 14:13, `recordings/20261011-1413-enp7s0`): both mode, 30 s DL warm-up, 4 rounds
 
-main binary (ace07c7, includes #20 and #22) for the two policies. `-m both -r 4 -W 30`: 12 blocks, approximately 45 min. Script from the worktree ../cake-autorate-go-warm (PR #23).
+| Round | main DL / UL Mbit/s | learn DL / UL Mbit/s | main UL p95 | learn UL p95 |
+|---|---|---|---|---|
+| 1 | 115 / 5 | 95 / 5 | 75 | 91 |
+| 2 | 96 / 6 | 86 / 11 | 77 | 108 |
+| 3 | 88 / 6 | 111 / 9 | 75 | 114 |
+| 4 | 115 / 5 | 120 / 19 | 87 | 108 |
+| Mean | 104 / 5.5 | 103 / 11 | 79 | 105 |
+
+Result: with the warm-up, `learn_cross_delay` doubles the upload under load in the two directions (5.5 → 11 Mbit/s, unshaped ~12–20) at the same download. Cost: UL OWD p95 +26 ms (79 → 105), DL p95 unchanged (45–58). This is the expected trade: the learned delay (~21 ms) raises the effective UL threshold to ~51 ms. Option to examine: `learn_cross_delay` with a lower UL threshold (20 ms → effective ~41 ms), but not below the grant floor (~25 ms per PR #22). Simulator first (5g-coupled, recorded scenarios after #25).
 
 ### Session 4 configs (prepared)
 
