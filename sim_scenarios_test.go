@@ -240,12 +240,13 @@ func simScenariosVariant(variant uint64) []simScenario {
 		},
 		{
 			// Similar to the 5G link in the recordings: download activity
-			// delays the upload (the 5G scheduler). Load in the two
-			// directions. The upload shaper cannot remove this delay.
+			// and upload activity delay the upload (the 5G scheduler). Load
+			// in the two directions. The upload shaper cannot remove these
+			// delays.
 			name: "5g-coupled", duration: dur, seed: 9 + v,
 			dlCapacity: constant(150000), ulCapacity: constant(30000),
 			dlDemand: between(2, 118), ulDemand: between(30, 100),
-			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12,
+			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12, ulGrantMs: 8, ulGrantJitterMs: 6,
 			link: link5G,
 		},
 		{
@@ -559,27 +560,31 @@ func TestSimOWD_LearnCrossDelay_Coupled(t *testing.T) {
 	}
 }
 
-// With low delay thresholds, the upload delay from download activity is
-// above the threshold in many pings. Then the upload rate stays near the
-// minimum without learn_cross_delay.
-func TestSimOWD_LearnCrossDelay_LowThreshold(t *testing.T) {
+// The upload delay from upload activity (5G grant delay) is a lower limit
+// for the upload delay threshold: learn_cross_delay cannot remove it,
+// because it occurs exactly when the upload is loaded. On the 5G link, an
+// upload threshold of 15 ms gave 30 to 43 % of the upload capacity, and
+// 25 ms gave 66 to 68 %. The simulator must show the same limit.
+func TestSimOWD_UploadThresholdAboveGrantDelay(t *testing.T) {
 	sc := scenarioByName(t, "5g-coupled")
-	tune := func(learn bool) func(*Config) {
-		return func(cfg *Config) {
-			cfg.LearnCrossDelay = learn
-			cfg.Links[0].Upload.OWDDeltaDelayThrMs = 15
-			cfg.Links[0].Upload.AvgOWDDeltaMaxAdjDownThrMs = 30
+	run := func(thrMs float64) simResult {
+		sc.tune = func(cfg *Config) {
+			cfg.LearnCrossDelay = true
+			cfg.Links[0].Upload.OWDDeltaDelayThrMs = thrMs
+			cfg.Links[0].Upload.AvgOWDDeltaMaxAdjDownThrMs = 2 * thrMs
 		}
+		return runSim(sc, policyAutorateOWD)
 	}
-	sc.tune = tune(false)
-	off := runSim(sc, policyAutorateOWD)
-	sc.tune = tune(true)
-	on := runSim(sc, policyAutorateOWD)
-	if on.ulUtil < 0.6 || on.ulUtil < off.ulUtil+0.3 {
-		t.Errorf("UL utilization %.0f%% with learn_cross_delay, %.0f%% without, want 60%% or more and +30 points", 100*on.ulUtil, 100*off.ulUtil)
+	low, high := run(15), run(25)
+	t.Logf("UL utilization: threshold 15 ms %.0f %%, 25 ms %.0f %%", 100*low.ulUtil, 100*high.ulUtil)
+	if low.ulUtil > 0.3 {
+		t.Errorf("UL utilization %.0f%% with a 15 ms threshold, want 30%% or less (the grant delay is above the threshold)", 100*low.ulUtil)
 	}
-	if on.dlUtil < 0.9 {
-		t.Errorf("DL utilization %.0f%% with learn_cross_delay, want 90%% or more", 100*on.dlUtil)
+	if high.ulUtil < 0.7 {
+		t.Errorf("UL utilization %.0f%% with a 25 ms threshold, want 70%% or more", 100*high.ulUtil)
+	}
+	if high.dlUtil < 0.9 {
+		t.Errorf("DL utilization %.0f%% with a 25 ms threshold, want 90%% or more", 100*high.dlUtil)
 	}
 }
 
@@ -645,23 +650,26 @@ func mean(v []float64) float64 {
 
 // learn_cross_delay must not learn the queue of the upload shaper. After an
 // upload capacity decrease, the upload load is less than half of the shaper
-// rate while the queue increases.
+// rate while the queue increases. Core first learns the real cross delay
+// (no upload load until 20 s), then the upload capacity decreases at 40 s.
+// The learned delay must not increase after the decrease.
 func TestSimOWD_LearnCrossDelay_UploadCapacityDrop(t *testing.T) {
 	sc := scenarioByName(t, "5g-coupled")
 	sc.name = "5g-coupled-ul-drop"
 	sc.ulCapacity = steps([]float64{0, 40, 80}, []float64{30000, 3000, 30000})
-	sc.ulDemand = between(2, 118)
-	run := func(learn bool) simResult {
-		sc.tune = func(cfg *Config) { cfg.LearnCrossDelay = learn }
-		return runSim(sc, policyAutorateOWD)
+	sc.ulDemand = between(20, 118)
+	sc.tune = func(cfg *Config) { cfg.LearnCrossDelay = true }
+	r := runSim(sc, policyAutorateOWD)
+	before := r.ulCrossDelay[39*10]
+	after := 0.0
+	for _, v := range sliceS(r.ulCrossDelay, 40, 80) {
+		after = math.Max(after, v)
 	}
-	off, on := run(false), run(true)
-	t.Logf("p95 %.1f / %.1f ms, bloat %.1f / %.1f s, UL %.0f / %.0f %% (off / on)",
-		off.latP95, on.latP95, off.bloatS, on.bloatS, 100*off.ulUtil, 100*on.ulUtil)
-	if on.latP95 > math.Max(1.1*off.latP95, off.latP95+5) {
-		t.Errorf("p95 %.1f ms with learn_cross_delay, %.1f ms without", on.latP95, off.latP95)
+	t.Logf("learned cross delay: %.1f ms before the decrease, maximum %.1f ms after it", before/1000, after/1000)
+	if before < 10000 {
+		t.Errorf("learned cross delay %.1f ms before the decrease, want 10 ms or more", before/1000)
 	}
-	if on.bloatS > math.Max(1.1*off.bloatS, off.bloatS+1) {
-		t.Errorf("bloat %.1f s with learn_cross_delay, %.1f s without", on.bloatS, off.bloatS)
+	if after > before+2000 {
+		t.Errorf("learned cross delay increased from %.1f to %.1f ms after the upload capacity decrease", before/1000, after/1000)
 	}
 }

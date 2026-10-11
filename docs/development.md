@@ -41,6 +41,8 @@ Scenarios (`simScenarios` in `sim_scenarios_test.go`):
 | `5g-variable` | Capacity changes as a random walk with deep fades, large buffers |
 | `starlink-like` | The capacity and the RTT floor change every 15 s, large jitter |
 | `latency-spike` | The RTT floor increases by 120 ms for 300 ms. This delay is not a queue |
+| `5g-recorded-a`, `5g-recorded-b` | Capacity from two recorded 5G sessions (`testdata/traces/`) |
+| `5g-coupled` | 5G radio delays on the upload that no shaper can remove: download activity adds a median of 21 ms, upload activity adds 14 ms (p50) and 24 ms (p95). Load in the two directions |
 
 Policies:
 
