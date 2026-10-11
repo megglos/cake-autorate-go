@@ -126,6 +126,7 @@ log() { echo "[session] [$(date '+%H:%M:%S')] $*"; }
 [ -d "/sys/class/net/$IFACE" ] || die "interface $IFACE does not exist"
 [ -f "$CONFIG" ] || die "config $CONFIG does not exist"
 [[ "$WARMUP_S" =~ ^[0-9]+$ ]] || die "-W must be a number of seconds"
+WARMUP_S=$((10#$WARMUP_S))
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build .)"
 [ -x "$LOADGEN" ] || die "load generator $LOADGEN does not exist"
 for cmd in tc curl awk; do
