@@ -1224,6 +1224,26 @@ func TestObserveLatency_StaleWindowExpires(t *testing.T) {
 	}
 }
 
+// After a stop of the pingers, a ping at low load does not complete the
+// old window.
+func TestObserveLatency_StaleWindowLowLoad(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 3*latencyTargetMinSamples/2; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	// The pingers stop for 2 minutes, then a ping at low load.
+	c.dl.loadPercent = 0
+	c.observeLatency(DL, "r1", 10000, 10000, ts.Add(2*time.Minute))
+	if got := c.dl.scale(); got != 1 {
+		t.Errorf("scale %.2f, want 1 (the old window must not complete)", got)
+	}
+}
+
 // After an undo, the floor keeps the reference of the latency target.
 // Else, the baseline of the controller increases with the constant delay,
 // the next window shows a low p95, and the thresholds increase although
