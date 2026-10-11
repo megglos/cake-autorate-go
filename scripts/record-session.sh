@@ -351,6 +351,7 @@ for round in $(seq 1 "$ROUNDS"); do
                 LOAD_PID=$!
                 wait "$LOAD_PID" 2>/dev/null || true
                 LOAD_PID=""
+                kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped during the warm-up. See $blog"
             fi
             load_start=$(date +%s)
             "$LOADGEN" -m "$mode" -w "$WORKERS" -d "$BLOCK_S" -i "$IFACE" >> "$blog" 2>&1 &
@@ -361,6 +362,7 @@ for round in $(seq 1 "$ROUNDS"); do
             grep -E "elapsed" "$blog" | tail -n 1 | sed 's/^/    /'
 
             sleep 5
+            kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped during the load. See $blog"
             kill -INT "$CAR_PID"
             wait "$CAR_PID" 2>/dev/null || true
             CAR_PID=""
