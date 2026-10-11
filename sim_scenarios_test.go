@@ -100,6 +100,13 @@ func recordedTrace(path string) (dl, ul func(float64) float64) {
 		}
 		at, dv, uv = append(at, t), append(dv, d), append(uv, u)
 	}
+	switch len(at) {
+	case 0:
+		panic(fmt.Sprintf("%s: no data lines", path))
+	case 1:
+		// One line: the capacity is constant.
+		return constant(dv[0]), constant(uv[0])
+	}
 	period := at[len(at)-1] + (at[len(at)-1] - at[len(at)-2])
 	lookup := func(v []float64) func(float64) float64 {
 		return func(t float64) float64 {
@@ -343,6 +350,15 @@ func TestRecordedTrace(t *testing.T) {
 	if err := os.WriteFile(path, []byte("t_ms,dl_kbps,ul_kbps\n0,100,10\n200,200,20\n400,300,30\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// One data line: a constant capacity.
+	one := t.TempDir() + "/one.csv"
+	if err := os.WriteFile(one, []byte("t_ms,dl_kbps,ul_kbps\n0,100,10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d, u := recordedTrace(one); d(0) != 100 || d(5000) != 100 || u(5000) != 10 {
+		t.Errorf("one-line trace: %v/%v, want 100/10", d(5000), u(5000))
+	}
+
 	dl, ul := recordedTrace(path)
 	for _, c := range []struct{ t, dl, ul float64 }{
 		{0, 100, 10}, {199, 100, 10}, {200, 200, 20}, {599, 300, 30},

@@ -1,17 +1,17 @@
 {
   "5g-recorded-a": {
-    "lat_p95_ms": 67,
-    "lat_p99_ms": 99.79,
-    "bloat_s": 45.56,
-    "dl_util": 67.39,
-    "ul_util": 84.76
+    "lat_p95_ms": 67.16,
+    "lat_p99_ms": 99.3,
+    "bloat_s": 47.96,
+    "dl_util": 66.08,
+    "ul_util": 88.63
   },
   "5g-recorded-b": {
-    "lat_p95_ms": 65.44,
-    "lat_p99_ms": 87.16,
-    "bloat_s": 54.85,
-    "dl_util": 77.18,
-    "ul_util": 83.41
+    "lat_p95_ms": 65.23,
+    "lat_p99_ms": 90.16,
+    "bloat_s": 53.91,
+    "dl_util": 75.12,
+    "ul_util": 80.69
   },
   "5g-variable": {
     "lat_p95_ms": 81.68,

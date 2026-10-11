@@ -15,7 +15,7 @@
 #                        blocks.tsv) with the modes dl and ul.
 #
 # Output: CSV with the header "t_ms,dl_kbps,ul_kbps", the same format as
-# scripts/gen-trace.sh. The simulator (scenario 5g-recorded) and
+# scripts/gen-trace.sh. The simulator (scenarios 5g-recorded-a and -b) and
 # scripts/emulate-link.sh use it. The trace is as long as the shorter block.
 #
 # Limit: the achieved rate is the capacity only if the load fills the link.
@@ -37,14 +37,18 @@ rates() {
     local block=$1 mode=$2 field=$3 line
     line=$(awk -F'\t' -v b="$block" '$1 == b' "$DIR/blocks.tsv")
     [ -n "$line" ] || die "block $block is not in blocks.tsv"
-    IFS=$'\t' read -r _ _ bmode policy start load_start load_end _ _ _ rec <<< "$line"
+    IFS=$'\t' read -r _ _ bmode policy _ load_start load_end _ _ _ rec <<< "$line"
     [ "$bmode" = "$mode" ] || die "block $block has the mode $bmode, not $mode"
     [ "$policy" = "unshaped" ] || die "block $block has the policy $policy, not unshaped"
-    # The recording time t (us) starts approximately at the block start.
-    local from=$(( (load_start - start + 3) * 1000000 )) to=$(( (load_end - start) * 1000000 ))
+    # The recording time t (us) starts at the time in the header (.start),
+    # as in scripts/summarize-session.sh.
+    local start_wall
+    start_wall=$(date -d "$(gzip -dc "$DIR/$rec" | head -n 1 | jq -r .start)" +%s.%N)
     gzip -dc "$DIR/$rec" |
-        jq -r --argjson from "$from" --argjson to "$to" --arg f "$field" \
-            'select(.type == "rate" and .t >= $from and .t < $to) | "\((.t - $from) / 1000 | floor) \(.[$f])"'
+        jq -r --argjson s0 "$start_wall" --argjson ls "$load_start" --argjson le "$load_end" --arg f "$field" '
+            ((($ls - $s0) + 3) * 1000000) as $from | (($le - $s0) * 1000000) as $to |
+            select(.type == "rate" and .t >= $from and .t < $to) |
+            "\((.t - $from) / 1000 | floor) \(.[$f])"'
 }
 
 # smooth: mean of the samples in the last second, at each sample.
