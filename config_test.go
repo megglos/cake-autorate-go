@@ -566,3 +566,26 @@ links:
 		t.Errorf("config.example.yaml gives warnings: %v", w)
 	}
 }
+
+func TestValidate_LatencyTarget(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links[0].Upload.LatencyTargetP95Ms = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_p95_ms") {
+		t.Errorf("negative target: Validate() = %v", err)
+	}
+	cfg.Links[0].Upload.LatencyTargetP95Ms = 50
+	cfg.Links[0].Upload.LatencyTargetMinThrMs = 200
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_min_thr_ms") {
+		t.Errorf("minimum threshold too high: Validate() = %v", err)
+	}
+	cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+	cfg.LatencyTargetWindowS = 0
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
+		t.Errorf("window 0: Validate() = %v", err)
+	}
+	cfg.LatencyTargetWindowS = 30
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid latency target: Validate() = %v", err)
+	}
+}

@@ -39,6 +39,15 @@ type DirectionConfig struct {
 	OWDDeltaDelayThrMs         float64 `yaml:"owd_delta_delay_thr_ms"`
 	AvgOWDDeltaMaxAdjUpThrMs   float64 `yaml:"avg_owd_delta_max_adjust_up_thr_ms"`
 	AvgOWDDeltaMaxAdjDownThrMs float64 `yaml:"avg_owd_delta_max_adjust_down_thr_ms"`
+
+	// LatencyTargetP95Ms is the target for the p95 of the delay delta at
+	// high load (0: off). Core then changes the three delay thresholds
+	// slowly, so that the p95 is near the target.
+	LatencyTargetP95Ms float64 `yaml:"latency_target_p95_ms"`
+	// LatencyTargetMinThrMs is the minimum delay threshold for the latency
+	// target (0: 10 ms). Set it above the delay that no shaper can remove
+	// (on 5G, the upload grant delay: see the calibrate command).
+	LatencyTargetMinThrMs float64 `yaml:"latency_target_min_thr_ms"`
 }
 
 // LinkConfig holds the per-link configuration for a single WAN interface pair.
@@ -113,6 +122,11 @@ type Config struct {
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
 	LearnCrossDelay bool `yaml:"learn_cross_delay"`
+
+	// LatencyTargetWindowS is the time window for the p95 of the latency
+	// target (latency_target_p95_ms). After each window, Core changes the
+	// thresholds one time.
+	LatencyTargetWindowS float64 `yaml:"latency_target_window_s"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`
@@ -238,6 +252,8 @@ func DefaultConfig() *Config {
 		ShaperRateAdjustUpLoadLow:          1.01,
 
 		HighLoadThr: 0.75,
+
+		LatencyTargetWindowS: 30,
 
 		MonitorIntervalMs:             200,
 		BufferbloatRefractoryPeriodMs: 300,
@@ -471,6 +487,9 @@ func validateIfname(name string) error {
 
 // Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
+	if c.LatencyTargetWindowS <= 0 {
+		return fmt.Errorf("latency_target_window_s must be positive")
+	}
 	if len(c.Links) == 0 {
 		return fmt.Errorf("at least one link must be configured")
 	}
@@ -511,6 +530,12 @@ func (c *Config) Validate() error {
 			}
 			if dc.dir.AvgOWDDeltaMaxAdjDownThrMs <= 0 {
 				return fmt.Errorf("%s avg_owd_delta_max_adjust_down_thr_ms must be positive", dc.name)
+			}
+			if dc.dir.LatencyTargetP95Ms < 0 || dc.dir.LatencyTargetMinThrMs < 0 {
+				return fmt.Errorf("%s latency_target_p95_ms and latency_target_min_thr_ms must not be negative", dc.name)
+			}
+			if dc.dir.LatencyTargetMinThrMs > dc.dir.OWDDeltaDelayThrMs*latencyTargetMaxScale {
+				return fmt.Errorf("%s latency_target_min_thr_ms must not be more than %g x owd_delta_delay_thr_ms", dc.name, latencyTargetMaxScale)
 			}
 		}
 		if len(link.Reflectors) == 0 {

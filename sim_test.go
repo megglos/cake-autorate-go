@@ -217,6 +217,9 @@ type simResult struct {
 	// Excess delay (ms) of a sparse flow. The simulator samples it every 10ms
 	// while a bulk transfer is active.
 	latP50, latP95, latP99 float64
+	// p95 of the delay of each direction (ms), while the direction has
+	// demand.
+	dlLatP95, ulLatP95 float64
 	// bloatS is the total time with an excess delay of more than 30ms.
 	bloatS float64
 	// Delivered bits / capacity bits, while the direction has demand.
@@ -340,7 +343,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	nextMon := monIntvl
 	var prevDlOut, prevUlOut float64
 
-	var lat []float64
+	var lat, dlLat, ulLat []float64
 	var res simResult
 	res.stallEnd = -1
 	wasStall := false
@@ -450,6 +453,12 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 
 		if step%simProbeEveryMs == 0 && (dl.demand(t) || ul.demand(t)) {
 			lat = append(lat, queueMs)
+			if dl.demand(t) {
+				dlLat = append(dlLat, dlQueueMs)
+			}
+			if ul.demand(t) {
+				ulLat = append(ulLat, ulQueueMs)
+			}
 			if queueMs > simBloatThrMs {
 				res.bloatS += simProbeEveryMs / 1000.0
 			}
@@ -474,6 +483,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 
 	sort.Float64s(lat)
 	res.latP50, res.latP95, res.latP99 = percentile(lat, 0.50), percentile(lat, 0.95), percentile(lat, 0.99)
+	sort.Float64s(dlLat)
+	sort.Float64s(ulLat)
+	res.dlLatP95, res.ulLatP95 = percentile(dlLat, 0.95), percentile(ulLat, 0.95)
 	if dlCap > 0 {
 		res.dlUtil = dlDelivered / dlCap
 	}

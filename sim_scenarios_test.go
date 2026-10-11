@@ -710,3 +710,42 @@ func TestSimCalibration_5GRecorded(t *testing.T) {
 		t.Errorf("upload only: UL utilization %.0f%%, want 45 to 75%% (link: 56 to 63%%)", 100*ulOnly.ulUtil)
 	}
 }
+
+// The latency target sets the operating point. On a link where the shaper
+// controls the delay, the p95 of the delay goes near the target. With a
+// target above the delay of the default thresholds, the upload gets more
+// throughput (5g-coupled: the default thresholds give approximately 55 ms
+// and 61 %).
+func TestSimOWD_LatencyTarget(t *testing.T) {
+	run := func(name string, tune func(*Config)) simResult {
+		sc := scenarioByName(t, name)
+		sc.duration = 600 * time.Second
+		sc.dlDemand = between(2, 598)
+		if name == "5g-coupled" {
+			sc.ulDemand = between(2, 598)
+		}
+		sc.tune = func(cfg *Config) {
+			cfg.RefractoryOnDecrease = true
+			cfg.LearnCrossDelay = true
+			tune(cfg)
+		}
+		return runSim(sc, policyAutorateOWD)
+	}
+	low := run("steady-dl", func(cfg *Config) { cfg.Links[0].Download.LatencyTargetP95Ms = 20 })
+	t.Logf("steady-dl, download target 20 ms: p95 %.1f ms, utilization %.0f %%", low.dlLatP95, 100*low.dlUtil)
+	if low.dlLatP95 > 25 || low.dlUtil < 0.95 {
+		t.Errorf("steady-dl, target 20 ms: download p95 %.1f ms, utilization %.0f%%; want 25 ms or less and 95%% or more", low.dlLatP95, 100*low.dlUtil)
+	}
+
+	off := run("5g-coupled", func(*Config) {})
+	high := run("5g-coupled", func(cfg *Config) {
+		cfg.Links[0].Upload.LatencyTargetP95Ms = 80
+		cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+	})
+	t.Logf("5g-coupled upload: off p95 %.1f ms, %.0f %%; target 80 ms: p95 %.1f ms, %.0f %%",
+		off.ulLatP95, 100*off.ulUtil, high.ulLatP95, 100*high.ulUtil)
+	if high.ulUtil < off.ulUtil+0.05 || high.ulLatP95 > 95 {
+		t.Errorf("5g-coupled, upload target 80 ms: p95 %.1f ms, utilization %.0f%% (off: %.0f%%); want more throughput and p95 95 ms or less",
+			high.ulLatP95, 100*high.ulUtil, 100*off.ulUtil)
+	}
+}

@@ -9,6 +9,7 @@ package main
 
 import (
 	"math"
+	"sort"
 	"time"
 )
 
@@ -62,6 +63,17 @@ type dirState struct {
 	lastDecayTime    time.Time
 	crossDelayUs     float64   // learned delay from activity in the other direction
 	lowLoadSince     time.Time // start of the low load for the cross delay, or zero
+
+	// Latency target (latency_target_p95_ms).
+	thrScale      float64   // factor for the three delay thresholds (0 or 1: no change)
+	ltSamples     []float64 // deltas (us) at high load in the current window
+	ltWindowStart time.Time
+	ltPrevP95Ms   float64 // p95 of the last window with enough samples
+	ltPrevScale   float64 // thrScale before the last change
+	ltLastDown    bool    // the last change was a decrease
+	ltFloorScale  float64 // no decrease below this factor until ltFloorUntil
+	ltFloorUntil  time.Time
+	ltUnreachable bool // the last window logged that the target is not reachable
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -238,6 +250,12 @@ func (c *Core) HandlePing(result PingResult) {
 	c.lastPingOWD = result.OWD
 	if result.OWD {
 		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
+	}
+	// The latency target uses the delay that the users see: also the delay
+	// that the shaper cannot remove.
+	c.observeLatency(DL, dlDeltaUs, result.Timestamp)
+	c.observeLatency(UL, ulDeltaUs, result.Timestamp)
+	if result.OWD {
 		if c.cfg.LearnCrossDelay {
 			ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
 		}
@@ -261,6 +279,120 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
 	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
 	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
+}
+
+const (
+	// latencyTargetMinSamples is the minimum number of deltas at high load
+	// in a window. With fewer, Core does not change the thresholds.
+	latencyTargetMinSamples = 100
+	// latencyTargetTolerance: no change while the p95 is in
+	// [target × (1 - tolerance), target × (1 + tolerance)].
+	latencyTargetTolerance = 0.1
+	// latencyTargetStepDown and latencyTargetStepUp are the factors for
+	// the thresholds after a window. A decrease is larger: a too high
+	// delay is worse than a too low rate.
+	latencyTargetStepDown = 0.8
+	latencyTargetStepUp   = 1.1
+	// latencyTargetMaxScale is the maximum factor for the thresholds.
+	latencyTargetMaxScale = 3.0
+	// latencyTargetDefaultMinThrMs is the minimum delay threshold if
+	// latency_target_min_thr_ms is 0.
+	latencyTargetDefaultMinThrMs = 10.0
+	// latencyTargetMinGain: a decrease of the thresholds must decrease the
+	// p95 by this fraction. Else the delay is not from the shaper (for
+	// example the 5G radio), and a lower threshold only decreases the rate.
+	latencyTargetMinGain = 0.05
+	// latencyTargetFloorTime is the time that Core keeps a found floor.
+	// The link conditions change; after this time, Core tries again.
+	latencyTargetFloorTime = 5 * time.Minute
+)
+
+// scale returns the factor for the delay thresholds (latency target).
+func (ds *dirState) scale() float64 {
+	if ds.thrScale == 0 {
+		return 1
+	}
+	return ds.thrScale
+}
+
+// observeLatency adds a delta to the window of the latency target. At the
+// end of a window, it changes the delay thresholds of the direction: down
+// if the p95 of the deltas at high load is above the target, up if it is
+// below. The thresholds stay between latency_target_min_thr_ms and
+// latencyTargetMaxScale times the configured thresholds.
+//
+// The thresholds change only the operating point of the controller. The
+// delay that no shaper can remove (radio delay) is also in the p95. Thus,
+// a decrease must decrease the p95 (latencyTargetMinGain). If it does not,
+// Core undoes it and keeps that threshold as the minimum for
+// latencyTargetFloorTime. Else, the rate decreases with no gain (on 5G,
+// the upload rate collapses below the grant delay). If the p95 stays above
+// the target at the minimum threshold, Core logs that the target is not
+// reachable.
+func (c *Core) observeLatency(dir Direction, deltaUs float64, now time.Time) {
+	dc := c.link.DirConfig(dir)
+	if dc.LatencyTargetP95Ms <= 0 {
+		return
+	}
+	ds := c.getDirState(dir)
+	if ds.ltWindowStart.IsZero() {
+		ds.ltWindowStart = now
+	}
+	if ds.loadPercent >= c.cfg.HighLoadThr {
+		ds.ltSamples = append(ds.ltSamples, deltaUs)
+	}
+	if now.Sub(ds.ltWindowStart).Seconds() < c.cfg.LatencyTargetWindowS {
+		return
+	}
+	ds.ltWindowStart = now
+	samples := ds.ltSamples
+	ds.ltSamples = ds.ltSamples[:0]
+	if len(samples) < latencyTargetMinSamples {
+		return
+	}
+	sort.Float64s(samples)
+	p95Ms := samples[min(len(samples)-1, int(0.95*float64(len(samples))))] / 1000
+	target := dc.LatencyTargetP95Ms
+
+	minThr := dc.LatencyTargetMinThrMs
+	if minThr <= 0 {
+		minThr = latencyTargetDefaultMinThrMs
+	}
+	minScale := math.Min(minThr/dc.OWDDeltaDelayThrMs, 1)
+	ds.thrScale = ds.scale()
+	old := ds.thrScale
+	floor := minScale
+	if now.Before(ds.ltFloorUntil) {
+		floor = math.Max(floor, ds.ltFloorScale)
+	}
+
+	switch {
+	case ds.ltLastDown && p95Ms > ds.ltPrevP95Ms*(1-latencyTargetMinGain):
+		// The last decrease did not decrease the delay: undo it, and keep
+		// this threshold as the floor for some time.
+		ds.thrScale = ds.ltPrevScale
+		ds.ltFloorScale, ds.ltFloorUntil = ds.ltPrevScale, now.Add(latencyTargetFloorTime)
+		c.logger.Infof("[%s] [%s] latency target %.0f ms: a lower delay threshold did not decrease the p95 (%.1f -> %.1f ms); minimum delay threshold %.1f ms for %s",
+			c.name, dir, target, ds.ltPrevP95Ms, p95Ms, dc.OWDDeltaDelayThrMs*ds.thrScale, latencyTargetFloorTime)
+	case p95Ms > target*(1+latencyTargetTolerance):
+		ds.thrScale = math.Max(ds.thrScale*latencyTargetStepDown, floor)
+	case p95Ms < target*(1-latencyTargetTolerance):
+		ds.thrScale *= latencyTargetStepUp
+	}
+	ds.thrScale = clamp(ds.thrScale, minScale, latencyTargetMaxScale)
+	ds.ltLastDown = ds.thrScale < old
+	ds.ltPrevScale, ds.ltPrevP95Ms = old, p95Ms
+
+	if ds.thrScale != old {
+		c.logger.Infof("[%s] [%s] latency target %.0f ms: p95 %.1f ms (%d pings), delay threshold %.1f -> %.1f ms",
+			c.name, dir, target, p95Ms, len(samples), dc.OWDDeltaDelayThrMs*old, dc.OWDDeltaDelayThrMs*ds.thrScale)
+	}
+	unreachable := ds.thrScale <= floor && p95Ms > target*(1+latencyTargetTolerance)
+	if unreachable && !ds.ltUnreachable {
+		c.logger.Infof("[%s] [%s] latency target %.0f ms not reachable: p95 %.1f ms at the minimum delay threshold %.1f ms",
+			c.name, dir, target, p95Ms, dc.OWDDeltaDelayThrMs*ds.thrScale)
+	}
+	ds.ltUnreachable = unreachable
 }
 
 const (
@@ -300,7 +432,7 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 	ul := &c.ul
 	if !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
-		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
+		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*ul.scale()*1000)
 	}
 	return math.Max(ulDeltaUs-ul.crossDelayUs, 0)
 }
@@ -352,7 +484,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 
 	// Calculate the compensated delay threshold
 	compensationUs := WirePacketCompensationUs(ds.mtuBytes, int(ds.shaperRateKbps))
-	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
+	thresholdUs := dc.OWDDeltaDelayThrMs*ds.scale()*1000.0 + compensationUs
 
 	// Record the result in the sliding window. Keep the count in O(1).
 	exceeded := deltaUs > thresholdUs
@@ -406,7 +538,7 @@ func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64
 	dc := c.link.DirConfig(dir)
 
 	// Calculate how much the delta is above the threshold, relative to the max threshold
-	maxThrUs := dc.AvgOWDDeltaMaxAdjDownThrMs * 1000.0
+	maxThrUs := dc.AvgOWDDeltaMaxAdjDownThrMs * ds.scale() * 1000.0
 	if maxThrUs <= thresholdUs {
 		maxThrUs = thresholdUs + 1000 // prevent a division by zero
 	}
@@ -452,7 +584,7 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	dc := c.link.DirConfig(dir)
 
 	// The factor shows the remaining headroom below the delay threshold
-	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
+	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * ds.scale() * 1000.0
 	if maxUpThrUs <= 0 {
 		maxUpThrUs = 1
 	}

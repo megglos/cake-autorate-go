@@ -1043,3 +1043,69 @@ func TestHandlePing_LearnCrossDelay_ShortLowLoad(t *testing.T) {
 		t.Errorf("low-load time not reset at high load")
 	}
 }
+
+// The latency target changes the delay thresholds after each window: down
+// if the p95 is above the target, up if it is below. A decrease without a
+// lower p95 is undone, and the threshold stays the minimum for some time.
+func TestObserveLatency_ChangesThresholds(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 10
+	ds := &c.dl
+	ds.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	// window sends the deltas (ms) of one window, one each 50 ms.
+	window := func(deltaMs float64) {
+		for i := 0; i < 200; i++ {
+			c.observeLatency(DL, deltaMs*1000, ts)
+			ts = ts.Add(50 * time.Millisecond)
+		}
+		c.observeLatency(DL, deltaMs*1000, ts) // end of the window
+	}
+	window(50) // first window: starts the window time
+	if got := ds.scale(); got != latencyTargetStepDown {
+		t.Fatalf("scale after p95 50 ms (target 30) = %.2f, want %.2f", got, latencyTargetStepDown)
+	}
+	window(50) // the decrease did not decrease the p95
+	if got := ds.scale(); got != 1 {
+		t.Fatalf("scale after no gain = %.2f, want 1 (undo)", got)
+	}
+	window(50) // the floor stops more decreases
+	if got := ds.scale(); got != 1 {
+		t.Fatalf("scale at the floor = %.2f, want 1", got)
+	}
+	window(10) // p95 below the target: increase
+	if got := ds.scale(); got != latencyTargetStepUp {
+		t.Fatalf("scale after p95 10 ms = %.2f, want %.2f", got, latencyTargetStepUp)
+	}
+	// The thresholds of the controller use the factor.
+	c.processDelay(DL, 0, ts)
+	want := c.link.Download.OWDDeltaDelayThrMs * latencyTargetStepUp
+	if got := c.link.Download.OWDDeltaDelayThrMs * ds.scale(); got != want {
+		t.Errorf("delay threshold %.1f ms, want %.1f", got, want)
+	}
+}
+
+// Without high load, the window has too few samples, and the thresholds do
+// not change. Without a target, Core does not collect samples.
+func TestObserveLatency_NeedsHighLoad(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.LatencyTargetWindowS = 10
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 1000; i++ {
+		c.observeLatency(DL, 80000, ts)
+		ts = ts.Add(50 * time.Millisecond)
+	}
+	if len(c.dl.ltSamples) != 0 || c.dl.scale() != 1 {
+		t.Errorf("without a target: %d samples, scale %.2f", len(c.dl.ltSamples), c.dl.scale())
+	}
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.dl.loadPercent = 0.1
+	for i := 0; i < 1000; i++ {
+		c.observeLatency(DL, 80000, ts)
+		ts = ts.Add(50 * time.Millisecond)
+	}
+	if c.dl.scale() != 1 {
+		t.Errorf("at low load: scale %.2f, want 1", c.dl.scale())
+	}
+}
