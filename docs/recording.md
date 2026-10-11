@@ -234,7 +234,7 @@ Before the blocks, the script does a saturation check. It applies the load with 
 
 If you stop the script with Ctrl+C, it stops all programs and removes CAKE.
 
-To get a proposed config from the session, use `cake-autorate-go calibrate -session recordings/<date>-<interface>` (see the README, "Calibration from a session").
+To get a proposed config from the session, use `cake-autorate-go calibrate -session recordings/<date>-<interface>` (see [calibration.md](calibration.md)).
 
 #### Test the procedure on a different connection first
 

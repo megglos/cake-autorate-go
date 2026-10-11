@@ -430,6 +430,8 @@ To test the controller on an emulated 5G link on a fast connection, see [docs/em
 
 `cake-autorate-go calibrate -session DIR [-out FILE]` analyzes a session of `scripts/record-session.sh` and writes a proposed config for the link. Each value has a comment with the measured data. Examine the values before you use them.
 
+For the full procedure (how to record the session, what the script does, and how to read the result), see [docs/calibration.md](docs/calibration.md).
+
 | Measurement | From | Config value |
 |---|---|---|
 | Capacity (1 s means) | unshaped `dl`, `ul` and `both` blocks | `min_rate_kbps` (p5 / 2), `base_rate_kbps` (p25; upload: not more than the p50 with download load), `max_rate_kbps` (p95) |
