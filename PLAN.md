@@ -325,6 +325,12 @@ DL unchanged in all. learn + UL 20 gives 4.6x the upload for +3 to +10 ms p95 (l
 
 Config `recordings/5g-s7-learn-u20.yaml` (= 5g-s5-learn + UL thr 20, adjust_down 40). 4 rounds x 3 policies + unshaped = 16 blocks, approximately 55 min.
 
+### Session 8 (prepared): latency target on the link (PR #27 binary)
+
+`recordings/5g-s8-ul-target60.yaml` = 5g-s5-learn + UL `latency_target_p95_ms: 60`, `latency_target_min_thr_ms: 25`, `latency_target_window_s: 20`. Binary `../cake-autorate-go-lt/cake-autorate-go` (e5378f9). Base policy: learn30 (main binary). Modes ul + both (warm-up), 3 rounds = 18 blocks, ~55 min:
+`sudo ./scripts/record-session.sh -i enp7s0 -c recordings/5g-s5-learn.yaml -m "ul both" -r 3 -W 30 -A target60=recordings/5g-s8-ul-target60.yaml,../cake-autorate-go-lt/cake-autorate-go`
+Expect (sim): UL p95 near 60–70 ms, more UL than learn30. Check the log for the threshold changes (`grep "latency target" NN-*.log`).
+
 ### Session 4 configs (prepared)
 
 Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/learn-cross-delay (`../cake-autorate-go-cross/cake-autorate-go`: F8 + cross delay for UL only) with `5g-s4-t15.yaml` (15/15), `5g-s4-d15u25.yaml` (DL 15, UL 25), `5g-s4-d15u30.yaml` (DL 15, UL 30). All: down 0.6, cross delay, F1. 30 blocks, approximately 90 min.
