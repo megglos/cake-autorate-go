@@ -327,6 +327,10 @@ func runSimSeeds(i int, p simPolicy, n int) (simResult, float64) {
 		m.latP50 += r.latP50
 		m.latP95 += r.latP95
 		m.latP99 += r.latP99
+		// Without autorate, the per-direction p95 is NaN: the mean is also
+		// NaN.
+		m.dlLatP95 += r.dlLatP95
+		m.ulLatP95 += r.ulLatP95
 		m.bloatS += r.bloatS
 		m.dlUtil += r.dlUtil
 		m.ulUtil += r.ulUtil
@@ -336,10 +340,26 @@ func runSimSeeds(i int, p simPolicy, n int) (simResult, float64) {
 	m.latP50 /= k
 	m.latP95 /= k
 	m.latP99 /= k
+	m.dlLatP95 /= k
+	m.ulLatP95 /= k
 	m.bloatS /= k
 	m.dlUtil /= k
 	m.ulUtil /= k
 	return m, sets / k
+}
+
+// runSimSeeds returns the mean of the per-direction p95 values: a number
+// with autorate, NaN without it.
+func TestRunSimSeeds_DirectionP95(t *testing.T) {
+	i := slices.IndexFunc(simScenarios(), func(sc simScenario) bool { return sc.name == "steady-dl" })
+	r, _ := runSimSeeds(i, policyAutorateOWD, 2)
+	if !(r.dlLatP95 > 0) {
+		t.Errorf("autorate-owd: download p95 %v, want more than 0", r.dlLatP95)
+	}
+	u, _ := runSimSeeds(i, policyUnshaped, 2)
+	if !math.IsNaN(u.dlLatP95) {
+		t.Errorf("unshaped: download p95 %v, want NaN", u.dlLatP95)
+	}
 }
 
 // Variant 0 gives the default seeds, and other variants give other traces.
