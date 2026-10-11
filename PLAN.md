@@ -343,7 +343,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 3. Session 5 (before the day pass ends 21:00): link test of `learn_cross_delay` alone. Decide the default of `refractory_on_decrease` (not separated yet; stays off).
 4. Decide F3 (window average): on hold, the simulator shows no gain.
 5. Day pass ends 2026-10-11 21:00: use the remaining time for 5G sessions that the tuning needs.
-6. Steps 2c (simulator calibration), 5 (Starlink, recordings approximately 2026-10-31), 6 (tuning), 6b (calibration mode), 7 (CI emulation).
+6. Steps 6 (tuning), 6b (calibration mode), 6c (latency target), 7 (CI emulation), 8 (comparison), 9 (LuCI), 10 (Starlink, from 2026-10-28).
 7. Last: comparison with upstream (step 8).
 
 Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`, sessions in `recordings/`.
@@ -421,12 +421,7 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Use ICMP timestamp requests (types 13 and 14, as `tsping` does). If a reflector does not reply, use RTT/2.
   - Risk: some reflectors do not reply to ICMP timestamp requests. Make a list of reflectors that reply.
   - Add a config key (for example `ping_method`). The default does not change the behavior.
-- [ ] **5. Handling for each link type.**
-  - 2026-10-11: branch `feat/starlink-reconfig` (7af38ac, pushed, **no PR yet**: needs real Starlink data). Option `starlink_reconfiguration` (off by default, OWD only). Measures the floor step in 600 ms after each 15 s boundary (smallest delta increase, smaller of the two directions or the idle direction), then shifts all baselines. Sim: +40 ms floor step at s57 → DL shaper 108 (off) vs 157 (on) Mbit/s; starlink-like 8 seeds p95 33.1 → 34.1, DL 89.6 → 89.0. RTT/2: worse (cannot separate floor and queue) → OWD only.
-  - Source of the 15 s / 12-27-42-57 schedule: public measurement studies of Starlink (for example Mohan et al., "A Multifaceted Look at Starlink Performance", WWW 2024) and the cake-autorate Starlink discussions. From model knowledge, not checked in this session. Verify with our own Starlink recordings (approximately 2026-10-31): plot the OWD per second-of-minute, check the steps at 12/27/42/57 and whether the step is the same in the two directions. If the offsets differ: make period and offset config keys.
-  - Starlink (F5): a baseline that knows the reconfiguration boundaries (windowed minimum or a mask at the boundaries).
-  - 5G: fast response when the capacity decreases quickly.
-  - Starlink recordings are expected on approximately 2026-10-31. Until then, use the 5G recordings and public Starlink data.
+- [x] **5. Handling for 5G.** Done 2026-10-11: `learn_cross_delay` (#20), UL grant-delay model and threshold floor (#22), F2 fast cut after capacity drops (#11). Starlink moved to step 10.
 - [ ] **6. Tuning.**
   - Use more seeds for each scenario and the recorded traces.
   - Do parameter sweeps on the simulator. Then, examine the best values on the real links.
@@ -458,11 +453,11 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Alternative (simpler): one knob `balance: 0..1` that selects threshold presets. Less exact, does not adapt to the cell. Prefer the target.
   - Determinism: the outer loop is in `Core` (time from events), so record/replay and the simulator can test it. Simulator test: the same target on 5g-variable and 5g-coupled gives p95 near the target and higher throughput than a fixed low threshold.
 - [ ] **7. CI emulation** (level 3).
-- [ ] **8. Comparison with upstream and darkmoon** (last step, before 9). Latency, throughput (session with `-U`, emulation first, then 5G) and resource use (`benchmark.sh` on the GL-MT6000).
+- [ ] **8. Comparison with upstream and darkmoon** (before 9 and 10). Latency, throughput (session with `-U`, emulation first, then 5G) and resource use (`benchmark.sh` on the GL-MT6000).
   - darkmoon (github.com/kamikaonashi/openwrt-package-darkmoon, MIT, C, 5434c96 2026-03-14): C port of upstream for OpenWrt with uloop, netlink, UCI, procd and a LuCI app. Add it as a policy in `record-session.sh` (like `-U`) and in `benchmark.sh` (CPU/RAM on the GL-MT6000).
   - Algorithm = upstream: window average delta for the size (F3), increase up to the delay threshold (F8, which we rejected), cut from the shaper rate (no F2), refractory after each cut (F1 on), RTT/2 by default. No learned cross delay, no grant-delay floor. Thus, expected on 5G: like upstream fping-ts, higher p95 than ours, UL low with DL load.
   - It sets up CAKE and IFB itself (with cake-mq). We need CAKE already configured (sqm-scripts). One procd instance for each UCI section (multi-link by sections). Status JSON in /var/run every 200 ms for the LuCI status widget.
-- [ ] **9. OpenWrt package and LuCI app** (very last step, after 8). Detailed plan: `PLAN-LUCI.md`.
+- [ ] **9. OpenWrt package and LuCI app** (after 8). Detailed plan: `PLAN-LUCI.md`.
   - Package: OpenWrt Makefile (Go cross-build), procd init with one instance per link or one process with all links (we support multiple links in one process: keep one process).
   - Config: UCI `/etc/config/cake-autorate` → generated YAML (init script, `uci` → YAML), or native UCI read in Go. Prefer generation: the YAML stays the single format, tests do not change.
   - LuCI (JS view, `form.GridSection`/`TypedSection` with addremove for links): one section per link (interfaces, min/base/max, thresholds per direction, reflectors, ping method, `learn_cross_delay`), one global section (pinger, EWMA, refractory, sleep, stall, logging). Tabs: General, Links, Advanced, Status.
@@ -470,3 +465,8 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Calibration button: rpcd/ucode call that runs `cake-autorate-go calibrate` (6b) for one link, shows the result, and applies it to UCI on confirmation.
   - Optional: CAKE setup by the package (as darkmoon) so sqm-scripts is not necessary.
   - Test without the router: OpenWrt x86-64 image in QEMU/KVM (real kernel with CAKE, IFB, netlink, procd, rpcd, LuCI; same as the target except the CPU). Host: AMD with svm, but kvm_amd not loaded and no qemu installed (2026-10-11): user runs `sudo modprobe kvm_amd` and `sudo pacman -S qemu-base`. LuCI through port forward (hostfwd 8080 → 80). Optional: aarch64 image (armsr/armv8) with qemu-system-aarch64 (TCG, slow) to test the arm64 binary of the GL-MT6000. The same VM can also serve step 7 (CI emulation). Docker (openwrt/rootfs) is lighter but uses the host kernel: good for the UI only.
+- [ ] **10. Starlink: measurement and tuning** (dedicated last step; Starlink access only from **2026-10-28**). User decision 2026-10-11.
+  - 2026-10-11: branch `feat/starlink-reconfig` (7af38ac, pushed, **no PR yet**: needs real Starlink data). Option `starlink_reconfiguration` (off by default, OWD only). Measures the floor step in 600 ms after each 15 s boundary (smallest delta increase, smaller of the two directions or the idle direction), then shifts all baselines. Sim: +40 ms floor step at s57 → DL shaper 108 (off) vs 157 (on) Mbit/s; starlink-like 8 seeds p95 33.1 → 34.1, DL 89.6 → 89.0. RTT/2: worse (cannot separate floor and queue) → OWD only.
+  - Source of the 15 s / 12-27-42-57 schedule: public measurement studies of Starlink (for example Mohan et al., "A Multifaceted Look at Starlink Performance", WWW 2024) and the cake-autorate Starlink discussions. From model knowledge, not checked in this session. Verify with our own Starlink recordings (from 2026-10-28): plot the OWD per second-of-minute, check the steps at 12/27/42/57 and whether the step is the same in the two directions. If the offsets differ: make period and offset config keys.
+  - Sessions on Starlink with `record-session.sh` (dl / ul / both, unshaped + autorate + `starlink_reconfiguration` variant). Trace import (`trace-from-session.sh -r`) → `starlink-recorded` scenario, calibrate `starlink-like` like 2c.
+  - Then: PR for `starlink_reconfiguration` (or reject it), Starlink profile (thresholds), Starlink part of the calibration mode (6b: detect the 15 s floor steps) and of the comparison (8).
