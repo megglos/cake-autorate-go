@@ -60,7 +60,7 @@ jobs:
       - name: Install the tools and the kernel modules
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q iperf3 "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3
+          sudo apt-get install -y -q iperf3 ethtool "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3 ethtool
           for m in sch_cake sch_netem sch_tbf ifb act_mirred; do sudo modprobe "$m"; done
 
       - name: Emulation test

@@ -43,8 +43,11 @@
 #   MIN_UNSHAPED_P95_MS [100]  unshaped: minimum p95 of the excess RTT
 #   MIN_DL_PCT [50], MIN_UL_PCT [40]  autorate: minimum throughput in
 #                       percent of the mean capacity
+#   MIN_SHAPER_EVENTS [10]  autorate: minimum number of shaper rate changes
+#   MIN_OWD_PINGS [100]     autorate: minimum number of pings with one-way
+#                       delays
 #
-# Requirements: bash, iproute2, iperf3, iputils ping, awk, jq, kernel modules
+# Requirements: bash, iproute2, iperf3, iputils ping, awk, jq, ethtool, kernel modules
 # sch_cake, sch_netem, sch_tbf, ifb and act_mirred.
 
 set -euo pipefail
@@ -71,6 +74,8 @@ LOAD_S=${LOAD_S:-60}
 MAX_P95_MS=${MAX_P95_MS:-60}
 MIN_UNSHAPED_P95_MS=${MIN_UNSHAPED_P95_MS:-100}
 MIN_DL_PCT=${MIN_DL_PCT:-50}
+MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-10}
+MIN_OWD_PINGS=${MIN_OWD_PINGS:-100}
 MIN_UL_PCT=${MIN_UL_PCT:-40}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -128,7 +133,7 @@ if [ "$CLEANUP_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-for cmd in tc iperf3 ping awk jq; do
+for cmd in tc iperf3 ping awk jq ethtool; do
     command -v "$cmd" >/dev/null || die "$cmd is not installed"
 done
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build -o cake-autorate-go .)"
@@ -175,10 +180,10 @@ done
 
 # A real link sends single packets: turn off the offloads, so that the
 # bottleneck and CAKE see packets of the MTU size.
-r ethtool -K "$WAN" gro off gso off tso off >/dev/null 2>&1 || true
-m ethtool -K "$LAN" gro off gso off tso off >/dev/null 2>&1 || true
-m ethtool -K "$UP" gro off gso off tso off >/dev/null 2>&1 || true
-s ethtool -K "$SRV" gro off gso off tso off >/dev/null 2>&1 || true
+r ethtool -K "$WAN" gro off gso off tso off || die "cannot turn off the offloads of $WAN"
+m ethtool -K "$LAN" gro off gso off tso off || die "cannot turn off the offloads of $LAN"
+m ethtool -K "$UP" gro off gso off tso off || die "cannot turn off the offloads of $UP"
+s ethtool -K "$SRV" gro off gso off tso off || die "cannot turn off the offloads of $SRV"
 
 # burst_bytes prints the tbf burst for a rate: 1 ms of data, minimum 3000 bytes.
 burst_bytes() { echo $(( $1 / 8 > 3000 ? $1 / 8 : 3000 )); }
@@ -351,9 +356,9 @@ owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"pin
     check "autorate: excess RTT p95 $a_p95 ms <= $MAX_P95_MS ms" "$(le "$a_p95" "$MAX_P95_MS")"
     check "autorate: download $a_dl_pct % >= $MIN_DL_PCT % of the mean capacity" "$(ge "$a_dl_pct" "$MIN_DL_PCT")"
     check "autorate: upload $a_ul_pct % >= $MIN_UL_PCT % of the mean capacity" "$(ge "$a_ul_pct" "$MIN_UL_PCT")"
-    check "autorate: the shaper rate changed ($shaper_events times)" "$(ge "$shaper_events" 10)"
+    check "autorate: the shaper rate changed ($shaper_events times)" "$(ge "$shaper_events" "$MIN_SHAPER_EVENTS")"
     check "autorate: netlink, no tc fallback ($tc_fallbacks log lines)" "$(le "$tc_fallbacks" 0)"
-    check "autorate: ICMP timestamp replies ($owd_pings)" "$(ge "$owd_pings" 100)"
+    check "autorate: ICMP timestamp replies ($owd_pings)" "$(ge "$owd_pings" "$MIN_OWD_PINGS")"
 } > "$OUTDIR/result.txt"
 cat "$OUTDIR/result.txt"
 log "Output: $OUTDIR"
