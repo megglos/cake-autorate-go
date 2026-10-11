@@ -11,6 +11,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,39 @@ func starlinkHandovers(seed uint64, dur time.Duration, lo, hi, baseLo, baseHi fl
 	return capacity, baseRTT
 }
 
+// recordedTrace reads a capacity trace (CSV "t_ms,dl_kbps,ul_kbps", from
+// scripts/trace-from-session.sh or scripts/gen-trace.sh) and returns the
+// capacity of each direction. Each line applies until the next line. After
+// the last line, the trace starts again.
+func recordedTrace(path string) (dl, ul func(float64) float64) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	var at, dv, uv []float64
+	for i, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if i == 0 {
+			continue // header
+		}
+		var t, d, u float64
+		if _, err := fmt.Sscanf(line, "%g,%g,%g", &t, &d, &u); err != nil {
+			panic(fmt.Sprintf("%s line %d: %v", path, i+1, err))
+		}
+		at, dv, uv = append(at, t), append(dv, d), append(uv, u)
+	}
+	period := at[len(at)-1] + (at[len(at)-1] - at[len(at)-2])
+	lookup := func(v []float64) func(float64) float64 {
+		return func(t float64) float64 {
+			i, _ := slices.BinarySearch(at, math.Mod(t, period))
+			if i == len(at) || at[i] > math.Mod(t, period) {
+				i--
+			}
+			return v[max(i, 0)]
+		}
+	}
+	return lookup(dv), lookup(uv)
+}
+
 func between(fromS, toS float64) func(float64) bool {
 	return func(t float64) bool { return t >= fromS*1000 && t < toS*1000 }
 }
@@ -119,6 +153,12 @@ func simScenariosVariant(variant uint64) []simScenario {
 	link5G := LinkConfig{
 		Download: dirConfig(10000, 100000, 300000),
 		Upload:   dirConfig(2000, 20000, 60000),
+	}
+	recADl, recAUl := recordedTrace("testdata/traces/5g-a.csv")
+	recBDl, recBUl := recordedTrace("testdata/traces/5g-b.csv")
+	link5GRec := LinkConfig{
+		Download: dirConfig(30000, 150000, 800000),
+		Upload:   dirConfig(4000, 18000, 45000),
 	}
 	slCap, slBase := starlinkHandovers(4+v, dur, 60000, 250000, 25, 55)
 	slUlCap, _ := starlinkHandovers(5+v, dur, 8000, 25000, 25, 55)
@@ -172,6 +212,24 @@ func simScenariosVariant(variant uint64) []simScenario {
 				Download: dirConfig(20000, 100000, 300000),
 				Upload:   dirConfig(3000, 15000, 40000),
 			},
+		},
+		{
+			// The capacity of a real 5G link (unshaped blocks of a session,
+			// scripts/trace-from-session.sh). Load in the two directions,
+			// large cellular buffers (the unshaped blocks showed up to 1.1 s).
+			name: "5g-recorded-a", duration: dur, seed: 7 + v,
+			dlCapacity: recADl, ulCapacity: recAUl,
+			dlDemand: between(2, 118), ulDemand: between(30, 90),
+			bufferMs: 1000, baseRTT: reflectorBase(25), jitterMs: 3,
+			link: link5GRec,
+		},
+		{
+			// The same, with a trace of a different session.
+			name: "5g-recorded-b", duration: dur, seed: 8 + v,
+			dlCapacity: recBDl, ulCapacity: recBUl,
+			dlDemand: between(2, 118), ulDemand: between(30, 90),
+			bufferMs: 1000, baseRTT: reflectorBase(25), jitterMs: 3,
+			link: link5GRec,
 		},
 		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
@@ -277,6 +335,23 @@ func TestSimScenariosVariant(t *testing.T) {
 	}
 	if runSim(c[3], policyAutorate).latP95 == runSim(a[3], policyAutorate).latP95 {
 		t.Errorf("%s: variant 1 gives the same result as variant 0", a[3].name)
+	}
+}
+
+func TestRecordedTrace(t *testing.T) {
+	path := t.TempDir() + "/trace.csv"
+	if err := os.WriteFile(path, []byte("t_ms,dl_kbps,ul_kbps\n0,100,10\n200,200,20\n400,300,30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dl, ul := recordedTrace(path)
+	for _, c := range []struct{ t, dl, ul float64 }{
+		{0, 100, 10}, {199, 100, 10}, {200, 200, 20}, {599, 300, 30},
+		{600, 100, 10}, // the trace starts again after 600 ms
+		{1000, 300, 30},
+	} {
+		if dl(c.t) != c.dl || ul(c.t) != c.ul {
+			t.Errorf("t=%v: %v/%v, want %v/%v", c.t, dl(c.t), ul(c.t), c.dl, c.ul)
+		}
 	}
 }
 
