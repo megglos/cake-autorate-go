@@ -372,7 +372,10 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
 					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond
 				}
-				if rng.Float64() < sc.pingLoss || (sc.outage != nil && sc.outage(t)) {
+				// Draw a random number only with ping loss. Then the other
+				// scenarios keep the same random sequence (and baseline).
+				lost := sc.pingLoss > 0 && rng.Float64() < sc.pingLoss
+				if lost || (sc.outage != nil && sc.outage(t)) {
 					// No reply: the pinger sends a timeout after the deadline.
 					result = PingResult{Reflector: result.Reflector, Timestamp: at(t + deadlineMs), Timeout: true}
 					pending = append(pending, simPendingPing{at: t + deadlineMs, result: result})
