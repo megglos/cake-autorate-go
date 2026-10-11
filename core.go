@@ -158,6 +158,8 @@ func (c *Core) ShaperRateKbps(dir Direction) float64 {
 // reflector becomes active, because its old baseline is not correct.
 func (c *Core) ResetReflector(reflector string) {
 	delete(c.reflectors, reflector)
+	delete(c.dl.ltBase, reflector)
+	delete(c.ul.ltBase, reflector)
 }
 
 // HandleRate processes a sample of the measured throughput.
@@ -370,10 +372,12 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// The baseline of the controller increases slowly with a constant
 	// delay. Thus, the delta of the controller decreases over time also if
 	// the delay does not change. For the latency target, the reference of
-	// each reflector changes only at the end of a window without a decrease
-	// test, and follows a lower baseline at once.
+	// each reflector follows the baseline of the controller only at low
+	// load (no queue, no delay from load) and when it decreases. At high
+	// load, it changes only at the end of a window without a decrease test,
+	// floor or unreachable target (see below).
 	ref, ok := ds.ltBase[reflector]
-	if !ok || baselineUs < ref {
+	if !ok || baselineUs < ref || ds.loadPercent < c.cfg.HighLoadThr {
 		ref = baselineUs
 		ds.ltBase[reflector] = ref
 	}
@@ -421,12 +425,6 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	ds.thrScale = clamp(ds.thrScale, minScale, latencyTargetMaxScale)
 	ds.ltLastDown = ds.thrScale < old
 	ds.ltPrevScale, ds.ltPrevP95Ms = old, p95Ms
-	// A decrease test compares this window with the next window. Keep the
-	// reference for the next window. Else, take new references.
-	if !ds.ltLastDown {
-		clear(ds.ltBase)
-	}
-
 	if ds.thrScale != old {
 		c.logger.Infof("[%s] [%s] latency target %.0f ms: p95 %.1f ms (%d pings), delay threshold %.1f -> %.1f ms",
 			c.name, dir, target, p95Ms, len(samples), dc.OWDDeltaDelayThrMs*old, dc.OWDDeltaDelayThrMs*ds.thrScale)
@@ -437,6 +435,16 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 			c.name, dir, target, p95Ms, dc.OWDDeltaDelayThrMs*ds.thrScale)
 	}
 	ds.ltUnreachable = unreachable
+
+	// New references at high load only if the delay of this window is
+	// trustworthy for the next decisions. Keep them: during a decrease test
+	// (this window is compared with the next window), while a floor is
+	// active, and while the target is not reachable. In these cases, a
+	// constant delay that no shaper can remove is likely, and the baseline
+	// of the controller increases with it.
+	if !ds.ltLastDown && !now.Before(ds.ltFloorUntil) && !unreachable {
+		clear(ds.ltBase)
+	}
 }
 
 const (
@@ -476,8 +484,10 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 	ul := &c.ul
 	if !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
-		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*ul.scale()*1000)
 	}
+	// The limit also applies when the latency target decreases the
+	// threshold while Core does not learn.
+	ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*ul.scale()*1000)
 	return math.Max(ulDeltaUs-ul.crossDelayUs, 0)
 }
 

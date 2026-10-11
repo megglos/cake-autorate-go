@@ -1169,3 +1169,49 @@ func TestObserveLatency_FewPingsContinueWindow(t *testing.T) {
 		t.Errorf("scale %.2f after %d pings at 80 ms, want %.1f", got, n, latencyTargetStepDown)
 	}
 }
+
+// After an undo, the floor keeps the reference of the latency target.
+// Else, the baseline of the controller increases with the constant delay,
+// the next window shows a low p95, and the thresholds increase although
+// the delay did not change.
+func TestObserveLatency_FloorKeepsReference(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Upload.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	reflectors := []string{"r1", "r2", "r3", "r4", "r5", "r6"}
+	ping := func(ulMs float64) {
+		for _, r := range reflectors {
+			c.HandlePing(owdPing(r, ts, ulMs, 10))
+			ts = ts.Add(50 * time.Millisecond)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		ping(10)
+	}
+	c.ul.loadPercent = 1
+	var scales []float64
+	for w := 0; w < 6; w++ { // 6 windows of 30 s with a constant +50 ms
+		for i := 0; i < 100; i++ {
+			ping(60)
+		}
+		scales = append(scales, c.ul.scale())
+	}
+	for i, sc := range scales[1:] {
+		if sc > 1 {
+			t.Errorf("scales %v: increase in window %d, want no increase with a constant delay above the target", scales, i+2)
+			break
+		}
+	}
+}
+
+// ResetReflector also removes the reference of the latency target.
+func TestResetReflector_LatencyTarget(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.observeLatency(DL, "r1", 50000, 10000, time.Unix(1_800_000_000, 0))
+	c.ResetReflector("r1")
+	if _, ok := c.dl.ltBase["r1"]; ok {
+		t.Error("reference of r1 is still there after ResetReflector")
+	}
+}
