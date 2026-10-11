@@ -429,6 +429,10 @@ To test the controller on an emulated 5G link on a fast connection, see [docs/em
 - **CAKE qdisc** must already be configured on your interfaces. This tool only adjusts the bandwidth parameter — it does not set up CAKE itself.
 - **Linux** — bandwidth adjustments use netlink sockets directly (no subprocess overhead). If netlink is unavailable, the shaper falls back to `tc` (iproute2).
 
+## Development
+
+See [docs/development.md](docs/development.md): the structure of the code, the tests, the link simulator and its scorecard, the baseline check, and tests on a real link.
+
 ## Status
 
 This is an **experimental** project. While the core algorithm faithfully reimplements the original cake-autorate logic, it has not been extensively tested in production. Use at your own risk and please report issues.
