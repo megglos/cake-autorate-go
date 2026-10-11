@@ -339,8 +339,10 @@ func TestSim_OutageAndPingLoss(t *testing.T) {
 	sc.outage = between(40, 60)
 	for _, p := range []simPolicy{policyAutorate, policyAutorateOWD} {
 		r := runSim(sc, p)
-		if r.stallS < 5 {
-			t.Errorf("%s: %.1f s in stall during a 20 s outage, want 5 s or more", p, r.stallS)
+		// Core waits for global_ping_response_timeout_s (10 s) before the
+		// stall. Thus, the stall is approximately the last 10 s of the outage.
+		if r.stallS < 8 || r.stallS > 12 {
+			t.Errorf("%s: %.1f s in stall during a 20 s outage, want approximately 10 s", p, r.stallS)
 		}
 		if r.stallEnd < 60000 || r.stallEnd > 65000 {
 			t.Errorf("%s: end of the stall at %.1f s, want in the 5 s after the outage (60 s)", p, r.stallEnd/1000)
