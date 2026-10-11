@@ -32,6 +32,11 @@
 #   -b SECONDS  load time for each block (default: 150)
 #   -I SECONDS  time without load at the start of each block (default: 15)
 #   -r ROUNDS   number of rounds (default: 2)
+#   -W SECONDS  in the mode both: apply only the download load for SECONDS
+#               before the load in the two directions (default: 0). The
+#               measured load time starts after it. Use it to examine
+#               learn_cross_delay: Core learns the upload delay from download
+#               activity only while the upload load is low.
 #   -F PERCENT  add the fixed policy at PERCENT of the capacity (default: off)
 #   -A NAME=CONFIG[,BINARY]
 #               add the policy autorate-NAME: autorate with a different config
@@ -74,6 +79,7 @@ MODES="dl ul both"
 BLOCK_S=150
 IDLE_S=15
 ROUNDS=2
+WARMUP_S=0
 FIXED_PCT=0
 WORKERS=""
 CAPACITY=""
@@ -91,7 +97,7 @@ usage() {
 
 VARIANTS=()
 
-while getopts "i:c:x:o:m:b:I:r:F:w:C:A:sh" opt; do
+while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:sh" opt; do
     case $opt in
         i) IFACE="$OPTARG" ;;
         c) CONFIG="$OPTARG" ;;
@@ -101,6 +107,7 @@ while getopts "i:c:x:o:m:b:I:r:F:w:C:A:sh" opt; do
         b) BLOCK_S="$OPTARG" ;;
         I) IDLE_S="$OPTARG" ;;
         r) ROUNDS="$OPTARG" ;;
+        W) WARMUP_S="$OPTARG" ;;
         F) FIXED_PCT="$OPTARG" ;;
         A) VARIANTS+=("$OPTARG") ;;
         w) WORKERS="$OPTARG" ;;
@@ -118,6 +125,8 @@ log() { echo "[session] [$(date '+%H:%M:%S')] $*"; }
 [ "$(id -u)" -eq 0 ] || die "run this script as root"
 [ -d "/sys/class/net/$IFACE" ] || die "interface $IFACE does not exist"
 [ -f "$CONFIG" ] || die "config $CONFIG does not exist"
+[[ "$WARMUP_S" =~ ^[0-9]+$ ]] || die "-W must be a number of seconds"
+WARMUP_S=$((10#$WARMUP_S))
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build .)"
 [ -x "$LOADGEN" ] || die "load generator $LOADGEN does not exist"
 for cmd in tc curl awk; do
@@ -242,7 +251,7 @@ done
         echo "variant $vname: config ${VARIANT_CONFIG[$vname]}, binary ${VARIANT_BINARY[$vname]} ($("${VARIANT_BINARY[$vname]}" --version 2>&1))"
     done
     echo "rounds: $ROUNDS"
-    echo "block: idle ${IDLE_S}s, load ${BLOCK_S}s"
+    echo "block: idle ${IDLE_S}s, load ${BLOCK_S}s, download warm-up in the mode both ${WARMUP_S}s"
 } > "$SESSION"
 
 ip route get 1.1.1.1 | grep -q "dev $IFACE" ||
@@ -295,7 +304,9 @@ printf 'block\tround\tmode\tpolicy\tstart\tload_start\tload_end\tend\tcake_dl_kb
 n_modes=$(wc -w <<< "$MODES")
 n_policies=$(wc -w <<< "$POLICIES")
 total=$((ROUNDS * n_modes * n_policies))
-log "Start of $total blocks, approximately $(( total * (IDLE_S + BLOCK_S + 10) / 60 )) minutes"
+n_both=0
+grep -qw both <<< "$MODES" && n_both=$((ROUNDS * n_policies))
+log "Start of $total blocks, approximately $(( (total * (IDLE_S + BLOCK_S + 10) + n_both * WARMUP_S) / 60 )) minutes"
 
 block=0
 for round in $(seq 1 "$ROUNDS"); do
@@ -335,6 +346,13 @@ for round in $(seq 1 "$ROUNDS"); do
             sleep "$IDLE_S"
             kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped. See $blog"
 
+            if [ "$mode" = both ] && [ "$WARMUP_S" -gt 0 ]; then
+                "$LOADGEN" -m dl -w "$WORKERS" -d "$WARMUP_S" -i "$IFACE" >> "$blog" 2>&1 &
+                LOAD_PID=$!
+                wait "$LOAD_PID" 2>/dev/null || true
+                LOAD_PID=""
+                kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped during the warm-up. See $blog"
+            fi
             load_start=$(date +%s)
             "$LOADGEN" -m "$mode" -w "$WORKERS" -d "$BLOCK_S" -i "$IFACE" >> "$blog" 2>&1 &
             LOAD_PID=$!
@@ -344,6 +362,7 @@ for round in $(seq 1 "$ROUNDS"); do
             grep -E "elapsed" "$blog" | tail -n 1 | sed 's/^/    /'
 
             sleep 5
+            kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped during the load. See $blog"
             kill -INT "$CAR_PID"
             wait "$CAR_PID" 2>/dev/null || true
             CAR_PID=""
