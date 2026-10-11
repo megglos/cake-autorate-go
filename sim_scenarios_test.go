@@ -750,6 +750,30 @@ func TestSimOWD_LatencyTarget(t *testing.T) {
 	}
 }
 
+// With ping_method icmp (the default), the latency target uses the RTT
+// increase. Download load: the target decreases the download delay at the
+// same throughput. Before the fix, the target used RTT/2 and saw only half
+// of the queue.
+func TestSim_LatencyTargetRTT(t *testing.T) {
+	run := func(target float64) simResult {
+		sc := scenarioByName(t, "steady-dl")
+		sc.duration = 600 * time.Second
+		sc.dlDemand = between(2, 598)
+		sc.tune = func(cfg *Config) {
+			cfg.RefractoryOnDecrease = true
+			cfg.Links[0].Download.LatencyTargetP95Ms = target
+		}
+		return runSim(sc, policyAutorate)
+	}
+	off, on := run(0), run(30)
+	t.Logf("steady-dl, RTT: off p95 %.1f ms, %.0f %%; download target 30 ms: p95 %.1f ms, %.0f %%",
+		off.dlLatP95, 100*off.dlUtil, on.dlLatP95, 100*on.dlUtil)
+	if on.dlLatP95 > off.dlLatP95-20 || on.dlUtil < 0.95 {
+		t.Errorf("target 30 ms: download p95 %.1f ms (off %.1f), utilization %.0f%%; want 20 ms less and 95%% or more",
+			on.dlLatP95, off.dlLatP95, 100*on.dlUtil)
+	}
+}
+
 // Under load for a long time, the reference of the latency target must not
 // follow the baseline of the controller: the baseline increases with the
 // delay that no shaper can remove, the measured p95 then is too low, and

@@ -306,6 +306,7 @@ latency_target_window_s: 30            # time between two changes
 - The p95 contains the delay that no shaper can remove (for example, the 5G radio delay). A lower threshold that does not decrease the p95 by 5 % or more is undone, and that threshold is the minimum for 5 minutes. If the target is not reachable, the log tells it.
 - On 5G, set `latency_target_min_thr_ms` of the upload above the upload grant delay: the upload delay at a low upload rate (on the 5G recordings, a median of 13 to 15 ms; a minimum of 25 ms worked). Below it, the upload rate collapses.
 - Only the windows with high load count (`high_load_thr`).
+- With `ping_method: icmp` (no one-way delays), the target applies to the RTT increase. With load in the two directions, the queues of the two directions are both in it. Use `icmp-timestamp` for a target for each direction.
 
 Simulator results (10 minutes, one-way delays): a constant link with download target 20 ms gave a p95 of 22 ms (default thresholds: 32 ms) at the same throughput. A 5G-like link with upload target 80 ms gave 81 ms and 74 % of the upload capacity (default thresholds: 68 ms, 61 %). The p95 values include the random path delay. With the capacity traces of the 5G link, the download delay changed little: short capacity decreases cause most of it.
 

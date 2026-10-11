@@ -258,13 +258,15 @@ func (c *Core) HandlePing(result PingResult) {
 		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
 	}
 	// The latency target uses the delay that the users see: also the delay
-	// that the shaper cannot remove.
+	// that the shaper cannot remove. Without one-way delays, it uses the
+	// RTT increase, not RTT/2: with load in one direction, the queue of
+	// that direction is all in the RTT. RTT/2 would show half of it.
 	if result.OWD {
 		c.observeLatency(DL, result.Reflector, float64(result.DlOWD.Microseconds()), rd.dlBaselineUs, result.Timestamp)
 		c.observeLatency(UL, result.Reflector, float64(result.UlOWD.Microseconds()), rd.ulBaselineUs, result.Timestamp)
 	} else {
-		c.observeLatency(DL, result.Reflector, rttUs/2, rd.baselineUs/2, result.Timestamp)
-		c.observeLatency(UL, result.Reflector, rttUs/2, rd.baselineUs/2, result.Timestamp)
+		c.observeLatency(DL, result.Reflector, rttUs, rd.baselineUs, result.Timestamp)
+		c.observeLatency(UL, result.Reflector, rttUs, rd.baselineUs, result.Timestamp)
 	}
 	if result.OWD {
 		if c.cfg.LearnCrossDelay {

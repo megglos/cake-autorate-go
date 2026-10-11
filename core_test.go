@@ -1224,6 +1224,31 @@ func TestObserveLatency_StaleWindowExpires(t *testing.T) {
 	}
 }
 
+// With RTT/2, the delay of one direction is also in the other direction.
+// The latency target of a direction uses only the pings at high load of
+// that direction: upload load does not change the download thresholds.
+func TestHandlePing_LatencyTargetRTTOtherDirection(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 20
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	ping := func(rttMs float64) {
+		c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: time.Duration(rttMs * float64(time.Millisecond)), Timestamp: ts})
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	for i := 0; i < 50; i++ {
+		ping(20)
+	}
+	// 2 minutes of upload load with a large upload queue (RTT +100 ms).
+	c.ul.loadPercent, c.dl.loadPercent = 1, 0
+	for i := 0; i < 1200; i++ {
+		ping(120)
+	}
+	if got := c.dl.scale(); got != 1 {
+		t.Errorf("download scale %.2f, want 1 (no download load)", got)
+	}
+}
+
 // After a stop of the pingers, a ping at low load does not complete the
 // old window.
 func TestObserveLatency_StaleWindowLowLoad(t *testing.T) {
