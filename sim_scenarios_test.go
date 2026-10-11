@@ -448,11 +448,12 @@ var knownIssueURL = map[string]string{
 func knownIssue(t *testing.T, id string, ok bool, format string, args ...any) {
 	t.Helper()
 	detail := fmt.Sprintf(format, args...)
+	const defaults = "default config: ping_method icmp, refractory_on_decrease off"
 	if ok {
-		t.Errorf("known issue %s appears fixed (%s, %s): turn this into a regular assertion", id, knownIssueURL[id], detail)
+		t.Errorf("known issue %s appears fixed (%s, %s): %s: turn this into a regular assertion", id, knownIssueURL[id], defaults, detail)
 		return
 	}
-	t.Logf("known issue %s still present (%s, default config: ping_method icmp, refractory_on_decrease off): %s", id, knownIssueURL[id], detail)
+	t.Logf("known issue %s still present (%s, %s): %s", id, knownIssueURL[id], defaults, detail)
 }
 
 // sliceS returns the samples (100ms resolution) between fromS and toS.
