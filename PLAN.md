@@ -311,6 +311,20 @@ Also open (product, not test): if DL and UL are always active together, Core nev
 
 Result: with the warm-up, `learn_cross_delay` doubles the upload under load in the two directions (5.5 → 11 Mbit/s, unshaped ~12–20) at the same download. Cost: UL OWD p95 +26 ms (79 → 105), DL p95 unchanged (45–58). This is the expected trade: the learned delay (~21 ms) raises the effective UL threshold to ~51 ms. Option to examine: `learn_cross_delay` with a lower UL threshold (20 ms → effective ~41 ms), but not below the grant floor (~25 ms per PR #22). Simulator first (5g-coupled, recorded scenarios after #25).
 
+Simulator sweep (2026-10-11, branch of #25, refractory on, 8 seeds), UL threshold with `learn_cross_delay`:
+
+| Scenario | off, 30 | learn, 30 | learn, 25 | learn, 20 |
+|---|---|---|---|---|
+| 5g-coupled p95 / UL % | 64.8 / 7 | 69.7 / 95 | 67.4 / 93 | 65.5 / 79 |
+| 5g-recorded-a p95 / UL % | 63.7 / 11 | 79.2 / 77 | 75.2 / 73 | 66.6 / 51 |
+| 5g-recorded-b p95 / UL % | 52.8 / 11 | 83.8 / 74 | 77.9 / 70 | 63.2 / 51 |
+
+DL unchanged in all. learn + UL 20 gives 4.6x the upload for +3 to +10 ms p95 (learn + 30: 7x the upload, +5 to +31 ms). Candidate 5G profile: `learn_cross_delay: true`, UL threshold 20 to 25.
+
+### Session 7 (prepared): main vs learn (UL 30) vs learn (UL 20), both mode with warm-up
+
+Config `recordings/5g-s7-learn-u20.yaml` (= 5g-s5-learn + UL thr 20, adjust_down 40). 4 rounds x 3 policies + unshaped = 16 blocks, approximately 55 min.
+
 ### Session 4 configs (prepared)
 
 Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/learn-cross-delay (`../cake-autorate-go-cross/cake-autorate-go`: F8 + cross delay for UL only) with `5g-s4-t15.yaml` (15/15), `5g-s4-d15u25.yaml` (DL 15, UL 25), `5g-s4-d15u30.yaml` (DL 15, UL 30). All: down 0.6, cross delay, F1. 30 blocks, approximately 90 min.
