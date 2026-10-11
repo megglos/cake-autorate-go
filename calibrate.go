@@ -69,16 +69,20 @@ type calSample struct {
 	reflector string
 	dlUs      float64
 	ulUs      float64
+	// The achieved rates and the upload shaper rate (kbit/s) of the last
+	// events before the ping in the file. The controller merges the ping
+	// and the rate events in this order, also if the time stamps are not
+	// in order.
+	dlKbps, ulKbps, ulShaperKbps float64
 }
 
 // calRecording contains the events of one block that the analysis needs.
 type calRecording struct {
-	config  *Config
-	pings   []calSample
-	echo    map[string]int // reflector -> replies without one-way delays
-	sent    map[string]int // reflector -> pings (replies and timeouts)
-	rates   []calRate
-	ulRates []calRate // upload shaper rate changes
+	config *Config
+	pings  []calSample
+	echo   map[string]int // reflector -> replies without one-way delays
+	sent   map[string]int // reflector -> pings (replies and timeouts)
+	rates  []calRate
 }
 
 type calRate struct {
@@ -136,6 +140,8 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	var cfg *Config
 	var dlCap, ulCap, ulCapBoth, cross, grant []float64
 	var nCrossBlocks, nGrantBlocks int
+	// Seconds and pings without throughput in the load.
+	var dlZeros, ulZeros, bothZeros, crossNoLoad int
 	idle := map[string][]calSample{} // key: block number and reflector
 	echo := map[string]int{}
 	sent, replied := map[string]int{}, map[string]int{}
@@ -178,17 +184,28 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 
 		switch {
 		case b.policy == "unshaped" && b.mode == "dl":
-			dlCap = append(dlCap, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.dl })...)
+			v, z := secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.dl })
+			dlCap, dlZeros = append(dlCap, v...), dlZeros+z
 		case b.policy == "unshaped" && b.mode == "ul":
-			ulCap = append(ulCap, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })...)
+			v, z := secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })
+			ulCap, ulZeros = append(ulCap, v...), ulZeros+z
 		case b.policy == "unshaped" && b.mode == "both":
-			ulCapBoth = append(ulCapBoth, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })...)
+			v, z := secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })
+			ulCapBoth, bothZeros = append(ulCapBoth, v...), bothZeros+z
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "dl":
 			nCrossBlocks++
 			// The download shaper keeps the ACK rate low. Thus, the upload
 			// has no queue (unshaped, the ACKs can fill the upload).
-			d, _ := loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })
-			cross = append(cross, d...)
+			// Only the pings with download throughput: without it (the load
+			// generator failed), the delay is not a cross delay.
+			d, used := loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })
+			for i, p := range used {
+				if p.dlKbps >= float64(rec.config.ConnectionActiveThrKbps) {
+					cross = append(cross, d[i])
+				} else {
+					crossNoLoad++
+				}
+			}
 		case strings.HasPrefix(b.policy, "autorate") && b.mode == "ul":
 			nGrantBlocks++
 			grant = append(grant, b.grantDeltas(rec, inLoad)...)
@@ -256,15 +273,15 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	})
 	res.IdleJitterMs = newCalDist(jitter)
 
-	// A capacity of 0 (the load generator failed, or the link was down) is
-	// not a measurement.
+	// Seconds without throughput (the load generator failed, or the link
+	// was down) are not a capacity measurement (secondMeans).
 	for _, c := range []struct {
-		d    *calDist
-		name string
-	}{{&res.DlCapacity, "dl"}, {&res.UlCapacity, "ul"}, {&res.UlCapacityBoth, "both"}} {
-		if c.d.N > 0 && c.d.P95 <= 0 {
-			*c.d = calDist{}
-			res.Notes = append(res.Notes, fmt.Sprintf("the unshaped %s blocks have no throughput (load generator or link failure): their capacity is not used", c.name))
+		n     int
+		zeros int
+		name  string
+	}{{res.DlCapacity.N, dlZeros, "dl"}, {res.UlCapacity.N, ulZeros, "ul"}, {res.UlCapacityBoth.N, bothZeros, "both"}} {
+		if c.zeros > 0 {
+			res.Notes = append(res.Notes, fmt.Sprintf("the unshaped %s blocks have %d s without throughput (load generator or link failure): these seconds are not used (%d s used)", c.name, c.zeros, c.n))
 		}
 	}
 	if res.DlCapacity.N == 0 {
@@ -283,6 +300,8 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	switch {
 	case res.CrossDelayMs.N == 0 && nCrossBlocks == 0:
 		res.Notes = append(res.Notes, "no autorate dl block: the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
+	case res.CrossDelayMs.N == 0 && crossNoLoad > 0:
+		res.Notes = append(res.Notes, "the autorate dl blocks have no download throughput (load generator or link failure): the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
 	case res.CrossDelayMs.N == 0:
 		res.Notes = append(res.Notes, "the autorate dl blocks have no one-way delays (use ping_method icmp-timestamp): the upload delay from download activity is not measured, learn_cross_delay keeps the value of the session config")
 	}
@@ -297,19 +316,29 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	return res, cfg, nil
 }
 
-// secondMeans returns the mean rate of each second of the load.
-func secondMeans(rates []calRate, in func(time.Time) bool, get func(calRate) float64) []float64 {
+// secondMeans returns the mean rate of each second of the load, and the
+// number of seconds without throughput. A second without throughput (load
+// generator or link failure) is not a capacity measurement.
+func secondMeans(rates []calRate, in func(time.Time) bool, get func(calRate) float64) ([]float64, int) {
 	var out []float64
+	var zeros int
 	var sec int64 = -1
 	var sum float64
 	var n int
+	add := func() {
+		if m := sum / float64(n); m > 0 {
+			out = append(out, m)
+		} else {
+			zeros++
+		}
+	}
 	for _, r := range rates {
 		if !in(r.t) {
 			continue
 		}
 		s := r.t.Unix()
 		if s != sec && n > 0 {
-			out = append(out, sum/float64(n))
+			add()
 			sum, n = 0, 0
 		}
 		sec = s
@@ -317,9 +346,9 @@ func secondMeans(rates []calRate, in func(time.Time) bool, get func(calRate) flo
 		n++
 	}
 	if n > 0 {
-		out = append(out, sum/float64(n))
+		add()
 	}
-	return out
+	return out, zeros
 }
 
 // baselinesOf returns the minimum download and upload delay of the samples.
@@ -356,21 +385,16 @@ func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func
 }
 
 // grantDeltas returns pairs (upload delta in ms, upload shaper rate in
-// kbit/s) for each ping in the load.
+// kbit/s) for each ping in the load with upload throughput.
 func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []float64 {
+	active := float64(rec.config.ConnectionActiveThrKbps)
 	d, pings := loadDeltas(rec.pings, b, in, func(p calSample) float64 { return p.ulUs })
 	var out []float64
-	j := 0
-	rate := 0.0
 	for i, p := range pings {
-		// A rate change with the same time as the ping comes from this ping
-		// (the recorder writes the ping first). The ping saw the old rate.
-		for j < len(rec.ulRates) && rec.ulRates[j].t.Before(p.t) {
-			rate = rec.ulRates[j].rateKbps
-			j++
-		}
-		if rate > 0 {
-			out = append(out, d[i], rate)
+		// Without upload throughput (the load generator failed), the
+		// delay is not a grant delay.
+		if p.ulShaperKbps > 0 && p.ulKbps >= active {
+			out = append(out, d[i], p.ulShaperKbps)
 		}
 	}
 	return out
@@ -484,6 +508,7 @@ func readCalRecording(path string) (*calRecording, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	rec := &calRecording{config: h.Config, echo: map[string]int{}, sent: map[string]int{}}
+	var dlKbps, ulKbps, ulShaperKbps float64 // the last values in the file
 	for sc.Scan() {
 		var ev struct {
 			T         int64     `json:"t"`
@@ -511,12 +536,16 @@ func readCalRecording(path string) (*calRecording, error) {
 				rec.echo[ev.Reflector]++
 				continue
 			}
-			rec.pings = append(rec.pings, calSample{t: t, reflector: ev.Reflector, dlUs: float64(*ev.DlOWDUs), ulUs: float64(*ev.UlOWDUs)})
+			rec.pings = append(rec.pings, calSample{t: t, reflector: ev.Reflector, dlUs: float64(*ev.DlOWDUs), ulUs: float64(*ev.UlOWDUs),
+				dlKbps: dlKbps, ulKbps: ulKbps, ulShaperKbps: ulShaperKbps})
 		case recRate:
 			rec.rates = append(rec.rates, calRate{t: t, dl: ev.DlKbps, ul: ev.UlKbps})
+			dlKbps, ulKbps = ev.DlKbps, ev.UlKbps
 		case recShaper:
+			// The recorder writes the ping before the shaper change that
+			// it causes. Thus, the ping gets the rate that it saw.
 			if ev.Dir == UL {
-				rec.ulRates = append(rec.ulRates, calRate{t: t, rateKbps: float64(ev.RateKbps)})
+				ulShaperKbps = float64(ev.RateKbps)
 			}
 		}
 	}
@@ -635,7 +664,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		p.PingMethod = "icmp-timestamp"
 		n := len(owd)
 		p.Reflectors = owd[:min(len(owd), max(pingerCount+calSpareReflectors, calMinReflectors))]
-		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), pingerCount)
+		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), min(pingerCount, len(p.Reflectors)))
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}

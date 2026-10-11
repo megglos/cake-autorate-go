@@ -606,11 +606,50 @@ func TestCalibrateSession_ZeroCapacity(t *testing.T) {
 	if res.DlCapacity.N != 0 {
 		t.Errorf("download capacity N %d, want 0 (not measured)", res.DlCapacity.N)
 	}
-	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "unshaped dl blocks have no throughput") }) {
-		t.Errorf("notes %q, want the note about no throughput", res.Notes)
+	for _, want := range []string{"unshaped dl blocks have", "s without throughput", "autorate dl blocks have no download throughput"} {
+		if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, want) }) {
+			t.Errorf("notes %q, want a note with %q", res.Notes, want)
+		}
 	}
 	if p := res.propose(cfg); p.DlMax != 0 {
 		t.Errorf("download max %d, want 0 (session value stays)", p.DlMax)
+	}
+}
+
+// Seconds without throughput in a block (a short failure) do not make the
+// p5 0: they are not capacity measurements.
+func TestSecondMeans_SkipsZeroSeconds(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	var rates []calRate
+	for i := 0; i < 10; i++ {
+		v := 50000.0
+		if i < 2 {
+			v = 0
+		}
+		rates = append(rates, calRate{t: t0.Add(time.Duration(i) * time.Second), dl: v})
+	}
+	got, zeros := secondMeans(rates, func(time.Time) bool { return true }, func(r calRate) float64 { return r.dl })
+	if len(got) != 8 || zeros != 2 || newCalDist(got).P5 != 50000 {
+		t.Errorf("secondMeans = %v, %d zeros; want 8 values of 50000 and 2 zeros", got, zeros)
+	}
+}
+
+// Pings in an autorate block without throughput (the load generator
+// failed) do not give a cross delay or a grant delay.
+func TestGrantDeltas_NeedThroughput(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	b := calBlock{start: t0, idleEnd: t0.Add(time.Second), loadStart: t0.Add(time.Second), loadEnd: t0.Add(10 * time.Second)}
+	rec := &calRecording{
+		config: testConfig(),
+		pings: []calSample{
+			{t: t0, reflector: "r1", ulUs: 10000},
+			{t: t0.Add(5 * time.Second), reflector: "r1", ulUs: 12000, ulShaperKbps: 5000, ulKbps: 0},
+			{t: t0.Add(6 * time.Second), reflector: "r1", ulUs: 30000, ulShaperKbps: 5000, ulKbps: 4500},
+		},
+	}
+	got := b.grantDeltas(rec, func(t time.Time) bool { return !t.Before(b.loadStart) && t.Before(b.loadEnd) })
+	if len(got) != 2 || got[0] != 20 || got[1] != 5000 {
+		t.Errorf("grantDeltas = %v, want [20 5000] (only the ping with upload throughput)", got)
 	}
 }
 
@@ -651,21 +690,30 @@ func TestCalibrate_UploadThresholdReason(t *testing.T) {
 	}
 }
 
-// A shaper change with the same time as a ping comes from this ping. The
-// ping saw the old rate.
-func TestGrantDeltas_SameTimeRateChange(t *testing.T) {
+// A ping gets the shaper rate of the last shaper event before it in the
+// file, also if the time stamps are not in order. The shaper change that
+// the ping causes comes after it in the file: the ping saw the old rate.
+func TestReadCalRecording_RateInFileOrder(t *testing.T) {
 	t0 := time.Unix(1_800_000_000, 0)
-	b := calBlock{start: t0, idleEnd: t0.Add(time.Second), loadStart: t0.Add(time.Second), loadEnd: t0.Add(10 * time.Second)}
-	ping := t0.Add(5 * time.Second)
-	rec := &calRecording{
-		pings: []calSample{
-			{t: t0, reflector: "r1", ulUs: 10000},
-			{t: ping, reflector: "r1", ulUs: 30000},
-		},
-		ulRates: []calRate{{t: t0, rateKbps: 5000}, {t: ping, rateKbps: 20000}},
+	cfg := testConfig()
+	path := filepath.Join(t.TempDir(), "r.jsonl")
+	rec, err := newRecorderAt(path, 0, cfg, t0, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := b.grantDeltas(rec, func(t time.Time) bool { return !t.Before(b.loadStart) && t.Before(b.loadEnd) })
-	if len(got) != 2 || got[0] != 20 || got[1] != 5000 {
-		t.Errorf("grantDeltas = %v, want [20 5000] (the rate before the ping)", got)
+	rec.Shaper("wan", UL, 5000, t0)
+	rec.Rate("wan", RateStats{Timestamp: t0.Add(2 * time.Second), UlRateKbps: 4000})
+	// The ping has an earlier time than the rate event before it.
+	rec.Ping("wan", PingResult{Reflector: "r1", Timestamp: t0.Add(time.Second), OWD: true, UlOWD: 30 * time.Millisecond, DlOWD: 10 * time.Millisecond})
+	rec.Shaper("wan", UL, 20000, t0.Add(time.Second))
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := readCalRecording(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.pings) != 1 || r.pings[0].ulShaperKbps != 5000 || r.pings[0].ulKbps != 4000 {
+		t.Errorf("pings = %+v, want shaper 5000 and upload 4000 kbit/s", r.pings)
 	}
 }
