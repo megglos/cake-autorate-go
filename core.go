@@ -69,8 +69,11 @@ type dirState struct {
 	ltSamples     []float64 // deltas (us) at high load in the current window
 	ltWindowStart time.Time
 	// ltBase is the reference delay (us) of each reflector for the latency
-	// target. It is constant during a decrease test (see observeLatency).
-	ltBase        map[string]float64
+	// target. At high load, it does not increase (see observeLatency).
+	ltBase map[string]float64
+	// ltRefTime is the time of the last low-load ping, or of the last new
+	// references.
+	ltRefTime     time.Time
 	ltPrevP95Ms   float64 // p95 of the last window with enough samples
 	ltPrevScale   float64 // thrScale before the last change
 	ltLastDown    bool    // the last change was a decrease
@@ -315,6 +318,10 @@ const (
 	// latencyTargetFloorTime is the time that Core keeps a found floor.
 	// The link conditions change; after this time, Core tries again.
 	latencyTargetFloorTime = 5 * time.Minute
+	// latencyTargetMaxRefAge is the maximum time with high load before the
+	// references of the latency target take the baseline of the controller
+	// again.
+	latencyTargetMaxRefAge = 30 * time.Minute
 	// latencyTargetMaxWindows: if a window has too few samples, it
 	// continues, but not for more than this number of window times.
 	latencyTargetMaxWindows = 10
@@ -373,9 +380,18 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// delay. Thus, the delta of the controller decreases over time also if
 	// the delay does not change. For the latency target, the reference of
 	// each reflector follows the baseline of the controller only at low
-	// load (no queue, no delay from load) and when it decreases. At high
-	// load, it changes only at the end of a window without a decrease test,
-	// floor or unreachable target (see below).
+	// load (no queue, no delay from load), and when the baseline decreases
+	// (a lower floor, or a clock offset change). At high load, the
+	// reference does not increase. After latencyTargetMaxRefAge of high
+	// load without a low-load ping, it takes the baseline again (for a slow
+	// clock offset drift; the delay that is not from load then becomes the
+	// new floor).
+	if ds.loadPercent < c.cfg.HighLoadThr {
+		ds.ltRefTime = now
+	} else if ds.ltRefTime.IsZero() || now.Sub(ds.ltRefTime) > latencyTargetMaxRefAge {
+		clear(ds.ltBase)
+		ds.ltRefTime = now
+	}
 	ref, ok := ds.ltBase[reflector]
 	if !ok || baselineUs < ref || ds.loadPercent < c.cfg.HighLoadThr {
 		ref = baselineUs
@@ -435,16 +451,6 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 			c.name, dir, target, p95Ms, dc.OWDDeltaDelayThrMs*ds.thrScale)
 	}
 	ds.ltUnreachable = unreachable
-
-	// New references at high load only if the delay of this window is
-	// trustworthy for the next decisions. Keep them: during a decrease test
-	// (this window is compared with the next window), while a floor is
-	// active, and while the target is not reachable. In these cases, a
-	// constant delay that no shaper can remove is likely, and the baseline
-	// of the controller increases with it.
-	if !ds.ltLastDown && !now.Before(ds.ltFloorUntil) && !unreachable {
-		clear(ds.ltBase)
-	}
 }
 
 const (
