@@ -65,6 +65,8 @@ sudo ./scripts/record-session.sh -i enp7s0 -c my-5g.yaml -r 2 -W 30
 
 The script runs approximately 55 to 60 minutes. Do not use the network during the session. Do not move the modem.
 
+**CAKE before the session:** do not set it up yourself, and stop other shapers on this interface (SQM, a running cake-autorate or cake-autorate-go). The script sets up CAKE itself and controls it in each block: CAKE without a bandwidth limit in the `unshaped` blocks, CAKE controlled by cake-autorate-go in the `autorate` blocks. It replaces an existing root qdisc on the interface and removes CAKE at the end. "Unshaped" thus does not mean "without CAKE": CAKE is there, but it does not limit the rate. Then the buffers of the modem and the network fill, as without CAKE.
+
 ### What the script does
 
 **1. Setup.** The script adds CAKE on the modem interface (upload) and on an IFB interface for the download (`scripts/cake-pc.sh`). It writes `session.txt` with the settings and system data.
