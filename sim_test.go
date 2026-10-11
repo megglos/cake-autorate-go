@@ -167,6 +167,18 @@ type simScenario struct {
 	// outage returns true while the link transmits nothing (optional). Then
 	// the capacity is almost zero and no ping gets a reply.
 	outage func(t float64) bool
+	// ulCouplingMs is the upload delay that the radio adds when the download
+	// is active. A shaper on the upload cannot decrease it (5G: the scheduler
+	// gives fewer upload grants when the download is busy). On the 5G link,
+	// the delay was the same for all download rates from 25 to 300 Mbit/s.
+	// Thus, the delay increases to the full value at 20 % download use and
+	// then stays constant.
+	ulCouplingMs float64
+	// ulCouplingJitterMs is the mean of an additional random upload delay
+	// for each ping when the download is active (exponential distribution).
+	// On the 5G link, the delay from download activity was 10 to 46 ms
+	// (p10 to p95), with a median of 21 ms.
+	ulCouplingJitterMs float64
 
 	// link contains the rate limits and thresholds. The simulator sets Adjust=true.
 	link LinkConfig
@@ -323,15 +335,19 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	wasStall := false
 	res.scenario, res.policy = sc.name, policy
 	var dlDelivered, dlCap, ulDelivered, ulCap float64
+	var dlUse float64 // EWMA of download rate / capacity
 
 	end := float64(sc.duration.Milliseconds())
 	step := 0
 	for t := 0.0; t < end; t += simStepMs {
 		base0 := sc.baseRTT(t, 0)
 		dlBefore, ulBefore := dl.delivered, ul.delivered
-		dlRev, ulRev := ul.bottleneckDelayMs(t), dl.bottleneckDelayMs(t)
+		couplingActive := math.Min(dlUse/0.2, 1)
+		couplingMs := (sc.ulCouplingMs + sc.ulCouplingJitterMs) * couplingActive
+		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)
 		dl.step(t, simStepMs, base0, dlRev)
 		ul.step(t, simStepMs, base0, ulRev)
+		dlUse += 0.01 * ((dl.delivered-dlBefore)/simStepMs/math.Max(dl.capacity(t), 1) - dlUse)
 		if dl.demand(t) {
 			dlDelivered += dl.delivered - dlBefore
 			dlCap += dl.capacity(t) * simStepMs
@@ -341,7 +357,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 			ulCap += ul.capacity(t) * simStepMs
 		}
 
-		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t), ul.bottleneckDelayMs(t)
+		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t), ul.bottleneckDelayMs(t)+couplingMs
 		queueMs := dlQueueMs + ulQueueMs
 
 		if core != nil {
@@ -356,7 +372,13 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				}
 				base := sc.baseRTT(t, i)
 				jitter := sc.jitterMs * rng.ExpFloat64()
-				rtt := base + queueMs + jitter
+				// The random part of the coupling delay is different for each
+				// ping. Its mean is in couplingMs.
+				var ulNoise float64
+				if sc.ulCouplingJitterMs > 0 {
+					ulNoise = sc.ulCouplingJitterMs * (rng.ExpFloat64() - 1) * couplingActive
+				}
+				rtt := base + queueMs + jitter + ulNoise
 				result := PingResult{
 					Reflector: link.Reflectors[i],
 					RTT:       time.Duration(rtt * float64(time.Millisecond)),
@@ -366,7 +388,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					// Each reflector has a different clock offset. The
 					// timestamps have a resolution of 1 ms.
 					offset := 13.7*float64(i) - 40
-					ul := base/2 + ulQueueMs + jitter/2 + offset
+					ul := base/2 + ulQueueMs + jitter/2 + ulNoise + offset
 					dl := base/2 + dlQueueMs + jitter/2 - offset
 					result.OWD = true
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond

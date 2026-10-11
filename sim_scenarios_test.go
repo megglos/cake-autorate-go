@@ -239,6 +239,16 @@ func simScenariosVariant(variant uint64) []simScenario {
 			link: link5GRec,
 		},
 		{
+			// Similar to the 5G link in the recordings: download activity
+			// delays the upload (the 5G scheduler). Load in the two
+			// directions. The upload shaper cannot remove this delay.
+			name: "5g-coupled", duration: dur, seed: 9 + v,
+			dlCapacity: constant(150000), ulCapacity: constant(30000),
+			dlDemand: between(2, 118), ulDemand: between(30, 100),
+			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12,
+			link: link5G,
+		},
+		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
 			// ping during the spike cuts the rate again).
 			name: "latency-spike", duration: dur, seed: 6 + v,
