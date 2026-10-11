@@ -506,6 +506,12 @@ func (c *Config) Validate() error {
 			if dc.dir.AvgOWDDeltaMaxAdjUpThrMs <= 0 {
 				return fmt.Errorf("%s avg_owd_delta_max_adjust_up_thr_ms must be positive", dc.name)
 			}
+			// With ICMP timestamps, the rate increase decreases from
+			// avg_owd_delta_max_adjust_up_thr_ms to zero at
+			// owd_delta_delay_thr_ms.
+			if dc.dir.AvgOWDDeltaMaxAdjUpThrMs >= dc.dir.OWDDeltaDelayThrMs {
+				return fmt.Errorf("%s avg_owd_delta_max_adjust_up_thr_ms must be less than owd_delta_delay_thr_ms", dc.name)
+			}
 			if dc.dir.AvgOWDDeltaMaxAdjDownThrMs <= 0 {
 				return fmt.Errorf("%s avg_owd_delta_max_adjust_down_thr_ms must be positive", dc.name)
 			}

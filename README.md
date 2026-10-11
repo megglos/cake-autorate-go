@@ -281,12 +281,14 @@ Each direction has three delay thresholds that control how aggressively bufferbl
 
 ```yaml
 owd_delta_delay_thr_ms: 30.0               # OWD delta above this = possible bufferbloat
-avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Only increase rate if avg delta is below this
+avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Full rate increase if avg delta is below this
 avg_owd_delta_max_adjust_down_thr_ms: 60.0  # Maximum avg delta — triggers largest rate decrease
 ```
 
 - `owd_delta_delay_thr_ms` — The one-way delay (OWD) delta threshold. When the delta between the current OWD and the baseline exceeds this, a bufferbloat sample is counted.
-- `avg_owd_delta_max_adjust_up_thr_ms` — The average OWD delta must be below this value for the shaper to increase the rate. Lower values make rate increases more conservative.
+- `avg_owd_delta_max_adjust_up_thr_ms` — Controls the rate increase at high load. Must be less than `owd_delta_delay_thr_ms`. Lower values make rate increases more conservative.
+  - With `icmp-timestamp`: below this delta, the increase is the maximum. From this delta to `owd_delta_delay_thr_ms`, the increase decreases to the minimum. Thus, a delay that the shaper cannot remove (for example, the 5G upload delay from download activity) does not stop the increase.
+  - With RTT/2 (`icmp`, `fping`): the increase decreases from the maximum at a delta of 0 to the minimum at this delta. A queue in the other direction also increases the RTT/2 delta.
 - `avg_owd_delta_max_adjust_down_thr_ms` — At this average delta, the maximum rate decrease is applied. The actual decrease is interpolated between the min and max adjustment factors.
 
 ### Rate Adjustment Tuning

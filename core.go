@@ -423,9 +423,15 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 		// also increases the delta, and the larger increase in that
 		// direction gives more bufferbloat.
 		maxUpThrUs += thresholdUs - dc.OWDDeltaDelayThrMs*1000.0
+		// Config.Validate makes sure that the delay threshold is above
+		// avg_owd_delta_max_adjust_up_thr_ms. If it is not (for example,
+		// a negative compensation), there is no increase at or above the
+		// delay threshold.
 		factor = 1.0
 		if thresholdUs > maxUpThrUs {
 			factor = (thresholdUs - deltaUs) / (thresholdUs - maxUpThrUs)
+		} else if deltaUs >= thresholdUs {
+			factor = 0
 		}
 	}
 	factor = clamp(factor, 0, 1)

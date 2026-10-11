@@ -25,7 +25,7 @@ links:
       base_rate_kbps: 200000   # Steady-state download bandwidth (kbit/s)
       max_rate_kbps: 200000    # Maximum download bandwidth (kbit/s)
       owd_delta_delay_thr_ms: 30.0               # OWD delta threshold for bufferbloat detection (ms)
-      avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Max avg delta to still increase rate (ms)
+      avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Full rate increase below this avg delta (icmp-timestamp; ms)
       avg_owd_delta_max_adjust_down_thr_ms: 60.0 # Max avg delta for maximum rate decrease (ms)
     upload:
       interface: eth1          # Upload interface

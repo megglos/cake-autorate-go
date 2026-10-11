@@ -566,3 +566,12 @@ links:
 		t.Errorf("config.example.yaml gives warnings: %v", w)
 	}
 }
+
+func TestValidate_AdjustUpThresholdBelowDelayThreshold(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links[0].Download.AvgOWDDeltaMaxAdjUpThrMs = cfg.Links[0].Download.OWDDeltaDelayThrMs
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "avg_owd_delta_max_adjust_up_thr_ms") {
+		t.Errorf("Validate() = %v, want an error for avg_owd_delta_max_adjust_up_thr_ms", err)
+	}
+}
