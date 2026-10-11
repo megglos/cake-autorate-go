@@ -372,7 +372,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 ## Next steps (revised 2026-10-11 19:15)
 
 1. User: review and merge #26, #27, #29 (after Copilot round 2 on #29).
-2. Optional before the 5G day pass ends (21:00): one upstream comparison session on 5G (step 8, see below). After 21:00 no 5G data plan: all remaining 5G work uses the recordings.
+2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
 4. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
 5. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
@@ -380,7 +380,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 7. Step 10: Starlink from 2026-10-28 (branch `feat/starlink-reconfig`).
 8. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
 
-5G tests still useful (only if before 21:00):
+5G tests still useful (next 5G day):
 - Upstream vs ours on 5G (step 8): `-U fts=recordings/upstream-5g-fping-ts.sh` vs `5g-s7-learn-u20.yaml` (our best 5G profile), modes `ul both`, `-W 30`, 2 rounds = 12 blocks ≈ 40 min. Gives the main result of the comparison on the real link.
 - Not needed: a re-test of the latency target after the #27 changes (they affect the reference at moderate load and RTT mode; session 8 used OWD at full load, the main path did not change).
 
