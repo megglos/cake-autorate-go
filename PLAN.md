@@ -369,7 +369,10 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 - Pairs: upstream fping vs ours `ping_method: icmp`; upstream fping-ts vs ours `icmp-timestamp` (best config after session 3).
 - First on the fiber emulation (repeatable trace, no 5G data), then a short 5G session. Resource usage: run `benchmark.sh` again on the GL-MT6000.
 
-## Next steps (revised 2026-10-11 19:15)
+## Next steps (revised 2026-10-11 19:40)
+
+Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up). No 5G tests until the next 5G day pass. Local tests on fiber: CI emulation (no internet), `emulate-link.sh` with 5G traces.
+
 
 1. User: review and merge #26, #27, #29 (after Copilot round 2 on #29).
 2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
@@ -492,7 +495,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
   - Alternative (simpler): one knob `balance: 0..1` that selects threshold presets. Less exact, does not adapt to the cell. Prefer the target.
   - Determinism: the outer loop is in `Core` (time from events), so record/replay and the simulator can test it. Simulator test: the same target on 5g-variable and 5g-coupled gives p95 near the target and higher throughput than a fixed low threshold.
 - [~] **7. CI emulation** (level 3). PR #29.
-  - 2026-10-11: branch `ci/emulation` (PR #29; pushed after `gh auth refresh -s workflow`. The SSH agent has no key: push over HTTPS with the gh credential helper). `scripts/ci-emulation.sh`: 3 namespaces (cie-router: CAKE via cake-pc.sh + binary + iperf3 clients + ping probe; cie-modem: tbf+netem bottleneck on each egress, square wave 40/20 Mbit/s DL, 10/5 UL, 15 s; cie-server: reflectors 10.210.2.1-6 on lo, kernel ICMP timestamp replies, iperf3 servers). Phases unshaped vs autorate (10 s idle + 60 s both-direction load). Checks: unshaped p95 ≥ 100 ms, autorate p95 ≤ 60 ms, DL ≥ 50 %, UL ≥ 40 % of mean capacity, ≥ 10 shaper changes, ≥ 100 OWD pings. CI job `emulation` (apt iperf3 + linux-modules-extra). First CI run passed with margin (see Status).
+  - 2026-10-11: branch `ci/emulation` (PR #29). `scripts/ci-emulation.sh`: 3 namespaces (cie-router: CAKE via cake-pc.sh + binary + iperf3 clients + ping probe; cie-modem: tbf+netem bottleneck on each egress, square wave 40/20 Mbit/s DL, 10/5 UL, 15 s; cie-server: reflectors 10.210.2.1-6 on lo, kernel ICMP timestamp replies, iperf3 servers). Phases unshaped vs autorate (10 s idle + 60 s both-direction load). Checks: unshaped p95 ≥ 100 ms, autorate p95 ≤ 60 ms, DL ≥ 50 %, UL ≥ 40 % of mean capacity, ≥ 10 shaper changes, ≥ 100 OWD pings. CI job `emulation` (apt iperf3, ethtool, linux-modules-extra). Review fixes: netlink check (fails on a tc fallback), rate-wave liveness, time-weighted mean capacity, portable p95, all namespaces checked before setup, limits as environment variables. First CI run passed with margin (see Status).
 - [ ] **8. Comparison with upstream and darkmoon** (before 9 and 10). Latency, throughput (session with `-U`, emulation first, then 5G) and resource use (`benchmark.sh` on the GL-MT6000).
   - darkmoon (github.com/kamikaonashi/openwrt-package-darkmoon, MIT, C, 5434c96 2026-03-14): C port of upstream for OpenWrt with uloop, netlink, UCI, procd and a LuCI app. Add it as a policy in `record-session.sh` (like `-U`) and in `benchmark.sh` (CPU/RAM on the GL-MT6000).
   - Algorithm = upstream: window average delta for the size (F3), increase up to the delay threshold (F8, which we rejected), cut from the shaper rate (no F2), refractory after each cut (F1 on), RTT/2 by default. No learned cross delay, no grant-delay floor. Thus, expected on 5G: like upstream fping-ts, higher p95 than ours, UL low with DL load.
