@@ -75,6 +75,7 @@ type calRecording struct {
 	config  *Config
 	pings   []calSample
 	echo    map[string]int // reflector -> replies without one-way delays
+	sent    map[string]int // reflector -> pings (replies and timeouts)
 	rates   []calRate
 	ulRates []calRate // upload shaper rate changes
 }
@@ -107,7 +108,8 @@ type calReflector struct {
 	Addr      string
 	OWD       bool    // replies with ICMP timestamps
 	IdleP95Ms float64 // jitter without load (p95 of the delta, larger direction)
-	Replies   int
+	Replies   int     // replies (with and without one-way delays)
+	Sent      int     // pings (replies and timeouts)
 }
 
 // calResult is the result of the analysis.
@@ -135,6 +137,7 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	var nCrossBlocks, nGrantBlocks int
 	idle := map[string][]calSample{} // key: block number and reflector
 	echo := map[string]int{}
+	sent, replied := map[string]int{}, map[string]int{}
 
 	for _, b := range blocks {
 		rec, err := readCalRecording(filepath.Join(dir, b.recording))
@@ -156,6 +159,13 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		}
 		for r, n := range rec.echo {
 			echo[r] += n
+			replied[r] += n
+		}
+		for r, n := range rec.sent {
+			sent[r] += n
+		}
+		for _, p := range rec.pings {
+			replied[p.reflector]++
 		}
 		loadFrom := b.loadStart.Add(calSkipLoadStart)
 		for _, p := range rec.pings {
@@ -214,8 +224,15 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	var jitter []float64
 	for r, d := range deltas {
 		dist := newCalDist(d)
-		res.Reflectors = append(res.Reflectors, calReflector{Addr: r, OWD: true, IdleP95Ms: dist.P95, Replies: len(d)})
-		jitter = append(jitter, dist.P95)
+		rf := calReflector{Addr: r, IdleP95Ms: dist.P95, Replies: replied[r], Sent: sent[r]}
+		// Only a reflector with enough idle samples and replies is a
+		// candidate. A reflector with few replies has a too low jitter
+		// (one sample is its own baseline) and is not usable at run time.
+		rf.OWD = len(d) >= calMinIdleSamples && float64(rf.Replies) >= calMinReplyRatio*float64(rf.Sent)
+		res.Reflectors = append(res.Reflectors, rf)
+		if rf.OWD {
+			jitter = append(jitter, dist.P95)
+		}
 	}
 	for r, n := range echo {
 		if _, ok := deltas[r]; !ok {
@@ -328,7 +345,9 @@ func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []floa
 	j := 0
 	rate := 0.0
 	for i, p := range pings {
-		for j < len(rec.ulRates) && !rec.ulRates[j].t.After(p.t) {
+		// A rate change with the same time as the ping comes from this ping
+		// (the recorder writes the ping first). The ping saw the old rate.
+		for j < len(rec.ulRates) && rec.ulRates[j].t.Before(p.t) {
 			rate = rec.ulRates[j].rateKbps
 			j++
 		}
@@ -339,24 +358,35 @@ func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []floa
 	return out
 }
 
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
 // readBlocks reads blocks.tsv and the idle time from session.txt.
 func readBlocks(dir string) ([]calBlock, error) {
-	// The download warm-up of the mode both is not idle time. Thus, the
-	// analysis needs it. Sessions of an older script have no warm-up: their
-	// "block:" line has no warm-up value.
+	// The idle time of each block starts at the start of the block. The
+	// load (or the download warm-up of the mode both) starts after it.
+	// Sessions of an older script have no warm-up value.
 	data, err := os.ReadFile(filepath.Join(dir, "session.txt"))
 	if err != nil {
 		return nil, err
 	}
-	m := regexp.MustCompile(`(?m)^block: idle \d+s, load \d+s(?:, download warm-up in the mode both (\d+)s)?$`).FindSubmatch(data)
+	m := regexp.MustCompile(`(?m)^block: idle (\d+)s, load \d+s(?:, download warm-up in the mode both (\d+)s)?$`).FindSubmatch(data)
 	if m == nil {
 		return nil, fmt.Errorf("%s: no valid \"block:\" line", filepath.Join(dir, "session.txt"))
 	}
+	idleS, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return nil, fmt.Errorf("session.txt: idle time %q: %w", m[1], err)
+	}
 	warmup := time.Duration(0)
-	if len(m[1]) > 0 {
-		s, err := strconv.Atoi(string(m[1]))
+	if len(m[2]) > 0 {
+		s, err := strconv.Atoi(string(m[2]))
 		if err != nil {
-			return nil, fmt.Errorf("session.txt: warm-up %q: %w", m[1], err)
+			return nil, fmt.Errorf("session.txt: warm-up %q: %w", m[2], err)
 		}
 		warmup = time.Duration(s) * time.Second
 	}
@@ -385,9 +415,15 @@ func readBlocks(dir string) ([]calBlock, error) {
 			ts[i] = time.Unix(s, 0)
 		}
 		b := calBlock{num: num, mode: col[2], policy: col[3], start: ts[0], loadStart: ts[1], loadEnd: ts[2], recording: col[10]}
-		b.idleEnd = b.loadStart
+		// The script starts the load (or the warm-up) after the idle time,
+		// but load_start is written after the warm-up program stops, with
+		// its setup and cleanup time. Thus, the end of the idle time is
+		// start + idle time, not load_start - warm-up.
+		b.idleEnd = b.start.Add(time.Duration(idleS) * time.Second)
 		if b.mode == "both" {
-			b.idleEnd = b.loadStart.Add(-warmup)
+			b.idleEnd = minTime(b.idleEnd, b.loadStart.Add(-warmup))
+		} else {
+			b.idleEnd = minTime(b.idleEnd, b.loadStart)
 		}
 		blocks = append(blocks, b)
 	}
@@ -426,7 +462,7 @@ func readCalRecording(path string) (*calRecording, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	rec := &calRecording{config: h.Config, echo: map[string]int{}}
+	rec := &calRecording{config: h.Config, echo: map[string]int{}, sent: map[string]int{}}
 	for sc.Scan() {
 		var ev struct {
 			T         int64     `json:"t"`
@@ -446,6 +482,7 @@ func readCalRecording(path string) (*calRecording, error) {
 		t := start.Add(time.Duration(ev.T) * time.Microsecond)
 		switch ev.Type {
 		case recPing:
+			rec.sent[ev.Reflector]++
 			if ev.Timeout {
 				continue
 			}
@@ -496,6 +533,10 @@ const (
 	// calMinReflectors is the minimum number of reflectors with ICMP
 	// timestamps for ping_method icmp-timestamp.
 	calMinReflectors = 4
+	// calMinIdleSamples and calMinReplyRatio: a reflector needs this number
+	// of idle samples and this ratio of replies to pings.
+	calMinIdleSamples = 20
+	calMinReplyRatio  = 0.9
 	// calSpareReflectors is the number of reflectors in the list more than
 	// pinger_count (spares for misbehaving reflectors).
 	calSpareReflectors = 2
@@ -541,9 +582,15 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		p.Why["learn_cross_delay"] = fmt.Sprintf("upload delay from download activity: p50 %.1f, p95 %.1f ms (on above %.0f ms)", c.P50, c.P95, calCrossDelayMinMs)
 	}
 	p.UlThrMs = p.DlThrMs
+	p.Why["upload threshold"] = p.Why["download threshold"]
 	if g := r.GrantDelayMs; g.N > 0 {
 		floor := math.Ceil(g.P50 + calGrantMarginMs)
-		p.Why["upload threshold"] = fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings); threshold >= p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
+		grant := fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings), floor p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
+		if w := p.Why["upload threshold"]; w != "" {
+			p.Why["upload threshold"] = w + "; " + grant + "; threshold = max of the two"
+		} else {
+			p.Why["upload threshold"] = grant + "; threshold = max(30, floor)"
+		}
 		p.UlThrMs = math.Max(p.UlThrMs, floor)
 	}
 

@@ -28,6 +28,8 @@ type calTestLink struct {
 	echo                 bool    // ICMP echo: no one-way delays
 	noisyReflector       bool    // reflector r5 has 5 times the idle jitter
 	warmupS              int     // download warm-up in the mode both (s)
+	flakyReflector       bool    // reflector r4 replies to 1 of 10 pings
+	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
 }
 
@@ -113,6 +115,10 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				if l.echo {
 					ping.UlOWD, ping.DlOWD = 0, 0
 				}
+				if l.flakyReflector && r == "r4" && (ms/150)%50 != 3 {
+					rec.Ping("wan", PingResult{Reflector: r, Timeout: true, Timestamp: ts})
+					continue
+				}
 				rec.Ping("wan", ping)
 			}
 			if err := rec.Close(); err != nil {
@@ -120,7 +126,7 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 			}
 			end := loadEnd.Add(5 * time.Second)
 			fmt.Fprintf(&tsv, "%d\t1\t%s\t%s\t%d\t%d\t%d\t%d\tx\tx\t%s\n", num, mode, policy,
-				start.Unix(), loadStart.Unix(), loadEnd.Unix(), end.Unix(), name)
+				start.Unix(), loadStart.Unix()+int64(l.loadStartDelayS), loadEnd.Unix(), end.Unix(), name)
 			start = end
 		}
 	}
@@ -455,7 +461,9 @@ func TestCalibrateSession_NeedsSessionTxt(t *testing.T) {
 // The download warm-up of the mode both is not idle time: with a cross
 // delay of 20 ms in the warm-up, the idle jitter must stay low.
 func TestCalibrateSession_WarmupIsNotIdle(t *testing.T) {
-	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, crossDelayMs: 20, warmupS: 10})
+	// load_start is 3 s late (setup of the warm-up program): the idle time
+	// must end at start + idle time, not at load_start - warm-up.
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, crossDelayMs: 20, warmupS: 10, loadStartDelayS: 3})
 	res, _, err := calibrateSession(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -480,5 +488,51 @@ func TestCalibrateSession_OtherInterfaces(t *testing.T) {
 	}
 	if _, _, err := calibrateSession(dir); err == nil || !strings.Contains(err.Error(), "interfaces") {
 		t.Errorf("err = %v, want an error for other interfaces", err)
+	}
+}
+
+// A reflector that replies to few pings is not a candidate: its few idle
+// samples give a too low jitter.
+func TestCalibrateSession_FlakyReflector(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, flakyReflector: true})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.propose(cfg); slices.Contains(p.Reflectors, "r4") {
+		t.Errorf("reflectors = %v, want no r4 (replies to 1 of 50 pings)", p.Reflectors)
+	}
+}
+
+// The upload threshold comment tells the two reasons: idle jitter and
+// grant delay.
+func TestCalibrate_UploadThresholdReason(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, grantDelayMs: 30})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := res.propose(cfg).Why["upload threshold"]
+	if !strings.Contains(w, "idle jitter") || !strings.Contains(w, "grant delay") {
+		t.Errorf("upload threshold reason %q, want idle jitter and grant delay", w)
+	}
+}
+
+// A shaper change with the same time as a ping comes from this ping. The
+// ping saw the old rate.
+func TestGrantDeltas_SameTimeRateChange(t *testing.T) {
+	t0 := time.Unix(1_800_000_000, 0)
+	b := calBlock{start: t0, idleEnd: t0.Add(time.Second), loadStart: t0.Add(time.Second), loadEnd: t0.Add(10 * time.Second)}
+	ping := t0.Add(5 * time.Second)
+	rec := &calRecording{
+		pings: []calSample{
+			{t: t0, reflector: "r1", ulUs: 10000},
+			{t: ping, reflector: "r1", ulUs: 30000},
+		},
+		ulRates: []calRate{{t: t0, rateKbps: 5000}, {t: ping, rateKbps: 20000}},
+	}
+	got := b.grantDeltas(rec, func(t time.Time) bool { return !t.Before(b.loadStart) && t.Before(b.loadEnd) })
+	if len(got) != 2 || got[0] != 20 || got[1] != 5000 {
+		t.Errorf("grantDeltas = %v, want [20 5000] (the rate before the ping)", got)
 	}
 }
