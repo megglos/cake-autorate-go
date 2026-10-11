@@ -433,11 +433,11 @@ func TestSim_ShapedBelowCapacityStaysLow(t *testing.T) {
 // Each test examines the behavior that we want. While the issue occurs, the
 // test logs the issue and passes. When a fix makes the check true, the test
 // fails. Then, change the test into a usual regression test. The IDs refer
-// to GitHub issues (knownIssueURL). The tests use the default config; an
-// issue tells which options fix it.
+// to GitHub issues (knownIssueURL). The tests use the default config. Each
+// issue tells its status and the options that fix it, if there are any.
 
 // knownIssueURL links each known issue to its GitHub issue: the problem, the
-// scenario and the config that fixes it.
+// scenario, the status and the options that fix it, if there are any.
 var knownIssueURL = map[string]string{
 	"F1": "https://github.com/megglos/cake-autorate-go/issues/30",
 	"F2": "https://github.com/megglos/cake-autorate-go/issues/31",
@@ -449,7 +449,7 @@ func knownIssue(t *testing.T, id string, ok bool, format string, args ...any) {
 	t.Helper()
 	detail := fmt.Sprintf(format, args...)
 	if ok {
-		t.Errorf("known issue %s appears fixed (%s): turn this into a regular assertion", id, detail)
+		t.Errorf("known issue %s appears fixed (%s, %s): turn this into a regular assertion", id, knownIssueURL[id], detail)
 		return
 	}
 	t.Logf("known issue %s still present (%s, default config: ping_method icmp, refractory_on_decrease off): %s", id, knownIssueURL[id], detail)

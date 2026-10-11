@@ -40,7 +40,7 @@ jobs:
             cat scorecard.txt
             echo '```'
             echo '## Known issues'
-            echo 'With the default config. Each issue tells the options that fix it.'
+            echo 'With the default config. Each issue tells its status and the options that fix it, if there are any.'
             grep -o 'known issue .*' sim.log | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
 
