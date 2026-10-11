@@ -1198,16 +1198,17 @@ func TestObserveLatency_ModerateLoadKeepsReference(t *testing.T) {
 	}
 }
 
-// A partial window from an earlier time of high load does not continue
-// after a stop: its old samples are not in the next window.
+// A window from an earlier time of high load does not continue after a
+// stop: its old samples are not in the next window.
 func TestObserveLatency_StaleWindowExpires(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.link.Download.LatencyTargetP95Ms = 30
 	c.cfg.LatencyTargetWindowS = 30
 	c.dl.loadPercent = 1
 	ts := time.Unix(1_800_000_000, 0)
-	// 5 s of high load with a large delay: too few samples.
-	for i := 0; i < latencyTargetMinSamples/2; i++ {
+	// 15 s of high load with a large delay: enough samples, but the window
+	// is not complete.
+	for i := 0; i < 3*latencyTargetMinSamples/2; i++ {
 		c.observeLatency(DL, "r1", 90000, 10000, ts)
 		ts = ts.Add(100 * time.Millisecond)
 	}

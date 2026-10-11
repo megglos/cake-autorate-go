@@ -393,10 +393,10 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	}
 	window := time.Duration(c.cfg.LatencyTargetWindowS * float64(time.Second))
 	if ds.loadPercent >= c.cfg.HighLoadThr {
-		// A partial window from an earlier time of high load (before a
-		// time of low load, or a stop of the pingers) is old: start a new
-		// window. A window starts with its first sample.
-		if len(ds.ltSamples) < latencyTargetMinSamples && now.Sub(ds.ltLastSample) > window {
+		// A window from an earlier time of high load (before a time of low
+		// load, or a stop of the pingers) is old: start a new window. A
+		// window starts with its first sample.
+		if now.Sub(ds.ltLastSample) > window {
 			ds.ltSamples = ds.ltSamples[:0]
 		}
 		if len(ds.ltSamples) == 0 {
