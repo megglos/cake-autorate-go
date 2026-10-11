@@ -220,7 +220,7 @@ type simResult struct {
 	// p95 of the delay of each direction (ms), while the direction has
 	// demand. It includes the random parts of the path delay (jitter, and
 	// the coupling and grant noise) of the last ping: the latency target
-	// measures them too.
+	// measures them too. Without autorate (no pings), they are NaN.
 	dlLatP95, ulLatP95 float64
 	// bloatS is the total time with an excess delay of more than 30ms.
 	bloatS float64
@@ -491,6 +491,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	sort.Float64s(dlLat)
 	sort.Float64s(ulLat)
 	res.dlLatP95, res.ulLatP95 = percentile(dlLat, 0.95), percentile(ulLat, 0.95)
+	if core == nil {
+		res.dlLatP95, res.ulLatP95 = math.NaN(), math.NaN()
+	}
 	if dlCap > 0 {
 		res.dlUtil = dlDelivered / dlCap
 	}

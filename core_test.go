@@ -1249,6 +1249,32 @@ func TestHandlePing_LatencyTargetRTTOtherDirection(t *testing.T) {
 	}
 }
 
+// Without one-way delays, the download reference does not follow the
+// baseline while the upload is loaded: the RTT then contains the upload
+// queue.
+func TestObserveLatency_RTTReferenceNeedsTwoLowLoads(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(DL, "r1", 20000, 20000, ts)
+	// Upload load for a long time: the RTT baseline increases to 60 ms.
+	c.ul.loadPercent = 1
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 60000, 60000, ts)
+	}
+	// Then download load too: RTT 100 ms, 80 ms above the reference.
+	c.dl.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 100000, 60000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("download scale %.2f, want a decrease (p95 80 ms, target 50 ms)", got)
+	}
+}
+
 // After a stop of the pingers, a ping at low load does not complete the
 // old window.
 func TestObserveLatency_StaleWindowLowLoad(t *testing.T) {

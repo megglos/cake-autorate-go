@@ -389,7 +389,14 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// delay, and the thresholds decrease. This is the safe direction, and
 	// the next low-load ping corrects it.
 	ref, ok := ds.ltBase[reflector]
-	if !ok || baselineUs < ref || ds.loadPercent < latencyTargetRefMaxLoad {
+	// Without one-way delays, the RTT also contains the queue of the other
+	// direction. Then the reference follows the baseline only if the two
+	// directions have a low load.
+	lowLoad := ds.loadPercent < latencyTargetRefMaxLoad
+	if !c.lastPingOWD {
+		lowLoad = c.dl.loadPercent < latencyTargetRefMaxLoad && c.ul.loadPercent < latencyTargetRefMaxLoad
+	}
+	if !ok || baselineUs < ref || lowLoad {
 		ref = baselineUs
 		ds.ltBase[reflector] = ref
 	}
