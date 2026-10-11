@@ -805,7 +805,40 @@ func writeCalConfig(out io.Writer, dir string, cfg *Config, r *calResult, p calP
 		fmt.Fprintf(w, "# %s\n", why)
 	}
 	fmt.Fprintf(w, "learn_cross_delay: %v\n", p.LearnCrossDelay)
+	// Core uses the threshold for idle and sleep. If it is not below the
+	// minimum rates, the traffic of a slow link stays below it, and the
+	// controller cannot leave the idle state.
+	thr := activeThrKbps(cfg, p)
+	if thr < cfg.ConnectionActiveThrKbps {
+		fmt.Fprintf(w, "# session value %d kbit/s, lowered to half of the lowest minimum rate\n", cfg.ConnectionActiveThrKbps)
+	} else {
+		fmt.Fprintln(w, "# from the session config")
+	}
+	fmt.Fprintf(w, "connection_active_thr_kbps: %d\n", thr)
 	return w.err
+}
+
+// activeThrKbps returns connection_active_thr_kbps for the output: the
+// session value, but not more than half of the lowest minimum rate of the
+// output (minimum 1).
+func activeThrKbps(cfg *Config, p calProposal) int {
+	link := cfg.Links[0]
+	lowest := math.MaxInt
+	for _, m := range []struct{ proposed, session int }{
+		{p.DlMin, link.Download.MinRateKbps}, {p.UlMin, link.Upload.MinRateKbps},
+	} {
+		v := m.proposed
+		if v == 0 {
+			v = m.session
+		}
+		if v > 0 {
+			lowest = min(lowest, v)
+		}
+	}
+	if lowest == math.MaxInt {
+		return cfg.ConnectionActiveThrKbps
+	}
+	return max(1, min(cfg.ConnectionActiveThrKbps, lowest/2))
 }
 
 // runCalibrate is the "calibrate" command.

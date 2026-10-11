@@ -183,7 +183,7 @@ Examine these points:
 - **Notes** (`# NOTE:` at the top). They tell which values were not measured, and why (a missing block type, or pings without one-way delays). For these values:
   - From the session config: the rates (no unshaped blocks), `learn_cross_delay` (no usable autorate `dl` blocks), `reflectors` (fewer than 4 reflectors reply to ICMP timestamps).
   - Calibration defaults, not the session config: the delay thresholds (30 ms without measured idle jitter), and `ping_method` (`icmp` if fewer than 4 reflectors reply to ICMP timestamps). If your session config has other values, set them again in the output.
-- `pinger_count` and `ping_source_addr` come from the session config. The other keys that the output does not contain get the program defaults.
+- `pinger_count` and `ping_source_addr` come from the session config. `connection_active_thr_kbps` also comes from the session config, but it is not more than half of the lowest minimum rate: else, on a slow link, the traffic stays below it and the controller cannot leave the idle state. The other keys that the output does not contain get the program defaults.
 
 Then test the proposed config: record a second session with it as a variant, and compare it with your old config:
 

@@ -698,12 +698,35 @@ func TestPropose_SlowLinkRates(t *testing.T) {
 	if p.DlMax > 800 || p.DlBase > 600 || p.DlMin > 200 || p.UlMax > 400 || p.UlMin > 100 {
 		t.Errorf("rates dl %d/%d/%d, ul %d/%d/%d kbit/s; want not more than the measured values", p.DlMin, p.DlBase, p.DlMax, p.UlMin, p.UlBase, p.UlMax)
 	}
+	// The activity threshold is below the minimum rates: else the
+	// controller cannot leave the idle state.
+	if got := activeThrKbps(testConfig(), p); got > min(p.DlMin, p.UlMin)/2 {
+		t.Errorf("connection_active_thr_kbps %d, want not more than half of the lowest minimum rate (%d)", got, min(p.DlMin, p.UlMin))
+	}
 	// The comment shows the capacity, not 0 Mbit/s.
 	if w := p.Why["download rates"]; !strings.Contains(w, "p5 0.400") || !strings.Contains(w, "p95 0.800") {
 		t.Errorf("download comment %q, want p5 0.400 and p95 0.800 Mbit/s", w)
 	}
 	if w := p.Why["upload rates"]; !strings.Contains(w, "p5 0.200") {
 		t.Errorf("upload comment %q, want p5 0.200 Mbit/s", w)
+	}
+}
+
+// The output keeps the session activity threshold if it is below the
+// minimum rates.
+func TestWriteCalConfig_ActiveThreshold(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnectionActiveThrKbps = 1500
+	var b strings.Builder
+	if err := writeCalConfig(&b, dir, cfg, res, res.propose(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "connection_active_thr_kbps: 1500\n") {
+		t.Errorf("output has no connection_active_thr_kbps: 1500:\n%s", b.String())
 	}
 }
 
