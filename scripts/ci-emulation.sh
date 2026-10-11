@@ -119,7 +119,7 @@ AUTORATE_PID=""
 
 teardown() {
     for pid in "$WAVE_PID" "$AUTORATE_PID"; do
-        [ -n "$pid" ] && kill "$pid" 2>/dev/null
+        [ -n "$pid" ] && { kill "$pid" 2>/dev/null || true; }
     done
     # Stop all processes in the namespaces (iperf3 servers and clients,
     # ping, cake-autorate-go) before the wait: else the wait blocks until
