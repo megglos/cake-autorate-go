@@ -304,7 +304,7 @@ latency_target_window_s: 30            # time between two changes
 
 - After each window, the three delay thresholds of the direction change by a factor: × 0.8 if the p95 is more than 10 % above the target, × 1.1 if it is more than 10 % below. The factor stays between `latency_target_min_thr_ms` / `owd_delta_delay_thr_ms` and 3.
 - The p95 contains the delay that no shaper can remove (for example, the 5G radio delay). A lower threshold that does not decrease the p95 by 5 % or more is undone, and that threshold is the minimum for 5 minutes. If the target is not reachable, the log tells it.
-- On 5G, set `latency_target_min_thr_ms` of the upload above the upload grant delay. The `calibrate` command measures it. Below it, the upload rate collapses.
+- On 5G, set `latency_target_min_thr_ms` of the upload above the upload grant delay: the upload delay at a low upload rate (on the 5G recordings, a median of 13 to 15 ms; a minimum of 25 ms worked). Below it, the upload rate collapses.
 - Only the windows with high load count (`high_load_thr`).
 
 Simulator results (10 minutes, one-way delays): a constant link with download target 20 ms gave a p95 of 21 ms (default thresholds: 31 ms) at the same throughput. A 5G-like link with upload target 80 ms gave 87 ms and 76 % of the upload capacity (default thresholds: 55 ms, 61 %). With the capacity traces of the 5G link, the download delay changed little: short capacity decreases cause most of it.

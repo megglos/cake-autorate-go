@@ -46,7 +46,8 @@ type DirectionConfig struct {
 	LatencyTargetP95Ms float64 `yaml:"latency_target_p95_ms"`
 	// LatencyTargetMinThrMs is the minimum delay threshold for the latency
 	// target (0: 10 ms). Set it above the delay that no shaper can remove
-	// (on 5G, the upload grant delay: see the calibrate command).
+	// (on 5G, the upload grant delay: the upload delay at a low upload rate,
+	// approximately 13 to 15 ms on the 5G recordings).
 	LatencyTargetMinThrMs float64 `yaml:"latency_target_min_thr_ms"`
 }
 
@@ -534,8 +535,14 @@ func (c *Config) Validate() error {
 			if dc.dir.LatencyTargetP95Ms < 0 || dc.dir.LatencyTargetMinThrMs < 0 {
 				return fmt.Errorf("%s latency_target_p95_ms and latency_target_min_thr_ms must not be negative", dc.name)
 			}
-			if dc.dir.LatencyTargetMinThrMs > dc.dir.OWDDeltaDelayThrMs*latencyTargetMaxScale {
-				return fmt.Errorf("%s latency_target_min_thr_ms must not be more than %g x owd_delta_delay_thr_ms", dc.name, latencyTargetMaxScale)
+			// The minimum threshold must be reachable: not more than the
+			// maximum factor times the threshold. 0 means the default.
+			minThr := dc.dir.LatencyTargetMinThrMs
+			if minThr == 0 {
+				minThr = latencyTargetDefaultMinThrMs
+			}
+			if dc.dir.LatencyTargetP95Ms > 0 && minThr > dc.dir.OWDDeltaDelayThrMs*latencyTargetMaxScale {
+				return fmt.Errorf("%s latency_target_min_thr_ms (%g ms) must not be more than %g x owd_delta_delay_thr_ms", dc.name, minThr, latencyTargetMaxScale)
 			}
 		}
 		if len(link.Reflectors) == 0 {

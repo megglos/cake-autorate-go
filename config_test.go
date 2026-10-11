@@ -579,6 +579,13 @@ func TestValidate_LatencyTarget(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_min_thr_ms") {
 		t.Errorf("minimum threshold too high: Validate() = %v", err)
 	}
+	// The default minimum (10 ms) also must be reachable.
+	cfg.Links[0].Upload.LatencyTargetMinThrMs = 0
+	cfg.Links[0].Upload.OWDDeltaDelayThrMs = 3
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_min_thr_ms") {
+		t.Errorf("default minimum above 3 x threshold: Validate() = %v", err)
+	}
+	cfg.Links[0].Upload.OWDDeltaDelayThrMs = 30
 	cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
 	cfg.LatencyTargetWindowS = 0
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
