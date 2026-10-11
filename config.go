@@ -10,8 +10,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -130,6 +132,10 @@ type Config struct {
 	LogFilePath      string `yaml:"log_file_path"`
 	LogFileMaxSizeKB int    `yaml:"log_file_max_size_kb"`
 	Debug            bool   `yaml:"debug"`
+
+	// unknownKeys are the keys in the config file that the program does not
+	// know (for example, a typing error). LoadConfig sets them.
+	unknownKeys []string
 }
 
 // Ping methods.
@@ -267,6 +273,10 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err == nil && len(root.Content) > 0 {
+		cfg.unknownKeys = unknownKeys(root.Content[0], reflect.TypeOf(*cfg), "")
+	}
 
 	if len(cfg.Reflectors) == 0 {
 		cfg.Reflectors = defaultReflectors(cfg.PingMethod)
@@ -331,9 +341,100 @@ func inheritThresholds(dc, from *DirectionConfig) {
 	}
 }
 
+// unknownKeys returns a message for each key in the YAML mapping node that
+// is not a yaml field of the struct type t. It examines nested structs and
+// lists of structs. path is the location of node in the file.
+func unknownKeys(node *yaml.Node, t reflect.Type, path string) []string {
+	node = resolveAlias(node)
+	if node.Kind != yaml.MappingNode || t.Kind() != reflect.Struct {
+		return nil
+	}
+	fields := make(map[string]reflect.Type)
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+			fields[name] = f.Type
+		}
+	}
+	var msgs []string
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i].Value, resolveAlias(node.Content[i+1])
+		if node.Content[i].Tag == "!!merge" {
+			// YAML merge key: examine the keys of each merged mapping.
+			merged := []*yaml.Node{value}
+			if value.Kind == yaml.SequenceNode {
+				merged = value.Content
+			}
+			for _, m := range merged {
+				msgs = append(msgs, unknownKeys(m, t, path)...)
+			}
+			continue
+		}
+		ft, ok := fields[key]
+		if !ok {
+			msg := fmt.Sprintf("unknown config key %q (line %d) has no effect", path+key, node.Content[i].Line)
+			if s := closestKey(key, fields); s != "" {
+				msg += fmt.Sprintf(". Did you mean %q?", path+s)
+			}
+			msgs = append(msgs, msg)
+			continue
+		}
+		switch {
+		case ft.Kind() == reflect.Struct:
+			msgs = append(msgs, unknownKeys(value, ft, path+key+".")...)
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct && value.Kind == yaml.SequenceNode:
+			for j, item := range value.Content {
+				msgs = append(msgs, unknownKeys(item, ft.Elem(), fmt.Sprintf("%s%s[%d].", path, key, j))...)
+			}
+		}
+	}
+	return msgs
+}
+
+// resolveAlias returns the node that an alias node refers to.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	return node
+}
+
+// closestKey returns the known key that is nearest to key (edit distance at
+// most 1/3 of the length), or "" if no key is near.
+func closestKey(key string, known map[string]reflect.Type) string {
+	best, bestDist := "", len(key)/3+1
+	for k := range known {
+		if d := editDistance(key, k); d < bestDist || (d == bestDist && best != "" && k < best) {
+			best, bestDist = k, d
+		}
+	}
+	return best
+}
+
+// editDistance returns the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 // Warnings returns the problems in the config that do not stop the program.
 func (c *Config) Warnings() []string {
-	var w []string
+	w := slices.Clone(c.unknownKeys)
 	if c.PingMethod == PingMethodTimestamp {
 		for _, link := range c.Links {
 			var bad []string
