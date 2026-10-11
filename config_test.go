@@ -477,3 +477,47 @@ func TestValidate_ThresholdNotPositive(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfig_UnknownKeys(t *testing.T) {
+	path := t.TempDir() + "/c.yaml"
+	content := `
+links:
+  - name: wan
+    download: {interface: ifb-wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000,
+               avg_owd_delta_max_adj_down_thr_ms: 40}
+    upload: {interface: wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+pinger_cont: 4
+no_such_option_at_all: true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := strings.Join(cfg.Warnings(), "\n")
+	for _, want := range []string{
+		`"links[0].download.avg_owd_delta_max_adj_down_thr_ms"`,
+		`Did you mean "links[0].download.avg_owd_delta_max_adjust_down_thr_ms"?`,
+		`"pinger_cont"`,
+		`Did you mean "pinger_count"?`,
+		`"no_such_option_at_all"`,
+	} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warnings do not contain %s:\n%s", want, w)
+		}
+	}
+	if strings.Count(w, "Did you mean") != 2 {
+		t.Errorf("want 2 suggestions, got:\n%s", w)
+	}
+
+	// The example config has no unknown keys.
+	cfg, err = LoadConfig("config.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := cfg.Warnings(); len(w) != 0 {
+		t.Errorf("config.example.yaml gives warnings: %v", w)
+	}
+}
