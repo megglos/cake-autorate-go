@@ -68,6 +68,9 @@ type dirState struct {
 	thrScale      float64   // factor for the three delay thresholds (0 or 1: no change)
 	ltSamples     []float64 // deltas (us) at high load in the current window
 	ltWindowStart time.Time
+	// ltBase is the reference delay (us) of each reflector for the latency
+	// target. It is constant during a decrease test (see observeLatency).
+	ltBase        map[string]float64
 	ltPrevP95Ms   float64 // p95 of the last window with enough samples
 	ltPrevScale   float64 // thrScale before the last change
 	ltLastDown    bool    // the last change was a decrease
@@ -253,8 +256,13 @@ func (c *Core) HandlePing(result PingResult) {
 	}
 	// The latency target uses the delay that the users see: also the delay
 	// that the shaper cannot remove.
-	c.observeLatency(DL, dlDeltaUs, result.Timestamp)
-	c.observeLatency(UL, ulDeltaUs, result.Timestamp)
+	if result.OWD {
+		c.observeLatency(DL, result.Reflector, float64(result.DlOWD.Microseconds()), rd.dlBaselineUs, result.Timestamp)
+		c.observeLatency(UL, result.Reflector, float64(result.UlOWD.Microseconds()), rd.ulBaselineUs, result.Timestamp)
+	} else {
+		c.observeLatency(DL, result.Reflector, rttUs/2, rd.baselineUs/2, result.Timestamp)
+		c.observeLatency(UL, result.Reflector, rttUs/2, rd.baselineUs/2, result.Timestamp)
+	}
 	if result.OWD {
 		if c.cfg.LearnCrossDelay {
 			ulDeltaUs = c.removeCrossDelay(ulDeltaUs, result.Timestamp)
@@ -305,7 +313,21 @@ const (
 	// latencyTargetFloorTime is the time that Core keeps a found floor.
 	// The link conditions change; after this time, Core tries again.
 	latencyTargetFloorTime = 5 * time.Minute
+	// latencyTargetMaxWindows: if a window has too few samples, it
+	// continues, but not for more than this number of window times.
+	latencyTargetMaxWindows = 10
 )
+
+// latencyTargetMinScale returns the minimum factor for the delay
+// thresholds: latency_target_min_thr_ms / owd_delta_delay_thr_ms. It can be
+// more than 1 (Config.Validate limits it to latencyTargetMaxScale).
+func (c *Core) latencyTargetMinScale(dc *DirectionConfig) float64 {
+	minThr := dc.LatencyTargetMinThrMs
+	if minThr <= 0 {
+		minThr = latencyTargetDefaultMinThrMs
+	}
+	return minThr / dc.OWDDeltaDelayThrMs
+}
 
 // scale returns the factor for the delay thresholds (latency target).
 func (ds *dirState) scale() float64 {
@@ -329,37 +351,54 @@ func (ds *dirState) scale() float64 {
 // the upload rate collapses below the grant delay). If the p95 stays above
 // the target at the minimum threshold, Core logs that the target is not
 // reachable.
-func (c *Core) observeLatency(dir Direction, deltaUs float64, now time.Time) {
+func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baselineUs float64, now time.Time) {
 	dc := c.link.DirConfig(dir)
 	if dc.LatencyTargetP95Ms <= 0 {
 		return
 	}
 	ds := c.getDirState(dir)
+	minScale := c.latencyTargetMinScale(dc)
+	if ds.thrScale == 0 {
+		ds.thrScale = math.Max(1, minScale)
+	}
 	if ds.ltWindowStart.IsZero() {
 		ds.ltWindowStart = now
 	}
-	if ds.loadPercent >= c.cfg.HighLoadThr {
-		ds.ltSamples = append(ds.ltSamples, deltaUs)
+	if ds.ltBase == nil {
+		ds.ltBase = make(map[string]float64)
 	}
-	if now.Sub(ds.ltWindowStart).Seconds() < c.cfg.LatencyTargetWindowS {
+	// The baseline of the controller increases slowly with a constant
+	// delay. Thus, the delta of the controller decreases over time also if
+	// the delay does not change. For the latency target, the reference of
+	// each reflector changes only at the end of a window without a decrease
+	// test, and follows a lower baseline at once.
+	ref, ok := ds.ltBase[reflector]
+	if !ok || baselineUs < ref {
+		ref = baselineUs
+		ds.ltBase[reflector] = ref
+	}
+	if ds.loadPercent >= c.cfg.HighLoadThr {
+		ds.ltSamples = append(ds.ltSamples, math.Max(delayUs-ref, 0))
+	}
+	elapsed := now.Sub(ds.ltWindowStart).Seconds()
+	if elapsed < c.cfg.LatencyTargetWindowS {
+		return
+	}
+	// With few samples (low load, or few pings), continue the window.
+	if len(ds.ltSamples) < latencyTargetMinSamples {
+		if elapsed >= latencyTargetMaxWindows*c.cfg.LatencyTargetWindowS {
+			ds.ltWindowStart = now
+			ds.ltSamples = ds.ltSamples[:0]
+		}
 		return
 	}
 	ds.ltWindowStart = now
 	samples := ds.ltSamples
 	ds.ltSamples = ds.ltSamples[:0]
-	if len(samples) < latencyTargetMinSamples {
-		return
-	}
 	sort.Float64s(samples)
 	p95Ms := samples[min(len(samples)-1, int(0.95*float64(len(samples))))] / 1000
 	target := dc.LatencyTargetP95Ms
 
-	minThr := dc.LatencyTargetMinThrMs
-	if minThr <= 0 {
-		minThr = latencyTargetDefaultMinThrMs
-	}
-	minScale := math.Min(minThr/dc.OWDDeltaDelayThrMs, 1)
-	ds.thrScale = ds.scale()
 	old := ds.thrScale
 	floor := minScale
 	if now.Before(ds.ltFloorUntil) {
@@ -382,6 +421,11 @@ func (c *Core) observeLatency(dir Direction, deltaUs float64, now time.Time) {
 	ds.thrScale = clamp(ds.thrScale, minScale, latencyTargetMaxScale)
 	ds.ltLastDown = ds.thrScale < old
 	ds.ltPrevScale, ds.ltPrevP95Ms = old, p95Ms
+	// A decrease test compares this window with the next window. Keep the
+	// reference for the next window. Else, take new references.
+	if !ds.ltLastDown {
+		clear(ds.ltBase)
+	}
 
 	if ds.thrScale != old {
 		c.logger.Infof("[%s] [%s] latency target %.0f ms: p95 %.1f ms (%d pings), delay threshold %.1f -> %.1f ms",
