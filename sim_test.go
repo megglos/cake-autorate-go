@@ -179,6 +179,15 @@ type simScenario struct {
 	// On the 5G link, the delay from download activity was 10 to 46 ms
 	// (p10 to p95), with a median of 21 ms.
 	ulCouplingJitterMs float64
+	// ulGrantMs is the upload delay that the radio adds when the upload is
+	// active. ulGrantJitterMs is the mean of an additional random delay for
+	// each ping (exponential distribution). On 5G, the upload data waits
+	// for a grant of the scheduler. On the 5G link, upload activity
+	// increased the upload delay by 14 ms (p50) and 24 ms (p95), also at
+	// 1/6 of the upload capacity. A shaper cannot remove it. Thus, the delay
+	// increases to the full value at 5 % upload use and then stays
+	// constant.
+	ulGrantMs, ulGrantJitterMs float64
 
 	// link contains the rate limits and thresholds. The simulator sets Adjust=true.
 	link LinkConfig
@@ -215,6 +224,8 @@ type simResult struct {
 
 	// Shaper rate over time (one sample every 100ms), for analysis.
 	dlShaper, ulShaper []float64
+	// Learned upload cross delay (us) over time (one sample every 100ms).
+	ulCrossDelay []float64
 	// Number of SetRate calls.
 	rateChanges int
 	// stallS is the total time in StateStall. stallEnd is the time (ms) of
@@ -336,6 +347,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	res.scenario, res.policy = sc.name, policy
 	var dlDelivered, dlCap, ulDelivered, ulCap float64
 	var dlUse float64 // EWMA of download rate / capacity
+	var ulUse float64 // EWMA of upload rate / capacity
 
 	end := float64(sc.duration.Milliseconds())
 	step := 0
@@ -343,13 +355,16 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		base0 := sc.baseRTT(t, 0)
 		dlBefore, ulBefore := dl.delivered, ul.delivered
 		couplingActive := math.Min(dlUse/0.2, 1)
-		couplingMs := (sc.ulCouplingMs + sc.ulCouplingJitterMs) * couplingActive
+		grantActive := math.Min(ulUse/0.05, 1)
+		couplingMs := (sc.ulCouplingMs+sc.ulCouplingJitterMs)*couplingActive +
+			(sc.ulGrantMs+sc.ulGrantJitterMs)*grantActive
 		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)
 		dl.step(t, simStepMs, base0, dlRev)
 		// The upload TCP flows also see the coupling delay on their
 		// forward path.
 		ul.step(t, simStepMs, base0+couplingMs, ulRev)
 		dlUse += 0.01 * ((dl.delivered-dlBefore)/simStepMs/math.Max(dl.capacity(t), 1) - dlUse)
+		ulUse += 0.01 * ((ul.delivered-ulBefore)/simStepMs/math.Max(ul.capacity(t), 1) - ulUse)
 		if dl.demand(t) {
 			dlDelivered += dl.delivered - dlBefore
 			dlCap += dl.capacity(t) * simStepMs
@@ -374,11 +389,16 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				}
 				base := sc.baseRTT(t, i)
 				jitter := sc.jitterMs * rng.ExpFloat64()
-				// The random part of the coupling delay is different for each
-				// ping. Its mean is in couplingMs.
+				// The random parts of the coupling delay and the grant delay
+				// are different for each ping. Their means are in couplingMs.
+				// Draw a random number only if the scenario has the delay.
+				// Then the other scenarios keep the same random sequence.
 				var ulNoise float64
 				if sc.ulCouplingJitterMs > 0 {
 					ulNoise = sc.ulCouplingJitterMs * (rng.ExpFloat64() - 1) * couplingActive
+				}
+				if sc.ulGrantJitterMs > 0 {
+					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
 				rtt := base + queueMs + jitter + ulNoise
 				result := PingResult{
@@ -445,6 +465,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		if step%100 == 0 {
 			res.dlShaper = append(res.dlShaper, math.Min(dl.shaperKbps, dl.capacity(t)*10))
 			res.ulShaper = append(res.ulShaper, math.Min(ul.shaperKbps, ul.capacity(t)*10))
+			if core != nil {
+				res.ulCrossDelay = append(res.ulCrossDelay, core.Core().ul.crossDelayUs)
+			}
 		}
 		step++
 	}
