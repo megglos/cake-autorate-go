@@ -180,7 +180,10 @@ Examine these points:
 - **Spread of the capacity** (p5 to p95). A large spread is usual on 5G (here: 147 to 658 Mbit/s download). If the p95 is much higher than the p50, short peaks set the maximum; this is not a problem.
 - **Upload with download load.** If it is much lower than without (here: 10.6 instead of 37.9 Mbit/s), the link shares the radio resources. Then a low upload base rate is correct.
 - **Cross delay and grant delay.** On fiber, both are near 0. On 5G, the cross delay is approximately 20 to 35 ms and the grant delay approximately 13 to 15 ms (median). Much higher values can show a weak signal or a busy cell.
-- **Notes** (`# NOTE:` at the top). They tell which values were not measured, and why (a missing block type, or pings without one-way delays). These values come from the session config.
+- **Notes** (`# NOTE:` at the top). They tell which values were not measured, and why (a missing block type, or pings without one-way delays). For these values:
+  - From the session config: the rates (no unshaped blocks), `learn_cross_delay` (no usable autorate `dl` blocks), `reflectors` (fewer than 4 reflectors reply to ICMP timestamps).
+  - Calibration defaults, not the session config: the delay thresholds (30 ms without measured idle jitter), and `ping_method` (`icmp` if fewer than 4 reflectors reply to ICMP timestamps). If your session config has other values, set them again in the output.
+- `pinger_count` and `ping_source_addr` come from the session config. The other keys that the output does not contain get the program defaults.
 
 Then test the proposed config: record a second session with it as a variant, and compare it with your old config:
 

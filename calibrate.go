@@ -640,6 +640,8 @@ func writeCalConfig(out io.Writer, dir string, cfg *Config, r *calResult, p calP
 		fmt.Fprintf(w, "# %s\n", why)
 	}
 	fmt.Fprintf(w, "ping_method: %s\n", p.PingMethod)
+	fmt.Fprintln(w, "# from the session config: the proposal of the reflectors uses it")
+	fmt.Fprintf(w, "pinger_count: %d\n", cfg.PingerCount)
 	if why, ok := p.Why["learn_cross_delay"]; ok {
 		fmt.Fprintf(w, "# %s\n", why)
 	}

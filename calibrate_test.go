@@ -379,6 +379,22 @@ func TestCalibrateSession_ReflectorList(t *testing.T) {
 	if len(p.Reflectors) != 4 || slices.Contains(p.Reflectors, "r5") {
 		t.Errorf("reflectors = %v, want 4 without r5", p.Reflectors)
 	}
+	// The output keeps pinger_count: the reflector list depends on it.
+	var buf bytes.Buffer
+	if err := writeCalConfig(&buf, dir, cfg, res, p); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "out.yaml")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PingerCount != 2 {
+		t.Errorf("pinger_count %d after reload, want 2", got.PingerCount)
+	}
 }
 
 // With pinger_count 1, the list has at least 4 reflectors (the minimum for
