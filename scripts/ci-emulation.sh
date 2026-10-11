@@ -106,23 +106,19 @@ log() { echo "[ci-emu] [$(date '+%H:%M:%S')] $*"; }
 PIDS=()
 
 teardown() {
-    # iperf3 -D runs as a daemon: it does not stop with its namespace.
-    # With -k, OUTDIR is empty: the namespace cleanup below stops them.
-    if [ -n "$OUTDIR" ]; then
-        for f in "$OUTDIR"/iperf3-*.pid; do
-            [ -f "$f" ] && PIDS+=("$(cat "$f")") && rm -f "$f"
-        done
-    fi
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    wait 2>/dev/null || true
+    # Stop all processes in the namespaces (iperf3 servers and clients,
+    # ping, cake-autorate-go) before the wait: else the wait blocks until
+    # the end of the phase. Deleting a namespace does not stop them.
     for ns in "$NS_R" "$NS_M" "$NS_S"; do
-        # Deleting a namespace does not stop its processes (for example the
-        # iperf3 daemons after a crash).
         for pid in $(ip netns pids "$ns" 2>/dev/null); do
             kill "$pid" 2>/dev/null || true
         done
+    done
+    wait 2>/dev/null || true
+    for ns in "$NS_R" "$NS_M" "$NS_S"; do
         ip netns del "$ns" 2>/dev/null || true
     done
     if [ -n "$OUTDIR" ] && [ -d "$OUTDIR" ] && [ -n "${SUDO_USER:-}" ]; then
@@ -207,8 +203,8 @@ done
 r "$SCRIPT_DIR/cake-pc.sh" up "$WAN" >/dev/null
 
 r ping -c 2 -W 2 "$PROBE" >/dev/null || die "no connection from $NS_R to $NS_S"
-s iperf3 -s -p 5201 -D -I "$OUTDIR/iperf3-5201.pid"
-s iperf3 -s -p 5202 -D -I "$OUTDIR/iperf3-5202.pid"
+s iperf3 -s -p 5201 -D
+s iperf3 -s -p 5202 -D
 sleep 1
 log "Emulated link: dl ${DL_KBPS} and $((DL_KBPS / 2)) kbit/s, ul ${UL_KBPS} and $((UL_KBPS / 2)) kbit/s, ${PERIOD_S} s each; base RTT ${DELAY_MS} ms; queue ${QUEUE} packets"
 
