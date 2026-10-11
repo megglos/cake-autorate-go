@@ -1126,7 +1126,7 @@ func TestObserveLatency_BaselineDriftIsNoGain(t *testing.T) {
 	c.ul.loadPercent = 1
 	var scales []float64
 	for w := 0; w < 3; w++ {
-		for i := 0; i < 100; i++ { // one window: constant upload delay +50 ms
+		for i := 0; i <= 100; i++ { // one window (30 s after the first sample): constant upload delay +50 ms
 			c.HandlePing(owdPing("1.1.1.1", ts, 60, 10))
 			ts = ts.Add(300 * time.Millisecond)
 		}
@@ -1167,6 +1167,59 @@ func TestObserveLatency_FewPingsContinueWindow(t *testing.T) {
 	}
 	if got := c.dl.scale(); got != latencyTargetStepDown {
 		t.Errorf("scale %.2f after %d pings at 80 ms, want %.1f", got, n, latencyTargetStepDown)
+	}
+}
+
+// At moderate load (below high_load_thr), the baseline of the controller
+// can contain delay from the load (5G grant delay). The reference of the
+// latency target must not follow it: else the measured p95 is too low and
+// the thresholds increase.
+func TestObserveLatency_ModerateLoadKeepsReference(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	c.dl.loadPercent = 0
+	c.observeLatency(DL, "r1", 10000, 10000, ts)
+	// Moderate load for a long time: the baseline increases to 30 ms.
+	c.dl.loadPercent = 0.5
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 30000, 30000, ts)
+	}
+	// High load: the delay is 60 ms above the reference without load.
+	c.dl.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 70000, 30000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("scale %.2f, want a decrease (p95 60 ms, target 50 ms)", got)
+	}
+}
+
+// A partial window from an earlier time of high load does not continue
+// after a stop: its old samples are not in the next window.
+func TestObserveLatency_StaleWindowExpires(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	// 5 s of high load with a large delay: too few samples.
+	for i := 0; i < latencyTargetMinSamples/2; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	// The pingers stop for 2 minutes (less than latencyTargetMaxWindows
+	// windows), then high load with a small delay.
+	ts = ts.Add(2 * time.Minute)
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		c.observeLatency(DL, "r1", 20000, 10000, ts)
+		ts = ts.Add(200 * time.Millisecond)
+	}
+	if got := c.dl.scale(); got <= 1 {
+		t.Errorf("scale %.2f, want an increase (p95 10 ms after the stop, target 30 ms)", got)
 	}
 }
 

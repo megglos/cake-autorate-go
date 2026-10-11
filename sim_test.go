@@ -218,7 +218,9 @@ type simResult struct {
 	// while a bulk transfer is active.
 	latP50, latP95, latP99 float64
 	// p95 of the delay of each direction (ms), while the direction has
-	// demand.
+	// demand. It includes the random parts of the path delay (jitter, and
+	// the coupling and grant noise) of the last ping: the latency target
+	// measures them too.
 	dlLatP95, ulLatP95 float64
 	// bloatS is the total time with an excess delay of more than 30ms.
 	bloatS float64
@@ -344,6 +346,8 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	var prevDlOut, prevUlOut float64
 
 	var lat, dlLat, ulLat []float64
+	// Random path delay of the last ping, for dlLat and ulLat.
+	var dlNoiseMs, ulNoiseMs float64
 	var res simResult
 	res.stallEnd = -1
 	wasStall := false
@@ -404,6 +408,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
 				rtt := base + queueMs + jitter + ulNoise
+				dlNoiseMs, ulNoiseMs = jitter/2, jitter/2+ulNoise
 				result := PingResult{
 					Reflector: link.Reflectors[i],
 					RTT:       time.Duration(rtt * float64(time.Millisecond)),
@@ -454,10 +459,10 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		if step%simProbeEveryMs == 0 && (dl.demand(t) || ul.demand(t)) {
 			lat = append(lat, queueMs)
 			if dl.demand(t) {
-				dlLat = append(dlLat, dlQueueMs)
+				dlLat = append(dlLat, math.Max(dlQueueMs+dlNoiseMs, 0))
 			}
 			if ul.demand(t) {
-				ulLat = append(ulLat, ulQueueMs)
+				ulLat = append(ulLat, math.Max(ulQueueMs+ulNoiseMs, 0))
 			}
 			if queueMs > simBloatThrMs {
 				res.bloatS += simProbeEveryMs / 1000.0

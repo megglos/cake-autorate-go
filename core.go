@@ -72,6 +72,7 @@ type dirState struct {
 	// target. At high load, it does not increase (see observeLatency).
 	ltBase        map[string]float64
 	ltPrevP95Ms   float64 // p95 of the last window with enough samples
+	ltLastSample  time.Time
 	ltPrevScale   float64 // thrScale before the last change
 	ltLastDown    bool    // the last change was a decrease
 	ltFloorScale  float64 // no decrease below this factor until ltFloorUntil
@@ -318,6 +319,10 @@ const (
 	// latencyTargetMaxWindows: if a window has too few samples, it
 	// continues, but not for more than this number of window times.
 	latencyTargetMaxWindows = 10
+	// latencyTargetRefMaxLoad is the maximum load when the reference of
+	// the latency target follows the baseline of the controller. At this
+	// load, the delay has no part from the load (queue, 5G grant delay).
+	latencyTargetRefMaxLoad = 0.2
 )
 
 // latencyTargetMinScale returns the minimum factor for the delay
@@ -373,20 +378,32 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// delay. Thus, the delta of the controller decreases over time also if
 	// the delay does not change. For the latency target, the reference of
 	// each reflector follows the baseline of the controller only at low
-	// load (no queue, no delay from load), and when the baseline decreases
-	// (a lower floor, or a clock offset change). At high load, the
-	// reference does not increase: a baseline from high load contains
-	// delay from the load. Limit: a clock offset that increases during a
+	// load (latencyTargetRefMaxLoad: no queue, no delay from load), and
+	// when the baseline decreases (a lower floor, or a clock offset
+	// change). At a higher load, the reference does not increase: the
+	// baseline then contains delay from the load (also at moderate load,
+	// for example the 5G grant delay). Limit: a clock offset that increases during a
 	// long time of high load (ICMP timestamps) increases the measured
 	// delay, and the thresholds decrease. This is the safe direction, and
 	// the next low-load ping corrects it.
 	ref, ok := ds.ltBase[reflector]
-	if !ok || baselineUs < ref || ds.loadPercent < c.cfg.HighLoadThr {
+	if !ok || baselineUs < ref || ds.loadPercent < latencyTargetRefMaxLoad {
 		ref = baselineUs
 		ds.ltBase[reflector] = ref
 	}
+	window := time.Duration(c.cfg.LatencyTargetWindowS * float64(time.Second))
 	if ds.loadPercent >= c.cfg.HighLoadThr {
+		// A partial window from an earlier time of high load (before a
+		// time of low load, or a stop of the pingers) is old: start a new
+		// window. A window starts with its first sample.
+		if len(ds.ltSamples) < latencyTargetMinSamples && now.Sub(ds.ltLastSample) > window {
+			ds.ltSamples = ds.ltSamples[:0]
+		}
+		if len(ds.ltSamples) == 0 {
+			ds.ltWindowStart = now
+		}
 		ds.ltSamples = append(ds.ltSamples, math.Max(delayUs-ref, 0))
+		ds.ltLastSample = now
 	}
 	elapsed := now.Sub(ds.ltWindowStart).Seconds()
 	if elapsed < c.cfg.LatencyTargetWindowS {
