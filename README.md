@@ -369,7 +369,7 @@ On 5G, the radio adds upload delay that no shaper can remove:
 - **Cross delay:** while the download is busy, the scheduler gives fewer upload grants. On the 5G test link, download activity added a median of 21 to 33 ms to the upload delay.
 - **Grant delay:** an active upload waits for its grants. On the test link, a median of 13 to 15 ms.
 
-With the default thresholds (30 ms), the cross delay alone is near the upload threshold. Under load in the two directions, the upload rate then decreases to near `min_rate_kbps`, also without a queue in the shaper. These settings worked best on the test link:
+With the default thresholds (30 ms), the cross delay alone is near the upload threshold. Under load in the two directions, the upload rate then decreases to near `min_rate_kbps`, also without a queue in the shaper. These settings worked best on the test link. Add them to your link config (they do not replace the interfaces and the rates):
 
 ```yaml
 links:
@@ -382,7 +382,7 @@ refractory_on_decrease: true
 learn_cross_delay: true
 ```
 
-- `learn_cross_delay` learns the cross delay and ignores it. On the test link, it gave approximately 1.6 to 2 times the upload throughput under load in the two directions, for 20 to 30 ms more upload delay (p95).
+- `learn_cross_delay` learns the cross delay and ignores it. It learns only while the download is active and the upload load was below 50 % of the upload shaper rate for 2 s or more. Thus, it needs times with download load and a low upload. If the load starts in the two directions at the same time, the learned value can stay too low. In the tests, 30 s of download load came before the upload load. On the test link, it gave approximately 1.6 to 2 times the upload throughput under load in the two directions, for 20 to 30 ms more upload delay (p95).
 - A lower upload threshold (20 ms) with `learn_cross_delay` gave the same upload throughput as 30 ms, with approximately 7 ms less upload delay (p95). Do not set the upload threshold below the grant delay: then the upload rate collapses.
 - The results change much from one test to the next (5G capacity changes). Make a test on your link before you change the defaults.
 
