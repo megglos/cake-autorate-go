@@ -21,7 +21,7 @@ go test ./...
 
 CI runs `go test -race ./...` on each pull request.
 
-Use `-short` to skip the simulator tests (scorecard and baseline).
+Use `-short` to skip the simulator scorecard and the baseline check. The other simulator tests (for example the known-issue tests) also run with `-short`. They are fast.
 
 ### Unit tests
 
@@ -40,7 +40,7 @@ Scenarios (`simScenarios` in `sim_scenarios_test.go`):
 | `bidir-saturated` | Load in the two directions |
 | `5g-variable` | Capacity changes as a random walk with deep fades, large buffers |
 | `starlink-like` | The capacity and the RTT floor change every 15 s, large jitter |
-| `latency-spike` | A 300 ms delay spike that is not a queue |
+| `latency-spike` | The RTT floor increases by 120 ms for 300 ms. This delay is not a queue |
 
 Policies:
 
@@ -68,7 +68,7 @@ The columns:
 
 ### Baseline check
 
-`testdata/sim_baseline.json` contains the scores of `autorate` for each scenario. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance (latency: 10 % or 5 ms; throughput: 3 percentage points). It also shows a table with the changes.
+`testdata/sim_baseline.json` contains the scores of `autorate` for each scenario. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance (p95 and p99: 10 % or 5 ms, the larger value; `bloat s`: 10 % or 1 s, the larger value; `dl %` and `ul %`: 3 percentage points). It also shows a table with the changes.
 
 If a change makes the scores better, write the new baseline and commit it with the change:
 
@@ -82,7 +82,9 @@ A `TestKnownIssueN_...` test examines a behavior that we want but that the contr
 
 ### Replay
 
-`TestRecording_ReplayGivesSameDecisions` records a simulator run and gives the recorded events to a new `Core`. The decisions must be the same. Use the same procedure for a recording from a real link: a change to `Core` then shows its effect on real events.
+`TestRecording_ReplayGivesSameDecisions` records a simulator run and gives the recorded events to a new `Core`. The decisions must be the same.
+
+The test always uses its own simulator recording. The helper `replayRecording` in `recorder_test.go` can also replay a recording from a real link, but it reads only uncompressed JSONL. Thus, first decompress the recording (`gunzip -k NN-MODE-POLICY.jsonl.gz`), then call the helper with the path in a temporary test. With a changed `Core`, the replayed decisions are different from the recorded decisions where the change has an effect.
 
 ## Tests on a real link
 
