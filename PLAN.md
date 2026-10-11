@@ -400,6 +400,8 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Risk: some reflectors do not reply to ICMP timestamp requests. Make a list of reflectors that reply.
   - Add a config key (for example `ping_method`). The default does not change the behavior.
 - [ ] **5. Handling for each link type.**
+  - 2026-10-11: branch `feat/starlink-reconfig` (7af38ac, pushed, **no PR yet**: needs real Starlink data). Option `starlink_reconfiguration` (off by default, OWD only). Measures the floor step in 600 ms after each 15 s boundary (smallest delta increase, smaller of the two directions or the idle direction), then shifts all baselines. Sim: +40 ms floor step at s57 → DL shaper 108 (off) vs 157 (on) Mbit/s; starlink-like 8 seeds p95 33.1 → 34.1, DL 89.6 → 89.0. RTT/2: worse (cannot separate floor and queue) → OWD only.
+  - Source of the 15 s / 12-27-42-57 schedule: public measurement studies of Starlink (for example Mohan et al., "A Multifaceted Look at Starlink Performance", WWW 2024) and the cake-autorate Starlink discussions. From model knowledge, not checked in this session. Verify with our own Starlink recordings (approximately 2026-10-31): plot the OWD per second-of-minute, check the steps at 12/27/42/57 and whether the step is the same in the two directions. If the offsets differ: make period and offset config keys.
   - Starlink (F5): a baseline that knows the reconfiguration boundaries (windowed minimum or a mask at the boundaries).
   - 5G: fast response when the capacity decreases quickly.
   - Starlink recordings are expected on approximately 2026-10-31. Until then, use the 5G recordings and public Starlink data.
