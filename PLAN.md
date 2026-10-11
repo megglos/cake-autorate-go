@@ -384,7 +384,7 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Home line: UniFi UXG, Smart Queue 630/320 Mbit/s. Keep it on. Emulated rates must stay ≤ 70 % of it: DL ≤ 440 Mbit/s, UL ≤ 220 Mbit/s.
   - Traces: simulator traces first, then Mahimahi, then the capacity of the real 5G recordings.
   - Later: the same setup without internet (local iperf3 namespace) for CI (step 7).
-- [ ] **2c. Replay and trace import.** Trace import done (PR #17: `scripts/trace-from-session.sh`, scenarios 5g-recorded-a/b). First calibration result: with the real capacity, the simulator gives better results than the link (echo autorate: sim dl 67-77 % at p95 65 ms, link 40-50 % at 125 ms). Causes to examine: UL delay from DL activity (model in the F8 branch), real TCP, link jitter.
+- [x] **2c. Replay and trace import.** Done 2026-10-11 (PR #25). Gap sim vs link explained by two causes: (1) 1-s mean in trace-from-session hides sub-second capacity dips (5–10 % of 200 ms samples < half of the 2 s mean); (2) recorded scenarios had no UL radio delays. With raw traces (`-r`) + coupling/grant: dl-only DL 36–39 % (link 22–50), ul-only UL 57–61 % (link 56–63). `TestSimCalibration_5GRecorded` keeps it. Remaining: UL capacity under DL load is ~1/3 on the link (11 vs 36 Mbit/s), not modelled. Also found: DL OWD under DL load has a heavy tail (p95 33–94 ms, also at shaper 10–40 % of mean capacity), mostly in bursts: short capacity dips.
   - Replay a recording through `Core` as a test.
   - Import capacity traces (CSV, Mahimahi).
   - Calibrate the simulator with the 5G recordings. Compare the queue delay under load, the jitter and the capacity changes.
