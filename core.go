@@ -65,6 +65,12 @@ type dirState struct {
 type reflectorDelay struct {
 	baselineUs float64
 	deltaEWMA  float64
+
+	// Baselines of the one-way delays (ICMP timestamps). owdInit is false
+	// until the first reply with one-way delays.
+	owdInit      bool
+	dlBaselineUs float64
+	ulBaselineUs float64
 }
 
 // Core is the cake-autorate control algorithm for one WAN link.
@@ -212,10 +218,13 @@ func (c *Core) HandlePing(result PingResult) {
 	rd := c.updateBaseline(result.Reflector, rttUs)
 
 	// The OWD delta is the delay increase above the baseline.
-	// RTT/2 is an approximate OWD (the same as fping mode in the original).
-	deltaUs := (rttUs - rd.baselineUs) / 2.0
-	if deltaUs < 0 {
-		deltaUs = 0
+	// Without one-way delays, RTT/2 is an approximate OWD (the same as fping
+	// mode in the original). Then a queue in one direction also increases
+	// the delta of the other direction.
+	deltaUs := math.Max((rttUs-rd.baselineUs)/2.0, 0)
+	dlDeltaUs, ulDeltaUs := deltaUs, deltaUs
+	if result.OWD {
+		dlDeltaUs, ulDeltaUs = c.owdDeltas(rd, result)
 	}
 
 	// Update the delta EWMA only when the load is below the threshold.
@@ -224,9 +233,24 @@ func (c *Core) HandlePing(result PingResult) {
 		rd.deltaEWMA = c.cfg.AlphaDeltaEWMA*deltaUs + (1-c.cfg.AlphaDeltaEWMA)*rd.deltaEWMA
 	}
 
-	// Process the two directions. With RTT, they get the same delta.
-	c.processDelay(DL, deltaUs, result.Timestamp)
-	c.processDelay(UL, deltaUs, result.Timestamp)
+	c.processDelay(DL, dlDeltaUs, result.Timestamp)
+	c.processDelay(UL, ulDeltaUs, result.Timestamp)
+}
+
+// owdDeltas updates the one-way delay baselines of a reflector. It returns
+// the download and the upload delta. Each baseline contains the clock
+// offset between the hosts. Thus, the delta does not contain it.
+func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDeltaUs float64) {
+	dlUs := float64(result.DlOWD.Microseconds())
+	ulUs := float64(result.UlOWD.Microseconds())
+	if !rd.owdInit {
+		rd.owdInit = true
+		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
+		return 0, 0
+	}
+	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
+	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
+	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
 }
 
 // updateBaseline updates the baseline RTT of a reflector with an EWMA. It
@@ -240,16 +264,18 @@ func (c *Core) updateBaseline(reflector string, rttUs float64) *reflectorDelay {
 		return rd
 	}
 
-	if rttUs < rd.baselineUs {
-		// Delay decreased: follow the new minimum quickly
-		rd.baselineUs = c.cfg.AlphaBaselineDecrease*rttUs +
-			(1-c.cfg.AlphaBaselineDecrease)*rd.baselineUs
-	} else {
-		// Delay increased: the baseline moves slowly
-		rd.baselineUs = c.cfg.AlphaBaselineIncrease*rttUs +
-			(1-c.cfg.AlphaBaselineIncrease)*rd.baselineUs
-	}
+	rd.baselineUs = c.ewmaBaseline(rd.baselineUs, rttUs)
 	return rd
+}
+
+// ewmaBaseline returns the next value of a delay baseline after a sample.
+func (c *Core) ewmaBaseline(baselineUs, sampleUs float64) float64 {
+	if sampleUs < baselineUs {
+		// Delay decreased: follow the new minimum quickly
+		return c.cfg.AlphaBaselineDecrease*sampleUs + (1-c.cfg.AlphaBaselineDecrease)*baselineUs
+	}
+	// Delay increased: the baseline moves slowly
+	return c.cfg.AlphaBaselineIncrease*sampleUs + (1-c.cfg.AlphaBaselineIncrease)*baselineUs
 }
 
 func (c *Core) handleTimeout(result PingResult) {

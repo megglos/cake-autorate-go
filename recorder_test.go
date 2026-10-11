@@ -201,6 +201,8 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			Reflector string    `json:"reflector"`
 			RTTUs     int64     `json:"rtt_us"`
 			Timeout   bool      `json:"timeout"`
+			DlOWDUs   *int64    `json:"dl_owd_us"`
+			UlOWDUs   *int64    `json:"ul_owd_us"`
 			DlKbps    float64   `json:"dl_kbps"`
 			UlKbps    float64   `json:"ul_kbps"`
 			Dir       Direction `json:"dir"`
@@ -221,12 +223,18 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 		case recStart:
 			core.Start(ts)
 		case recPing:
-			core.HandlePing(PingResult{
+			p := PingResult{
 				Reflector: ev.Reflector,
 				RTT:       time.Duration(ev.RTTUs) * time.Microsecond,
 				Timestamp: ts,
 				Timeout:   ev.Timeout,
-			})
+			}
+			if ev.DlOWDUs != nil && ev.UlOWDUs != nil {
+				p.OWD = true
+				p.DlOWD = time.Duration(*ev.DlOWDUs) * time.Microsecond
+				p.UlOWD = time.Duration(*ev.UlOWDUs) * time.Microsecond
+			}
+			core.HandlePing(p)
 		case recRate:
 			core.HandleRate(RateStats{DlRateKbps: ev.DlKbps, UlRateKbps: ev.UlKbps, Timestamp: ts})
 		case recReflectorReset:
@@ -251,12 +259,21 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 // A replay of a recording must give the same decisions as the recorded run.
 // If this test fails, the recording does not contain all inputs of Core.
 func TestRecording_ReplayGivesSameDecisions(t *testing.T) {
-	for _, name := range []string{"5g-variable", "starlink-like", "capacity-drop"} {
-		t.Run(name, func(t *testing.T) {
-			sc := scenarioByName(t, name)
+	for _, run := range []struct {
+		name   string
+		policy simPolicy
+	}{
+		{"5g-variable", policyAutorate},
+		{"starlink-like", policyAutorate},
+		{"capacity-drop", policyAutorate},
+		{"5g-variable", policyAutorateOWD},
+		{"bidir-saturated", policyAutorateOWD},
+	} {
+		t.Run(run.name+"/"+string(run.policy), func(t *testing.T) {
+			sc := scenarioByName(t, run.name)
 			sc.duration = 60 * time.Second
 			sc.recordPath = filepath.Join(t.TempDir(), "rec.jsonl")
-			runSim(sc, policyAutorate)
+			runSim(sc, run.policy)
 
 			recorded, replayed := replayRecording(t, sc.recordPath)
 			if len(recorded) == 0 {

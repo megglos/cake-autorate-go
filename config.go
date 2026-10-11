@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -71,6 +72,8 @@ type Config struct {
 	// Shared pinger settings
 	PingerCount    int `yaml:"pinger_count"`
 	PingIntervalMs int `yaml:"ping_interval_ms"`
+	// PingMethod is PingMethodEcho or PingMethodTimestamp.
+	PingMethod string `yaml:"ping_method"`
 
 	// Idle/sleep settings
 	EnableSleepFunction     bool    `yaml:"enable_sleep_function"`
@@ -125,6 +128,46 @@ type Config struct {
 	Debug            bool   `yaml:"debug"`
 }
 
+// Ping methods.
+const (
+	// PingMethodEcho uses ICMP echo. It measures only the RTT. Core uses
+	// RTT/2 as the delay of each direction.
+	PingMethodEcho = "icmp"
+	// PingMethodTimestamp uses ICMP timestamps. It measures the delay of
+	// each direction. Thus, a queue in one direction does not decrease the
+	// rate of the other direction. Not all reflectors reply.
+	PingMethodTimestamp = "icmp-timestamp"
+)
+
+// defaultTimestampReflectors are the reflectors for PingMethodTimestamp if
+// the config does not set reflectors. Many public DNS servers (for example
+// 1.1.1.1, 8.8.8.8, 9.9.9.9) do not reply to ICMP timestamp requests.
+var defaultTimestampReflectors = []string{
+	"94.140.14.14", // AdGuard DNS
+	"94.140.15.15", // AdGuard DNS
+	"fra-de-ping.vultr.com",
+	"ams-nl-ping.vultr.com",
+	"par-fr-ping.vultr.com",
+	"fsn1-speed.hetzner.com",
+	"nbg1-speed.hetzner.com",
+	"hel1-speed.hetzner.com",
+}
+
+// defaultReflectors returns the default reflectors for a ping method. The
+// usual public DNS reflectors do not reply to ICMP timestamp requests.
+func defaultReflectors(method string) []string {
+	if method == PingMethodTimestamp {
+		return slices.Clone(defaultTimestampReflectors)
+	}
+	return DefaultConfig().Reflectors
+}
+
+// noTimestampReply reports whether a reflector is known to not reply to ICMP
+// timestamp requests. These are the default reflectors for ICMP echo.
+func noTimestampReply(reflector string) bool {
+	return slices.Contains(DefaultConfig().Reflectors, reflector)
+}
+
 // DefaultConfig returns a configuration with sensible defaults matching
 // the original cake-autorate project.
 func DefaultConfig() *Config {
@@ -161,6 +204,7 @@ func DefaultConfig() *Config {
 		},
 		PingerCount:    6,
 		PingIntervalMs: 300,
+		PingMethod:     PingMethodEcho,
 
 		EnableSleepFunction:     true,
 		ConnectionActiveThrKbps: 2000,
@@ -207,6 +251,9 @@ func DefaultConfig() *Config {
 // LoadConfig reads a YAML config file and merges with defaults.
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	// The default reflectors depend on ping_method. Thus, set them after
+	// the parse, and only if the config does not set reflectors.
+	cfg.Reflectors = nil
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -215,6 +262,10 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
+	if len(cfg.Reflectors) == 0 {
+		cfg.Reflectors = defaultReflectors(cfg.PingMethod)
 	}
 
 	// Migrate legacy single-link config to links list
@@ -274,6 +325,26 @@ func inheritThresholds(dc, from *DirectionConfig) {
 	if dc.AvgOWDDeltaMaxAdjDownThrMs == 0 {
 		dc.AvgOWDDeltaMaxAdjDownThrMs = from.AvgOWDDeltaMaxAdjDownThrMs
 	}
+}
+
+// Warnings returns the problems in the config that do not stop the program.
+func (c *Config) Warnings() []string {
+	var w []string
+	if c.PingMethod == PingMethodTimestamp {
+		for _, link := range c.Links {
+			var bad []string
+			for _, r := range link.Reflectors {
+				if noTimestampReply(r) {
+					bad = append(bad, r)
+				}
+			}
+			if len(bad) > 0 {
+				w = append(w, fmt.Sprintf("link %q: reflectors %v do not reply to ICMP timestamp requests. "+
+					"Remove them from the config", link.Name, bad))
+			}
+		}
+	}
+	return w
 }
 
 // ifnameRe matches valid Linux interface names: alphanumerics, hyphens, dots,
@@ -337,6 +408,10 @@ func (c *Config) Validate() error {
 		if len(link.Reflectors) == 0 {
 			return fmt.Errorf("link %q: at least one reflector must be configured", link.Name)
 		}
+		if c.PingMethod == PingMethodTimestamp && !slices.ContainsFunc(link.Reflectors, func(r string) bool { return !noTimestampReply(r) }) {
+			return fmt.Errorf("link %q: no reflector replies to ICMP timestamp requests. "+
+				"Remove the reflectors from the config to use the default list for icmp-timestamp", link.Name)
+		}
 	}
 
 	if c.PingerCount <= 0 {
@@ -359,6 +434,9 @@ func (c *Config) Validate() error {
 	}
 	if c.PingIntervalMs <= 0 {
 		return fmt.Errorf("ping_interval_ms must be positive")
+	}
+	if c.PingMethod != PingMethodEcho && c.PingMethod != PingMethodTimestamp {
+		return fmt.Errorf("ping_method must be %q or %q", PingMethodEcho, PingMethodTimestamp)
 	}
 	if c.ReflectorResponseDeadlineS <= 0 {
 		return fmt.Errorf("reflector_response_deadline_s must be positive")

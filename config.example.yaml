@@ -36,15 +36,14 @@ links:
       owd_delta_delay_thr_ms: 30.0
       avg_owd_delta_max_adjust_up_thr_ms: 10.0
       avg_owd_delta_max_adjust_down_thr_ms: 60.0
-    reflectors:
-      - 1.1.1.1
-      - 1.0.0.1
-      - 8.8.8.8
-      - 8.8.4.4
-      - 9.9.9.9
-      - 149.112.112.112
-      - 208.67.222.222
-      - 208.67.220.220
+    # Reflectors of this link. If you do not set them, the link uses the
+    # top-level reflectors, or the default list for the ping_method. With
+    # ping_method icmp-timestamp, use only reflectors that reply to timestamp
+    # requests (see the README).
+    # reflectors:
+    #   - 1.1.1.1
+    #   - 8.8.8.8
+    #   - 9.9.9.9
     # ping_interface: wan       # Bind ICMP socket to this interface (SO_BINDTODEVICE)
     # ping_source_addr: 0.0.0.0 # Source IP address for ICMP packets
 
@@ -80,6 +79,12 @@ links:
 
 pinger_count: 6             # Number of reflectors to ping simultaneously
 ping_interval_ms: 300       # Interval between pings per reflector (ms)
+# ping_method: "icmp" (ICMP echo, RTT/2 for each direction) or
+# "icmp-timestamp" (ICMP timestamps, delay of each direction). With
+# "icmp-timestamp", the reflectors must reply to timestamp requests. If you do
+# not set reflectors, the program uses a list of reflectors that reply
+# (AdGuard DNS, Vultr, Hetzner).
+ping_method: icmp
 
 # -- Idle/Sleep Settings ------------------------------------------------------
 
