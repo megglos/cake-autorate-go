@@ -322,8 +322,9 @@ const (
 	// continues, but not for more than this number of window times.
 	latencyTargetMaxWindows = 10
 	// latencyTargetRefMaxLoad is the maximum load when the reference of
-	// the latency target follows the baseline of the controller. At this
-	// load, the delay has no part from the load (queue, 5G grant delay).
+	// the latency target follows the baseline of the controller. Also, the
+	// achieved rate must be below connection_active_thr_kbps (idle): on
+	// 5G, the grant delay is already there at a low load.
 	latencyTargetRefMaxLoad = 0.2
 )
 
@@ -380,7 +381,7 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// delay. Thus, the delta of the controller decreases over time also if
 	// the delay does not change. For the latency target, the reference of
 	// each reflector follows the baseline of the controller only at low
-	// load (latencyTargetRefMaxLoad: no queue, no delay from load), and
+	// load (idle: no queue, no delay from load), and
 	// when the baseline decreases (a lower floor, or a clock offset
 	// change). At a higher load, the reference does not increase: the
 	// baseline then contains delay from the load (also at moderate load,
@@ -396,9 +397,11 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// than high_load_thr: else one sample is reference data and target
 	// data.
 	cutoff := math.Min(latencyTargetRefMaxLoad, c.cfg.HighLoadThr)
-	lowLoad := ds.loadPercent < cutoff
+	active := float64(c.cfg.ConnectionActiveThrKbps)
+	idle := func(d *dirState) bool { return d.loadPercent < cutoff && d.achievedKbps < active }
+	lowLoad := idle(ds)
 	if !c.lastPingOWD || dir == UL {
-		lowLoad = c.dl.loadPercent < cutoff && c.ul.loadPercent < cutoff
+		lowLoad = idle(&c.dl) && idle(&c.ul)
 	}
 	if !ok || baselineUs < ref || lowLoad {
 		ref = baselineUs

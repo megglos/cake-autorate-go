@@ -1303,6 +1303,34 @@ func TestObserveLatency_ULReferenceNeedsLowDownload(t *testing.T) {
 	}
 }
 
+// At a low load fraction but with traffic (achieved rate above
+// connection_active_thr_kbps), the reference does not follow the baseline:
+// on 5G, the grant delay is already there at a low load.
+func TestObserveLatency_ReferenceNeedsIdle(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	c.lastPingOWD = true
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(DL, "r1", 10000, 10000, ts)
+	// 10 % load with 5 Mbit/s for a long time: the baseline increases to
+	// 40 ms.
+	c.dl.loadPercent, c.dl.achievedKbps = 0.1, 5000
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 40000, 40000, ts)
+	}
+	// High load: 70 ms above the idle reference.
+	c.dl.loadPercent, c.dl.achievedKbps = 1, 50000
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 80000, 40000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("scale %.2f, want a decrease (p95 70 ms, target 50 ms)", got)
+	}
+}
+
 // After a stop of the pingers, a ping at low load does not complete the
 // old window.
 func TestObserveLatency_StaleWindowLowLoad(t *testing.T) {
