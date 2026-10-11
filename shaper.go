@@ -11,7 +11,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"os"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -45,7 +45,18 @@ type Shaper struct {
 	lastRates map[string]int   // last applied rate per interface, to skip no-ops
 	msgBuf    []byte           // reusable buffer for building netlink messages
 	recvBuf   []byte           // reusable buffer for receiving netlink responses
+
+	// netlinkRetryAt is the time to open the netlink socket again after a
+	// netlink error. While fd < 0 and before this time, SetRate uses tc. A
+	// zero time means no retry.
+	netlinkRetryAt time.Time
+	now            func() time.Time // the clock; nil means time.Now
 }
+
+// netlinkRetryInterval is the time between attempts to use netlink again
+// after a netlink error. A temporary error (for example, a USB modem that
+// is not connected yet) thus does not cause tc exec until the program stops.
+const netlinkRetryInterval = 60 * time.Second
 
 // NewShaper creates a new Shaper with a persistent netlink socket.
 func NewShaper(logger *Logger) *Shaper {
@@ -58,17 +69,27 @@ func NewShaper(logger *Logger) *Shaper {
 		recvBuf:   make([]byte, 4096),   // pre-allocate for netlink responses
 	}
 
+	fd, err := openNetlink()
+	if err != nil {
+		logger.Infof("%v, shaper will use tc exec fallback", err)
+		s.netlinkRetryAt = s.clock().Add(netlinkRetryInterval)
+		return s
+	}
+	s.fd = fd
+	return s
+}
+
+// openNetlink opens and binds a NETLINK_ROUTE socket.
+func openNetlink() (int, error) {
 	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
 	if err != nil {
-		logger.Infof("netlink socket failed (%v), shaper will use tc exec fallback", err)
-		return s
+		return -1, fmt.Errorf("netlink socket failed (%w)", err)
 	}
 
 	sa := &unix.SockaddrNetlink{Family: unix.AF_NETLINK}
 	if err := unix.Bind(fd, sa); err != nil {
 		unix.Close(fd)
-		logger.Infof("netlink bind failed (%v), shaper will use tc exec fallback", err)
-		return s
+		return -1, fmt.Errorf("netlink bind failed (%w)", err)
 	}
 
 	// Set a receive timeout so Recvfrom won't block indefinitely if the
@@ -77,12 +98,36 @@ func NewShaper(logger *Logger) *Shaper {
 	tv := unix.Timeval{Sec: 5}
 	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
 		unix.Close(fd)
-		logger.Infof("netlink SO_RCVTIMEO failed (%v), shaper will use tc exec fallback", err)
-		return s
+		return -1, fmt.Errorf("netlink SO_RCVTIMEO failed (%w)", err)
 	}
+	return fd, nil
+}
 
+func (s *Shaper) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// netlinkReady reports whether SetRate can use netlink. If the socket is
+// closed and the retry time is reached, it opens a new socket. A new socket
+// also removes late replies to old requests. The caller holds s.mu.
+func (s *Shaper) netlinkReady() bool {
+	if s.fd >= 0 {
+		return true
+	}
+	if s.netlinkRetryAt.IsZero() || s.clock().Before(s.netlinkRetryAt) {
+		return false
+	}
+	fd, err := openNetlink()
+	if err != nil {
+		s.netlinkRetryAt = s.clock().Add(netlinkRetryInterval)
+		return false
+	}
+	s.logger.Infof("netlink is available again")
 	s.fd = fd
-	return s
+	return true
 }
 
 // Close releases the netlink socket.
@@ -120,20 +165,17 @@ func (s *Shaper) SetRate(iface string, rateKbps int) error {
 		return nil
 	}
 
-	useTc := s.fd < 0
-
-	if !useTc {
+	if s.netlinkReady() {
 		err := s.setRateNetlink(iface, rateKbps)
 		if err != nil {
 			// Invalidate cached ifindex — interface may have been
 			// re-created with a different index (e.g. after replug).
 			delete(s.ifIndices, iface)
-			// Disable netlink for future calls to avoid retrying a
-			// permanently broken path.
-			s.logger.Infof("netlink failed on %s (%v), falling back to tc exec", iface, err)
+			// Use tc until the retry time. Then open a new socket.
+			s.logger.Infof("netlink failed on %s (%v), using tc exec for %v", iface, err, netlinkRetryInterval)
 			unix.Close(s.fd)
 			s.fd = -1
-			useTc = true
+			s.netlinkRetryAt = s.clock().Add(netlinkRetryInterval)
 		} else {
 			s.lastRates[iface] = rateKbps
 			s.mu.Unlock()
@@ -276,22 +318,19 @@ func (s *Shaper) setRateTc(iface string, rateKbps int) error {
 	return nil
 }
 
-// getIfindex returns the interface index, reading from sysfs and caching.
+// getIfindex returns the interface index (with netlink, through the net
+// package) and caches it.
 func (s *Shaper) getIfindex(iface string) (int32, error) {
 	if idx, ok := s.ifIndices[iface]; ok {
 		return idx, nil
 	}
 
-	data, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/ifindex", iface))
+	ifi, err := net.InterfaceByName(iface)
 	if err != nil {
-		return 0, fmt.Errorf("reading ifindex for %s: %w", iface, err)
-	}
-	val, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("parsing ifindex for %s: %w", iface, err)
+		return 0, fmt.Errorf("ifindex for %s: %w", iface, err)
 	}
 
-	idx := int32(val)
+	idx := int32(ifi.Index)
 	s.ifIndices[iface] = idx
 	return idx, nil
 }
