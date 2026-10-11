@@ -2,7 +2,7 @@
 
 This document tells how to measure a link and get a config that fits it. Use it at a new place: another 5G cell, another provider, another modem. The procedure has two steps:
 
-1. Record a session on the link with `scripts/record-session.sh` (approximately 1 hour).
+1. Record a session on the link with `scripts/record-session.sh` (approximately 40 minutes).
 2. Analyze the session with `cake-autorate-go calibrate`. It writes a proposed config.
 
 The result is a proposal, not a final config. Read the comments in the file and compare them with the explanations below.
@@ -63,7 +63,7 @@ sudo ./scripts/record-session.sh -i enp7s0 -c my-5g.yaml -r 2 -W 30
 - `-r 2`: two rounds. Two rounds show if the link changed during the session.
 - `-W 30`: in the blocks with load in the two directions, 30 s of download load first. Then the controller can learn the upload delay from download activity before the upload starts.
 
-The script runs approximately 55 to 60 minutes. Do not use the network during the session. Do not move the modem.
+The script runs approximately 40 minutes (12 blocks of approximately 3 minutes, and the saturation check). Do not use the network during the session. Do not move the modem.
 
 **CAKE before the session:** do not set it up yourself, and stop other shapers on this interface (SQM, a running cake-autorate or cake-autorate-go). The script sets up CAKE itself and controls it in each block: CAKE without a bandwidth limit in the `unshaped` blocks, CAKE controlled by cake-autorate-go in the `autorate` blocks. It replaces an existing root qdisc on the interface and removes CAKE at the end. "Unshaped" thus does not mean "without CAKE": CAKE is there, but it does not limit the rate. Then the buffers of the modem and the network fill, as without CAKE.
 
@@ -154,7 +154,7 @@ The command reads `blocks.tsv`, `session.txt` and the recordings of the session.
 | Delay thresholds | at least 30 ms, at least 2 × the median idle jitter | Below 2 × the jitter, the jitter alone shows bufferbloat. |
 | Upload threshold | also at least the median grant delay + 10 ms | Below it, the upload rate collapses on 5G. |
 | `learn_cross_delay` | on if the median cross delay is more than 10 ms | On 5G it is 25 to 33 ms; on fiber approximately 0. |
-| `ping_method`, `reflectors` | `icmp-timestamp` if 4 or more reflectors reply; the `pinger_count` + 2 with the lowest jitter, without the ones above 2 × the median | The program selects the active reflectors at random from the list. Thus, the list must not contain bad reflectors. |
+| `ping_method`, `reflectors` | `icmp-timestamp` if 4 or more reflectors reply; the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the median | The program selects the active reflectors at random from the list. Thus, the list must not contain bad reflectors. |
 
 The rules come from 5G sessions in October 2026 (Vodafone, Berlin). For other link types (fiber, cable, Starlink), the rules are not tested yet.
 
