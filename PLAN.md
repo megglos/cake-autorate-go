@@ -381,7 +381,8 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
 5. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
 6. Step 9: LuCI/OpenWrt package (`PLAN-LUCI.md`). Needs the QEMU VM (user: `modprobe kvm_amd`, `pacman -S qemu-base`).
 7. Step 10: Starlink from 2026-10-28 (branch `feat/starlink-reconfig`).
-8. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
+8. Known issues are GitHub issues #30 (F1), #31 (F2), #32 (F4), #33 (F5); PR #34 links them in the CI summary. `refractory_on_decrease` as default rejected 2026-10-11: sim baseline 5g-variable OWD p95 58 → 115 ms (more throughput, much more delay). Idea for F1/F2 without that cost: block repeated cuts only during a short spike (e.g. no second cut while the delta decreases).
+9. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
 
 5G tests still useful (next 5G day):
 - Upstream vs ours on 5G (step 8): `-U fts=recordings/upstream-5g-fping-ts.sh` vs `5g-s7-learn-u20.yaml` (our best 5G profile), modes `ul both`, `-W 30`, 2 rounds = 12 blocks ≈ 40 min. Gives the main result of the comparison on the real link.
