@@ -335,11 +335,22 @@ Config `recordings/5g-s7-learn-u20.yaml` (= 5g-s5-learn + UL thr 20, adjust_down
 
 Result: learn20 gives the same UL as learn30 (+60 % vs main) at 7 ms lower UL p95; DL −8 % for both learn variants. Noisy (UL per block 5–19). Sessions 6+7 together: learn_cross_delay roughly doubles/×1.6 UL under two-way load for +20–30 ms UL p95. 5G profile proposal: `learn_cross_delay: true`, UL threshold 20–25 ms (calibrate floor 23–25). Defaults stay 30/30, learn off.
 
-### Session 8 (prepared): latency target on the link (PR #27 binary)
+### Session 8 (done 2026-10-11 16:20–17:18, `recordings/20261011-1620-enp7s0`): latency target on the link (PR #27 binary)
 
 `recordings/5g-s8-ul-target60.yaml` = 5g-s5-learn + UL `latency_target_p95_ms: 60`, `latency_target_min_thr_ms: 25`, `latency_target_window_s: 20`. Binary `../cake-autorate-go-lt/cake-autorate-go` (41c53a4, rebuilt after the review fixes). Base policy: learn30 (main binary). Modes ul + both (warm-up), 3 rounds = 18 blocks, ~55 min:
 `sudo ./scripts/record-session.sh -i enp7s0 -c recordings/5g-s5-learn.yaml -m "ul both" -r 3 -W 30 -A target60=recordings/5g-s8-ul-target60.yaml,../cake-autorate-go-lt/cake-autorate-go`
 Expect (sim): UL p95 near 60–70 ms, more UL than learn30. Check the log for the threshold changes (`grep "latency target" NN-*.log`).
+Result (excess RTT p50/p95, Mbit/s, base = learn30 vs target60):
+
+| Mode | base UL | target60 UL | base RTT p95 | target60 RTT p95 |
+|---|---|---|---|---|
+| ul (3 rounds) | 22 20 21 | 24 24 25 | 49 44 50 | 64 70 74 |
+| both DL/UL | 112/7 113/9 85/11 | 113/19 96/11 115/9 | 106 173 136 | 113 133 135 |
+
+- ul: the target operates as designed. Log: UL OWD p95 per 20 s window 27–54 ms (below 60), threshold 30 → 33 → … → 48–53 ms at the block end (not converged in 150 s). One window at 92.8 ms gave a decrease 48 → 39. Result: +15 % UL for +20 ms RTT p95.
+- both: UL OWD p95 88–115 ms also at the minimum threshold 25 ms → "not reachable" logged in each block; one floor undo (block 12). UL radio delay (cross + grant) is above 60 ms. Throughput differences in both are in the noise.
+- Conclusion: the latency target is a correct bandwidth/latency trade-off knob for one-way load. For 5G with two-way load, a UL target below approximately 100 ms is not reachable; the log tells it. Longer blocks are necessary to see convergence (window 20 s, approximately 6 windows per block).
+- Not done: pooled per-ping OWD analysis (the log windows give the same p95 information).
 
 ### Session 4 configs (prepared)
 
