@@ -349,6 +349,7 @@ global_ping_response_timeout_s: 10.0    # All reflectors must respond within thi
 monitor_interval_ms: 200                # How often to sample interface throughput
 bufferbloat_refractory_period_ms: 300   # Cooldown between rate increases after bufferbloat
 refractory_on_decrease: false           # true: also only one rate decrease in each refractory period
+learn_cross_delay: false                # true: ignore the upload delay from download activity (icmp-timestamp only)
 decay_refractory_period_ms: 1000        # Cooldown between low-load decay adjustments
 ```
 
@@ -389,6 +390,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
+| `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. The learned delay is not more than the upload delay threshold |
 | `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
 | `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |
 | `global_ping_response_timeout_s` | `10.0` | All-reflector response timeout (s) |
