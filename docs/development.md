@@ -88,6 +88,16 @@ A `TestKnownIssueN_...` test examines a behavior that we want but that the contr
 
 The test always uses its own simulator recording. The helper `replayRecording` in `recorder_test.go` can also replay a recording from a real link, but it reads only uncompressed JSONL. Thus, first decompress the recording (`gunzip -k NN-MODE-POLICY.jsonl.gz`), then call the helper with the path in a temporary test. With a changed `Core`, the replayed decisions are different from the recorded decisions where the change has an effect.
 
+### Emulation test
+
+The simulator does not test the netlink code, the pingers and the CAKE qdisc. `scripts/ci-emulation.sh` tests the real binary on an emulated link in three network namespaces (router, modem, server). It does not need an internet connection. The modem has a large queue and a rate that changes. The test has two phases with load in the two directions (iperf3): CAKE without a rate limit, then cake-autorate-go. It fails if the unshaped phase has no bufferbloat, or if autorate does not keep the delay and the throughput in the limits. CI runs it in the job `emulation`.
+
+```sh
+go build -o cake-autorate-go .
+sudo ./scripts/ci-emulation.sh        # result in recordings/<date>-ci-emu/result.txt
+sudo ./scripts/ci-emulation.sh -k     # remove the setup after a crash
+```
+
 ## Tests on a real link
 
 The simulator has limits (fluid model, simple jitter, no random packet loss on the radio link; it models only the drops of the queues). Thus, examine an important change also on a real link or in an emulation:

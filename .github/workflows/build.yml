@@ -44,6 +44,45 @@ jobs:
             grep -o 'known issue .*' sim.log | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Test the real binary with the real CAKE qdisc on an emulated link in
+  # network namespaces (scripts/ci-emulation.sh).
+  emulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o cake-autorate-go .
+
+      - name: Install the tools and the kernel modules
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q iperf3 ethtool "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3 ethtool
+          for m in sch_cake sch_netem sch_tbf ifb act_mirred; do sudo modprobe "$m"; done
+
+      - name: Emulation test
+        run: sudo ./scripts/ci-emulation.sh -o ci-emu
+
+      - name: Result
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '## Emulation test'
+            echo '```'
+            cat ci-emu/result.txt 2>/dev/null || echo 'No result. Look at the test log.'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: ci-emulation
+          path: ci-emu/
+
   build:
     needs: test
     runs-on: ubuntu-latest
