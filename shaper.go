@@ -54,8 +54,9 @@ type Shaper struct {
 }
 
 // netlinkRetryInterval is the time between attempts to use netlink again
-// after a netlink error. A temporary error (for example, a USB modem that
-// is not connected yet) thus does not cause tc exec until the program stops.
+// after a netlink error. Thus, after a temporary error (for example, a USB
+// modem that is not connected yet), the shaper uses tc exec only for this
+// time, not for the remaining time of the process.
 const netlinkRetryInterval = 60 * time.Second
 
 // NewShaper creates a new Shaper with a persistent netlink socket.
