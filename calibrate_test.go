@@ -29,6 +29,7 @@ type calTestLink struct {
 	noisyReflector       bool    // reflector r5 has 5 times the idle jitter
 	warmupS              int     // download warm-up in the mode both (s)
 	flakyReflector       bool    // reflector r4 replies to 1 of 10 pings
+	echoReflector        bool    // reflector r4 replies without one-way delays under load
 	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
 }
@@ -118,6 +119,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				if l.flakyReflector && r == "r4" && (ms/150)%50 != 3 {
 					rec.Ping("wan", PingResult{Reflector: r, Timeout: true, Timestamp: ts})
 					continue
+				}
+				if l.echoReflector && r == "r4" && !ts.Before(warmStart) {
+					ping.OWD, ping.UlOWD, ping.DlOWD = false, 0, 0
 				}
 				rec.Ping("wan", ping)
 			}
@@ -501,6 +505,19 @@ func TestCalibrateSession_FlakyReflector(t *testing.T) {
 	}
 	if p := res.propose(cfg); slices.Contains(p.Reflectors, "r4") {
 		t.Errorf("reflectors = %v, want no r4 (replies to 1 of 50 pings)", p.Reflectors)
+	}
+}
+
+// A reflector that gives one-way delays in few replies is not a
+// candidate: at run time, most of its replies are RTT/2.
+func TestCalibrateSession_EchoReflector(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, echoReflector: true})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.propose(cfg); slices.Contains(p.Reflectors, "r4") {
+		t.Errorf("reflectors = %v, want no r4 (one-way delays only without load)", p.Reflectors)
 	}
 }
 

@@ -108,7 +108,7 @@ type calReflector struct {
 	Addr      string
 	OWD       bool    // replies with ICMP timestamps
 	IdleP95Ms float64 // jitter without load (p95 of the delta, larger direction)
-	Replies   int     // replies (with and without one-way delays)
+	Replies   int     // replies with one-way delays
 	Sent      int     // pings (replies and timeouts)
 }
 
@@ -159,7 +159,6 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		}
 		for r, n := range rec.echo {
 			echo[r] += n
-			replied[r] += n
 		}
 		for r, n := range rec.sent {
 			sent[r] += n
@@ -228,15 +227,17 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		// Only a reflector with enough idle samples and replies is a
 		// candidate. A reflector with few replies has a too low jitter
 		// (one sample is its own baseline) and is not usable at run time.
+		// Replies without one-way delays do not count: at run time, they
+		// give RTT/2.
 		rf.OWD = len(d) >= calMinIdleSamples && float64(rf.Replies) >= calMinReplyRatio*float64(rf.Sent)
 		res.Reflectors = append(res.Reflectors, rf)
 		if rf.OWD {
 			jitter = append(jitter, dist.P95)
 		}
 	}
-	for r, n := range echo {
+	for r := range echo {
 		if _, ok := deltas[r]; !ok {
-			res.Reflectors = append(res.Reflectors, calReflector{Addr: r, Replies: n})
+			res.Reflectors = append(res.Reflectors, calReflector{Addr: r, Sent: sent[r]})
 		}
 	}
 	sort.Slice(res.Reflectors, func(i, j int) bool {
