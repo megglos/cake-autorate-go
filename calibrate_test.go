@@ -30,6 +30,7 @@ type calTestLink struct {
 	warmupS              int     // download warm-up in the mode both (s)
 	flakyReflector       bool    // reflector r4 replies to 1 of 10 pings
 	echoReflector        bool    // reflector r4 replies without one-way delays under load
+	sparseReflector      bool    // reflector r4 gets 1 of 3 pings (a long ping interval)
 	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
 }
@@ -118,6 +119,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				}
 				if l.flakyReflector && r == "r4" && (ms/150)%50 != 3 {
 					rec.Ping("wan", PingResult{Reflector: r, Timeout: true, Timestamp: ts})
+					continue
+				}
+				if l.sparseReflector && r == "r4" && (ms/150/len(reflectors))%3 != 0 {
 					continue
 				}
 				if l.echoReflector && r == "r4" && !ts.Before(warmStart) {
@@ -518,6 +522,47 @@ func TestCalibrateSession_EchoReflector(t *testing.T) {
 	}
 	if p := res.propose(cfg); slices.Contains(p.Reflectors, "r4") {
 		t.Errorf("reflectors = %v, want no r4 (one-way delays only without load)", p.Reflectors)
+	}
+}
+
+// A reflector with few idle samples in each block is not a candidate, also
+// if all blocks together have enough samples: each block has its own
+// baseline, and with few samples the jitter is too low.
+func TestCalibrateSession_SparseReflector(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, sparseReflector: true})
+	res, _, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rf := range res.Reflectors {
+		if rf.Addr == "r4" && rf.OWD {
+			t.Errorf("r4 is a candidate (idle p95 %.1f ms), want not (few samples in each block)", rf.IdleP95Ms)
+		}
+	}
+}
+
+// A malformed block number stops the calibration.
+func TestCalibrateSession_BadBlockNumber(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4})
+	p := filepath.Join(dir, "blocks.tsv")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitN(string(b), "\n", 3)
+	lines[1] = "x" + lines[1][strings.IndexByte(lines[1], '\t'):]
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := calibrateSession(dir); err == nil || !strings.Contains(err.Error(), "block number") {
+		t.Errorf("err = %v, want a block number error", err)
+	}
+}
+
+// calibrate -h is a help request, not an error.
+func TestRunCalibrate_Help(t *testing.T) {
+	if got := runCalibrate([]string{"-h"}); got != 0 {
+		t.Errorf("exit code %d, want 0", got)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -215,6 +216,9 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	deltas := map[string][]float64{}
 	for k, v := range idle {
 		r := k[strings.IndexByte(k, ' ')+1:]
+		if len(v) < calMinBlockSamples {
+			continue
+		}
 		base := baselinesOf(v)
 		for _, p := range v {
 			deltas[r] = append(deltas[r], math.Max(p.dlUs-base[0], p.ulUs-base[1])/1000)
@@ -406,7 +410,10 @@ func readBlocks(dir string) ([]calBlock, error) {
 		if len(col) < 11 {
 			return nil, fmt.Errorf("blocks.tsv line %d: %d columns, want 11", line+1, len(col))
 		}
-		num, _ := strconv.Atoi(col[0])
+		num, err := strconv.Atoi(col[0])
+		if err != nil {
+			return nil, fmt.Errorf("blocks.tsv line %d: block number: %w", line+1, err)
+		}
 		ts := make([]time.Time, 4)
 		for i := range ts {
 			s, err := strconv.ParseInt(col[4+i], 10, 64)
@@ -537,7 +544,11 @@ const (
 	// calMinIdleSamples and calMinReplyRatio: a reflector needs this number
 	// of idle samples and this ratio of replies to pings.
 	calMinIdleSamples = 20
-	calMinReplyRatio  = 0.9
+	// calMinBlockSamples is the number of idle samples of a reflector in a
+	// block, for the jitter of that block. Each block has its own
+	// baseline (the minimum): with few samples, the jitter is too low.
+	calMinBlockSamples = 10
+	calMinReplyRatio   = 0.9
 	// calSpareReflectors is the number of reflectors in the list more than
 	// pinger_count (spares for misbehaving reflectors).
 	calSpareReflectors = 2
@@ -732,6 +743,9 @@ func runCalibrate(args []string) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if *session == "" {
