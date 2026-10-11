@@ -15,15 +15,24 @@ import (
 	"testing"
 )
 
-// The baseline file contains the autorate scores for each scenario.
-// TestSimBaseline fails when a score is worse than the baseline by more than
-// the tolerance. To accept new scores, run:
+// The baseline file contains the scores of each baseline policy for each
+// scenario (key "policy/scenario"), as the mean of simBaselineSeeds seed
+// variants. TestSimBaseline fails when a score is worse than the baseline by
+// more than the tolerance. To accept new scores, run:
 //
 //	go test -run TestSimBaseline -update
 //
 // Then, add the changed baseline file to the pull request.
 
 const simBaselinePath = "testdata/sim_baseline.json"
+
+// simBaselinePolicies are the policies in the baseline: RTT/2 (icmp, fping)
+// and one-way delays (icmp-timestamp) use different rules in Core.
+var simBaselinePolicies = []simPolicy{policyAutorate, policyAutorateOWD}
+
+// simBaselineSeeds is the number of seed variants for each score. One seed
+// can hide a change that occurs only with some traces.
+const simBaselineSeeds = 4
 
 var updateBaseline = flag.Bool("update", false, "write the current simulator scores to "+simBaselinePath)
 
@@ -94,9 +103,13 @@ func TestSimBaseline(t *testing.T) {
 
 	current := make(map[string]simScores)
 	var names []string
-	for _, sc := range simScenarios() {
-		current[sc.name] = scoresOf(runSim(sc, policyAutorate))
-		names = append(names, sc.name)
+	for _, p := range simBaselinePolicies {
+		for i, sc := range simScenarios() {
+			r, _ := runSimSeeds(i, p, simBaselineSeeds)
+			name := fmt.Sprintf("%s/%s", p, sc.name)
+			current[name] = scoresOf(r)
+			names = append(names, name)
+		}
 	}
 
 	if *updateBaseline {

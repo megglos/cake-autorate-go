@@ -68,7 +68,7 @@ The columns:
 
 ### Baseline check
 
-`testdata/sim_baseline.json` contains the scores of `autorate` for each scenario. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance (p95 and p99: 10 % or 5 ms, the larger value; `bloat s`: 10 % or 1 s, the larger value; `dl %` and `ul %`: 3 percentage points). It also shows a table with the changes.
+`testdata/sim_baseline.json` contains the scores of `autorate` and `autorate-owd` for each scenario (key `policy/scenario`). Each score is the mean of 4 seed variants. One seed can hide a change that occurs only with some traces. The two policies use different rules in `Core`. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance (p95 and p99: 10 % or 5 ms, the larger value; `bloat s`: 10 % or 1 s, the larger value; `dl %` and `ul %`: 3 percentage points). It also shows a table with the changes.
 
 If a change makes the scores better, write the new baseline and commit it with the change:
 
