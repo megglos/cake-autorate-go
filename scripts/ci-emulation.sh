@@ -110,6 +110,11 @@ teardown() {
     done
     wait 2>/dev/null || true
     for ns in "$NS_R" "$NS_M" "$NS_S"; do
+        # Deleting a namespace does not stop its processes (for example the
+        # iperf3 daemons after a crash).
+        for pid in $(ip netns pids "$ns" 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
         ip netns del "$ns" 2>/dev/null || true
     done
     if [ -n "$OUTDIR" ] && [ -d "$OUTDIR" ] && [ -n "${SUDO_USER:-}" ]; then
@@ -241,10 +246,14 @@ phase() {
     sleep 2
 }
 
-# The mean capacity of the load time: the wave has the same time at the
-# high rate and at half of it.
-mean_dl=$(( DL_KBPS * 3 / 4 ))
-mean_ul=$(( UL_KBPS * 3 / 4 ))
+# The mean capacity of the load time. The wave starts with the high rate.
+# If LOAD_S is not a number of full wave cycles, the high rate has more
+# time.
+high_s=$(( LOAD_S / (2 * PERIOD_S) * PERIOD_S ))
+rest=$(( LOAD_S % (2 * PERIOD_S) ))
+high_s=$(( high_s + (rest < PERIOD_S ? rest : PERIOD_S) ))
+mean_dl=$(( DL_KBPS * (LOAD_S + high_s) / (2 * LOAD_S) ))
+mean_ul=$(( UL_KBPS * (LOAD_S + high_s) / (2 * LOAD_S) ))
 
 phase unshaped
 
@@ -286,21 +295,22 @@ wait "$AUTORATE_PID" 2>/dev/null || true
 # excess_p95 prints the p95 of the excess RTT under load (ms): the RTT minus
 # the minimum RTT of the idle time. ping prints one line for each reply.
 # It sends at 0.1 s: icmp_seq N is at N/10 s.
+# The first awk prints "idle RTT" or "load RTT"; sort puts the idle lines
+# first and sorts the RTTs (portable: no GNU awk asort).
 excess_p95() {
     awk -v idle="$IDLE_S" '
         /time=/ {
             seq = $0; sub(/.*icmp_seq=/, "", seq); sub(/ .*/, "", seq)
             rtt = $0; sub(/.*time=/, "", rtt); sub(/ ms.*/, "", rtt)
-            rtt += 0
-            if (seq <= idle * 10) { if (min == "" || rtt < min) min = rtt }
-            else load[++k] = rtt
-        }
+            print (seq + 0 <= idle * 10 ? "idle" : "load"), rtt + 0
+        }' "$1" | sort -k1,1 -k2,2n | awk '
+        $1 == "idle" { if (min == "") min = $2; next }
+        { load[++k] = $2 }
         END {
             if (k == 0 || min == "") { print "nan"; exit }
-            asort(load)
             i = int(0.95 * k); if (i < 1) i = 1
             printf "%.1f\n", load[i] - min
-        }' "$1"
+        }'
 }
 
 # kbps prints the received throughput of an iperf3 JSON result (kbit/s).
