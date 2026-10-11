@@ -394,6 +394,46 @@ func TestSimOWD_CutFromAchievedRate(t *testing.T) {
 	}
 }
 
+// A link outage of 20 s (with 2 % ping loss before and after it): Core must
+// find the stall (global_ping_response_timeout_s is 10 s), and after the
+// outage it must go back to normal operation and get the capacity again.
+func TestSim_OutageAndPingLoss(t *testing.T) {
+	sc := scenarioByName(t, "steady-dl")
+	sc.name = "outage"
+	sc.pingLoss = 0.02
+	sc.outage = between(40, 60)
+	for _, p := range []simPolicy{policyAutorate, policyAutorateOWD} {
+		r := runSim(sc, p)
+		// Core waits for global_ping_response_timeout_s (10 s) before the
+		// stall. Thus, the stall is approximately the last 10 s of the outage.
+		if r.stallS < 8 || r.stallS > 12 {
+			t.Errorf("%s: %.1f s in stall during a 20 s outage, want approximately 10 s", p, r.stallS)
+		}
+		if r.stallEnd < 60000 || r.stallEnd > 65000 {
+			t.Errorf("%s: end of the stall at %.1f s, want in the 5 s after the outage (60 s)", p, r.stallEnd/1000)
+		}
+		const capacity = 120000.0
+		if after := mean(sliceS(r.dlShaper, 80, 118)); after < 0.75*capacity {
+			t.Errorf("%s: mean DL shaper %.0f kbps after the outage, want 75%% of the capacity or more", p, after)
+		}
+	}
+
+	// Ping loss alone (5 %) must not cause a stall or a large loss of
+	// throughput.
+	sc = scenarioByName(t, "steady-dl")
+	sc.pingLoss = 0.05
+	for _, p := range []simPolicy{policyAutorate, policyAutorateOWD} {
+		base := runSim(scenarioByName(t, "steady-dl"), p)
+		r := runSim(sc, p)
+		if r.stallS > 0 {
+			t.Errorf("%s: %.1f s in stall with 5 %% ping loss, want none", p, r.stallS)
+		}
+		if r.dlUtil < base.dlUtil-0.03 {
+			t.Errorf("%s: DL utilization %.1f %% with 5 %% ping loss, %.1f %% without", p, 100*r.dlUtil, 100*base.dlUtil)
+		}
+	}
+}
+
 // F1/F2: after a large capacity decrease, the shaper rate must quickly go
 // near the new capacity. It must not go far below the new capacity.
 func TestKnownIssue2_CapacityDropConvergence(t *testing.T) {
