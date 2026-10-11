@@ -90,7 +90,7 @@ The test always uses its own simulator recording. The helper `replayRecording` i
 
 The simulator has limits (fluid model, simple jitter, no packet loss). Thus, examine an important change also on a real link or in an emulation:
 
-- [recording.md](recording.md): sessions on a real link with `scripts/record-session.sh`. The option `-A NAME=CONFIG[,BINARY]` adds a variant. The blocks of all variants alternate, thus each variant gets the same link conditions (A/B test).
+- [recording.md](recording.md): sessions on a real link with `scripts/record-session.sh`. The option `-A NAME=CONFIG[,BINARY]` adds a variant. The blocks of all variants alternate. Thus, the blocks of the variants are near in time, and a slow change of the link has a similar effect on each variant (A/B test). The link conditions are not the same in each block.
 - [emulation.md](emulation.md): a variable link (for example 5G) on a fast connection, with a repeatable capacity trace.
 
 On a mobile link, the capacity changes much during a session. Compare the variants of the same session, and use two or more rounds.
