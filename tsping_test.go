@@ -177,6 +177,30 @@ links:
 		t.Errorf("want 1 warning, got %v", w)
 	}
 
+	// Only echo reflectors with the timestamp method give an error. Before,
+	// the program replaced a top-level list equal to the echo defaults.
+	write("ping_method: icmp-timestamp\nreflectors: [1.1.1.1, 8.8.8.8, 9.9.9.9, 149.112.112.112, 1.0.0.1, 8.8.4.4, 208.67.222.222, 208.67.220.220]\n" + link)
+	if _, err := LoadConfig(path); err == nil {
+		t.Error("only echo reflectors with icmp-timestamp must give an error")
+	}
+
+	// A link can set its own reflectors. A link without reflectors gets the
+	// default list for the ping method.
+	write("ping_method: icmp-timestamp\n" + link + "    reflectors: [192.0.2.1]\n" + `
+  - name: wan2
+    download: {interface: ifb-wan2, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+    upload: {interface: wan2, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+`)
+	if cfg, err = LoadConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.Links[0].Reflectors, []string{"192.0.2.1"}) {
+		t.Errorf("link reflectors %v, want the configured list", cfg.Links[0].Reflectors)
+	}
+	if !slices.Equal(cfg.Links[1].Reflectors, defaultTimestampReflectors) {
+		t.Errorf("link without reflectors: %v, want the timestamp defaults", cfg.Links[1].Reflectors)
+	}
+
 	write("ping_method: udp\n" + link)
 	if _, err := LoadConfig(path); err == nil {
 		t.Error("an unknown ping_method must give an error")

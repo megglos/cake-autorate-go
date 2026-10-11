@@ -153,6 +153,21 @@ var defaultTimestampReflectors = []string{
 	"hel1-speed.hetzner.com",
 }
 
+// defaultReflectors returns the default reflectors for a ping method. The
+// usual public DNS reflectors do not reply to ICMP timestamp requests.
+func defaultReflectors(method string) []string {
+	if method == PingMethodTimestamp {
+		return slices.Clone(defaultTimestampReflectors)
+	}
+	return DefaultConfig().Reflectors
+}
+
+// noTimestampReply reports whether a reflector is known to not reply to ICMP
+// timestamp requests. These are the default reflectors for ICMP echo.
+func noTimestampReply(reflector string) bool {
+	return slices.Contains(DefaultConfig().Reflectors, reflector)
+}
+
 // DefaultConfig returns a configuration with sensible defaults matching
 // the original cake-autorate project.
 func DefaultConfig() *Config {
@@ -236,6 +251,9 @@ func DefaultConfig() *Config {
 // LoadConfig reads a YAML config file and merges with defaults.
 func LoadConfig(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	// The default reflectors depend on ping_method. Thus, set them after
+	// the parse, and only if the config does not set reflectors.
+	cfg.Reflectors = nil
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -246,9 +264,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// The default reflectors do not reply to ICMP timestamp requests.
-	if cfg.PingMethod == PingMethodTimestamp && slices.Equal(cfg.Reflectors, DefaultConfig().Reflectors) {
-		cfg.Reflectors = slices.Clone(defaultTimestampReflectors)
+	if len(cfg.Reflectors) == 0 {
+		cfg.Reflectors = defaultReflectors(cfg.PingMethod)
 	}
 
 	// Migrate legacy single-link config to links list
@@ -314,17 +331,16 @@ func inheritThresholds(dc, from *DirectionConfig) {
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.PingMethod == PingMethodTimestamp {
-		echoOnly := DefaultConfig().Reflectors
 		for _, link := range c.Links {
 			var bad []string
 			for _, r := range link.Reflectors {
-				if slices.Contains(echoOnly, r) {
+				if noTimestampReply(r) {
 					bad = append(bad, r)
 				}
 			}
 			if len(bad) > 0 {
-				w = append(w, fmt.Sprintf("link %q: reflectors %v usually do not reply to ICMP timestamp requests. "+
-					"Remove the reflectors from the config to use the default list for icmp-timestamp", link.Name, bad))
+				w = append(w, fmt.Sprintf("link %q: reflectors %v do not reply to ICMP timestamp requests. "+
+					"Remove them from the config", link.Name, bad))
 			}
 		}
 	}
@@ -391,6 +407,10 @@ func (c *Config) Validate() error {
 		}
 		if len(link.Reflectors) == 0 {
 			return fmt.Errorf("link %q: at least one reflector must be configured", link.Name)
+		}
+		if c.PingMethod == PingMethodTimestamp && !slices.ContainsFunc(link.Reflectors, func(r string) bool { return !noTimestampReply(r) }) {
+			return fmt.Errorf("link %q: no reflector replies to ICMP timestamp requests. "+
+				"Remove the reflectors from the config to use the default list for icmp-timestamp", link.Name)
 		}
 	}
 

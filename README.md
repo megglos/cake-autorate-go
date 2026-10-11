@@ -220,10 +220,15 @@ For multi-WAN routers (e.g., with mwan3), set `ping_interface` on each link so I
 
 ### Reflectors
 
-Reflectors are remote hosts used for latency measurement via ICMP ping. Each link can specify its own reflector list, or inherit the defaults:
+Reflectors are remote hosts used for latency measurement via ICMP ping. You can set reflectors in two places:
+
+- `links[].reflectors`: the reflectors of one link.
+- `reflectors` (top level): the reflectors of each link that does not set its own.
+
+If you set neither, the program uses a default list for the `ping_method` (see [Ping method](#ping-method)). The default list for `icmp`:
 
 ```yaml
-reflectors:              # Default reflectors (used if a link omits its own)
+reflectors:
   - 1.1.1.1
   - 1.0.0.1
   - 8.8.8.8
@@ -250,7 +255,21 @@ ping_method: icmp-timestamp   # "icmp" (default) or "icmp-timestamp"
 
 Requirements for `icmp-timestamp`:
 
-- Reflectors that reply to ICMP timestamp requests. Many public DNS servers do not reply (for example 1.1.1.1, 8.8.8.8, 9.9.9.9). If the config does not set `reflectors`, the program uses a different default list (AdGuard DNS, Vultr and Hetzner test servers). A reflector that does not reply is replaced from the pool.
+- Reflectors that reply to ICMP timestamp requests. Many public DNS servers do not reply (for example 1.1.1.1, 8.8.8.8, 9.9.9.9). If the config does not set `reflectors`, the program uses this default list:
+
+  ```yaml
+  reflectors:
+    - 94.140.14.14            # AdGuard DNS
+    - 94.140.15.15            # AdGuard DNS
+    - fra-de-ping.vultr.com
+    - ams-nl-ping.vultr.com
+    - par-fr-ping.vultr.com
+    - fsn1-speed.hetzner.com
+    - nbg1-speed.hetzner.com
+    - hel1-speed.hetzner.com
+  ```
+
+  If you set reflectors, use only reflectors that reply. The program shows a warning for each reflector that is known to not reply. If no reflector of a link replies, the program does not start. A reflector that does not reply is replaced from the pool.
 - A firewall that permits ICMP timestamp replies (type 14).
 - A correct clock (NTP) on the router. The controller uses only the change of each one-way delay. Thus, a constant clock offset has no effect, but a fast clock drift can show as a delay change.
 
