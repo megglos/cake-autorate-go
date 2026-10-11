@@ -27,6 +27,9 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "calibrate" {
+		os.Exit(runCalibrate(os.Args[2:]))
+	}
 	configPath := flag.String("config", "/etc/cake-autorate/config.yaml", "path to configuration file")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	showDefaults := flag.Bool("defaults", false, "print default configuration and exit")

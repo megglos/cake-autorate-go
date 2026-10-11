@@ -1,0 +1,612 @@
+// SPDX-License-Identifier: GPL-2.0
+//
+// This file is part of cake-autorate-go, a Go rewrite of cake-autorate.
+// Licensed under GPL-2.0
+
+package main
+
+import (
+	"bufio"
+	"compress/gzip"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Offline calibration: analyze a session of scripts/record-session.sh and
+// propose config values for the link.
+//
+// The analysis uses these parts of the session:
+//   - Unshaped dl and ul blocks: the load fills the link. The achieved rate
+//     is the capacity. The upload delay in the dl blocks is the upload delay
+//     from download activity (the upload has only ACKs, thus no queue).
+//   - The idle time at the start of each block: the delay jitter of each
+//     reflector without load.
+//   - Autorate ul blocks: the upload delay while the shaper rate is less
+//     than half of the upload capacity. Then the upload queue is small, and
+//     the delay is the delay of the upload grants (5G).
+
+// calSkipLoadStart is the time at the start of the load that the analysis
+// does not use (TCP slow start).
+const calSkipLoadStart = 3 * time.Second
+
+// calSkipIdleStart is the time at the start of a block that the analysis
+// does not use (the baselines start).
+const calSkipIdleStart = 2 * time.Second
+
+// calBlock is one block of a session (one line of blocks.tsv).
+type calBlock struct {
+	num       int
+	mode      string // dl, ul or both
+	policy    string // unshaped, fixed, autorate, autorate-NAME
+	start     time.Time
+	idleEnd   time.Time
+	loadStart time.Time
+	loadEnd   time.Time
+	recording string
+}
+
+// calSample is one ping of a recording with one-way delays.
+type calSample struct {
+	t         time.Time
+	reflector string
+	dlUs      float64
+	ulUs      float64
+}
+
+// calRecording contains the events of one block that the analysis needs.
+type calRecording struct {
+	config  *Config
+	pings   []calSample
+	echo    map[string]int // reflector -> replies without one-way delays
+	rates   []calRate
+	ulRates []calRate // upload shaper rate changes
+}
+
+type calRate struct {
+	t        time.Time
+	dl, ul   float64
+	rateKbps float64
+}
+
+// calDist is a distribution summary.
+type calDist struct {
+	N             int
+	P5, P50, P95  float64
+	P10, P25, P90 float64
+}
+
+func newCalDist(v []float64) calDist {
+	if len(v) == 0 {
+		return calDist{}
+	}
+	s := slices.Clone(v)
+	sort.Float64s(s)
+	q := func(p float64) float64 { return s[min(len(s)-1, int(p*float64(len(s))))] }
+	return calDist{N: len(s), P5: q(0.05), P10: q(0.10), P25: q(0.25), P50: q(0.50), P90: q(0.90), P95: q(0.95)}
+}
+
+// calReflector is the result for one reflector.
+type calReflector struct {
+	Addr      string
+	OWD       bool    // replies with ICMP timestamps
+	IdleP95Ms float64 // jitter without load (p95 of the delta, larger direction)
+	Replies   int
+}
+
+// calResult is the result of the analysis.
+type calResult struct {
+	DlCapacity, UlCapacity calDist // kbit/s, mean of each second
+	// UlCapacityBoth is the upload capacity with load in the two
+	// directions. On 5G, it is much lower.
+	UlCapacityBoth calDist
+	IdleJitterMs   calDist // p95 of each reflector, larger direction
+	CrossDelayMs   calDist // upload delta while the download is saturated
+	GrantDelayMs   calDist // upload delta with upload load, low shaper rate
+	Reflectors     []calReflector
+	Notes          []string
+}
+
+// calibrateSession analyzes the session in dir.
+func calibrateSession(dir string) (*calResult, *Config, error) {
+	blocks, err := readBlocks(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	res := &calResult{}
+	var cfg *Config
+	var dlCap, ulCap, ulCapBoth, cross, grant []float64
+	idle := map[string][]calSample{} // key: block number and reflector
+	echo := map[string]int{}
+
+	for _, b := range blocks {
+		rec, err := readCalRecording(filepath.Join(dir, b.recording))
+		if err != nil {
+			return nil, nil, fmt.Errorf("block %d: %w", b.num, err)
+		}
+		if cfg == nil {
+			cfg = rec.config
+		}
+		for r, n := range rec.echo {
+			echo[r] += n
+		}
+		loadFrom := b.loadStart.Add(calSkipLoadStart)
+		for _, p := range rec.pings {
+			if !p.t.Before(b.start.Add(calSkipIdleStart)) && p.t.Before(b.idleEnd) {
+				k := fmt.Sprintf("%d %s", b.num, p.reflector)
+				idle[k] = append(idle[k], p)
+			}
+		}
+		inLoad := func(t time.Time) bool { return !t.Before(loadFrom) && t.Before(b.loadEnd) }
+
+		switch {
+		case b.policy == "unshaped" && b.mode == "dl":
+			dlCap = append(dlCap, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.dl })...)
+		case b.policy == "unshaped" && b.mode == "ul":
+			ulCap = append(ulCap, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })...)
+		case b.policy == "unshaped" && b.mode == "both":
+			ulCapBoth = append(ulCapBoth, secondMeans(rec.rates, inLoad, func(r calRate) float64 { return r.ul })...)
+		case strings.HasPrefix(b.policy, "autorate") && b.mode == "dl":
+			// The download shaper keeps the ACK rate low. Thus, the upload
+			// has no queue (unshaped, the ACKs can fill the upload).
+			cross = append(cross, loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })...)
+		case strings.HasPrefix(b.policy, "autorate") && b.mode == "ul":
+			grant = append(grant, b.grantDeltas(rec, inLoad)...)
+		}
+	}
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("%s: no blocks", dir)
+	}
+
+	res.DlCapacity, res.UlCapacity, res.UlCapacityBoth = newCalDist(dlCap), newCalDist(ulCap), newCalDist(ulCapBoth)
+	res.CrossDelayMs = newCalDist(cross)
+
+	// The grant analysis needs the upload capacity: use only the pings
+	// with a shaper rate below half of the median capacity.
+	var g []float64
+	for i := 0; i+1 < len(grant); i += 2 {
+		if res.UlCapacity.N > 0 && grant[i+1] < 0.5*res.UlCapacity.P50 {
+			g = append(g, grant[i])
+		}
+	}
+	res.GrantDelayMs = newCalDist(g)
+
+	// The clock offset of a reflector changes slowly. Thus, the baseline
+	// is the minimum in each block.
+	deltas := map[string][]float64{}
+	for k, v := range idle {
+		r := k[strings.IndexByte(k, ' ')+1:]
+		base := baselinesOf(v)
+		for _, p := range v {
+			deltas[r] = append(deltas[r], math.Max(p.dlUs-base[0], p.ulUs-base[1])/1000)
+		}
+	}
+	var jitter []float64
+	for r, d := range deltas {
+		dist := newCalDist(d)
+		res.Reflectors = append(res.Reflectors, calReflector{Addr: r, OWD: true, IdleP95Ms: dist.P95, Replies: len(d)})
+		jitter = append(jitter, dist.P95)
+	}
+	for r, n := range echo {
+		if _, ok := deltas[r]; !ok {
+			res.Reflectors = append(res.Reflectors, calReflector{Addr: r, Replies: n})
+		}
+	}
+	sort.Slice(res.Reflectors, func(i, j int) bool {
+		a, b := res.Reflectors[i], res.Reflectors[j]
+		if a.OWD != b.OWD {
+			return a.OWD
+		}
+		if a.IdleP95Ms != b.IdleP95Ms {
+			return a.IdleP95Ms < b.IdleP95Ms
+		}
+		return a.Addr < b.Addr
+	})
+	res.IdleJitterMs = newCalDist(jitter)
+
+	if res.DlCapacity.N == 0 {
+		res.Notes = append(res.Notes, "no unshaped dl block: the download rates are not measured")
+	}
+	if res.UlCapacity.N == 0 {
+		res.Notes = append(res.Notes, "no unshaped ul block: the upload rates are not measured")
+	}
+	if res.GrantDelayMs.N == 0 {
+		res.Notes = append(res.Notes, "no autorate ul block with a low shaper rate: the upload grant delay is not measured")
+	}
+	return res, cfg, nil
+}
+
+// secondMeans returns the mean rate of each second of the load.
+func secondMeans(rates []calRate, in func(time.Time) bool, get func(calRate) float64) []float64 {
+	var out []float64
+	var sec int64 = -1
+	var sum float64
+	var n int
+	for _, r := range rates {
+		if !in(r.t) {
+			continue
+		}
+		s := r.t.Unix()
+		if s != sec && n > 0 {
+			out = append(out, sum/float64(n))
+			sum, n = 0, 0
+		}
+		sec = s
+		sum += get(r)
+		n++
+	}
+	if n > 0 {
+		out = append(out, sum/float64(n))
+	}
+	return out
+}
+
+// baselinesOf returns the minimum download and upload delay of the samples.
+func baselinesOf(v []calSample) [2]float64 {
+	b := [2]float64{math.Inf(1), math.Inf(1)}
+	for _, p := range v {
+		b[0], b[1] = math.Min(b[0], p.dlUs), math.Min(b[1], p.ulUs)
+	}
+	return b
+}
+
+// loadDeltas returns the deltas (ms) during the load. The baseline of each
+// reflector is its minimum in the idle time of the same block.
+func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func(calSample) float64) []float64 {
+	base := map[string]float64{}
+	for _, p := range pings {
+		if p.t.Before(b.idleEnd) {
+			if v, ok := base[p.reflector]; !ok || get(p) < v {
+				base[p.reflector] = get(p)
+			}
+		}
+	}
+	var out []float64
+	for _, p := range pings {
+		if bv, ok := base[p.reflector]; ok && in(p.t) {
+			out = append(out, (get(p)-bv)/1000)
+		}
+	}
+	return out
+}
+
+// grantDeltas returns pairs (upload delta in ms, upload shaper rate in
+// kbit/s) for each ping in the load.
+func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []float64 {
+	d := loadDeltas(rec.pings, b, in, func(p calSample) float64 { return p.ulUs })
+	var out []float64
+	i := 0
+	for _, p := range rec.pings {
+		if !in(p.t) || i >= len(d) {
+			continue
+		}
+		rate := 0.0
+		for _, r := range rec.ulRates {
+			if r.t.After(p.t) {
+				break
+			}
+			rate = r.rateKbps
+		}
+		if rate > 0 {
+			out = append(out, d[i], rate)
+		}
+		i++
+	}
+	return out
+}
+
+// readBlocks reads blocks.tsv and the idle time from session.txt.
+func readBlocks(dir string) ([]calBlock, error) {
+	warmup := time.Duration(0)
+	if data, err := os.ReadFile(filepath.Join(dir, "session.txt")); err == nil {
+		if m := regexp.MustCompile(`download warm-up in the mode both (\d+)s`).FindSubmatch(data); m != nil {
+			s, _ := strconv.Atoi(string(m[1]))
+			warmup = time.Duration(s) * time.Second
+		}
+	}
+	f, err := os.Open(filepath.Join(dir, "blocks.tsv"))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var blocks []calBlock
+	sc := bufio.NewScanner(f)
+	for line := 0; sc.Scan(); line++ {
+		col := strings.Split(sc.Text(), "\t")
+		if line == 0 {
+			continue
+		}
+		if len(col) < 11 {
+			return nil, fmt.Errorf("blocks.tsv line %d: %d columns, want 11", line+1, len(col))
+		}
+		num, _ := strconv.Atoi(col[0])
+		ts := make([]time.Time, 4)
+		for i := range ts {
+			s, err := strconv.ParseInt(col[4+i], 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("blocks.tsv line %d: %w", line+1, err)
+			}
+			ts[i] = time.Unix(s, 0)
+		}
+		b := calBlock{num: num, mode: col[2], policy: col[3], start: ts[0], loadStart: ts[1], loadEnd: ts[2], recording: col[10]}
+		b.idleEnd = b.loadStart
+		if b.mode == "both" {
+			b.idleEnd = b.loadStart.Add(-warmup)
+		}
+		blocks = append(blocks, b)
+	}
+	return blocks, sc.Err()
+}
+
+// readCalRecording reads a recording (JSONL, gzip if the name ends with .gz).
+func readCalRecording(path string) (*calRecording, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, err
+		}
+		defer gz.Close()
+		r = gz
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	if !sc.Scan() {
+		return nil, fmt.Errorf("%s: empty recording", path)
+	}
+	var h recHeaderEvent
+	if err := json.Unmarshal(sc.Bytes(), &h); err != nil || h.Type != recHeader {
+		return nil, fmt.Errorf("%s: no header", path)
+	}
+	start, err := time.Parse(time.RFC3339Nano, h.Start)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	rec := &calRecording{config: h.Config, echo: map[string]int{}}
+	for sc.Scan() {
+		var ev struct {
+			T         int64     `json:"t"`
+			Type      string    `json:"type"`
+			Reflector string    `json:"reflector"`
+			Timeout   bool      `json:"timeout"`
+			DlOWDUs   *int64    `json:"dl_owd_us"`
+			UlOWDUs   *int64    `json:"ul_owd_us"`
+			DlKbps    float64   `json:"dl_kbps"`
+			UlKbps    float64   `json:"ul_kbps"`
+			Dir       Direction `json:"dir"`
+			RateKbps  int       `json:"rate_kbps"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		t := start.Add(time.Duration(ev.T) * time.Microsecond)
+		switch ev.Type {
+		case recPing:
+			if ev.Timeout {
+				continue
+			}
+			if ev.DlOWDUs == nil || ev.UlOWDUs == nil {
+				rec.echo[ev.Reflector]++
+				continue
+			}
+			rec.pings = append(rec.pings, calSample{t: t, reflector: ev.Reflector, dlUs: float64(*ev.DlOWDUs), ulUs: float64(*ev.UlOWDUs)})
+		case recRate:
+			rec.rates = append(rec.rates, calRate{t: t, dl: ev.DlKbps, ul: ev.UlKbps})
+		case recShaper:
+			if ev.Dir == UL {
+				rec.ulRates = append(rec.ulRates, calRate{t: t, rateKbps: float64(ev.RateKbps)})
+			}
+		}
+	}
+	return rec, sc.Err()
+}
+
+// calProposal is the proposed config for one link, with a reason for each
+// value.
+type calProposal struct {
+	DlMin, DlBase, DlMax int
+	UlMin, UlBase, UlMax int
+	DlThrMs, UlThrMs     float64
+	LearnCrossDelay      bool
+	PingMethod           string
+	Reflectors           []string
+	Why                  map[string]string
+}
+
+// Rules for the proposal. They come from the 5G sessions of 2026-10-10 and
+// 2026-10-11 (see the pull request of this change).
+const (
+	// calDefaultThrMs is the default delay threshold.
+	calDefaultThrMs = 30.0
+	// calJitterFactor: the threshold is at least this factor times the p95
+	// of the idle jitter. Else the jitter alone shows bufferbloat.
+	calJitterFactor = 2.0
+	// calCrossDelayMinMs: above this median upload delay from download
+	// activity, learn_cross_delay is useful.
+	calCrossDelayMinMs = 10.0
+	// calGrantMarginMs: the upload threshold is at least the median of the
+	// grant delay plus this margin. Below it, the upload rate collapses. On
+	// the 5G link, the median was 13 to 15 ms; a threshold of 15 ms gave
+	// 30 to 43 % of the upload capacity, 25 ms gave 66 to 68 %.
+	calGrantMarginMs = 10.0
+	// calMinReflectors is the minimum number of reflectors with ICMP
+	// timestamps for ping_method icmp-timestamp.
+	calMinReflectors = 4
+)
+
+// propose makes the config proposal from the result.
+func (r *calResult) propose(pingerCount int) calProposal {
+	p := calProposal{Why: map[string]string{}}
+	round := func(kbps float64, step int) int { return max(step, int(math.Round(kbps/float64(step)))*step) }
+
+	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
+	// usually has), min = p5 / 2 (the shaper must be able to go below the
+	// low capacity values; the 1 s means hide short decreases).
+	if c := r.DlCapacity; c.N > 0 {
+		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), round(c.P25, 1000), round(c.P95, 1000)
+		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %.0f, p25 %.0f, p50 %.0f, p95 %.0f Mbit/s", c.N, c.P5/1000, c.P25/1000, c.P50/1000, c.P95/1000)
+	}
+	if c := r.UlCapacity; c.N > 0 {
+		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), round(c.P25, 500), round(c.P95, 500)
+		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %.1f, p25 %.1f, p50 %.1f, p95 %.1f Mbit/s", c.N, c.P5/1000, c.P25/1000, c.P50/1000, c.P95/1000)
+		// With download load, the upload capacity can be much lower. The
+		// minimum must be below it.
+		if b := r.UlCapacityBoth; b.N > 0 {
+			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
+			p.UlBase = min(p.UlBase, round(b.P50, 500))
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %.1f, p50 %.1f Mbit/s (min = min(p5/2), base = min(p25, p50 with download load))", b.P5/1000, b.P50/1000)
+		}
+		p.UlBase = max(p.UlBase, p.UlMin)
+	}
+
+	// Thresholds.
+	p.DlThrMs, p.UlThrMs = calDefaultThrMs, calDefaultThrMs
+	if j := r.IdleJitterMs; j.N > 0 {
+		p.DlThrMs = math.Max(calDefaultThrMs, math.Ceil(calJitterFactor*j.P50))
+		p.Why["download threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, calDefaultThrMs, calJitterFactor)
+	}
+	if c := r.CrossDelayMs; c.N > 0 {
+		p.LearnCrossDelay = c.P50 > calCrossDelayMinMs
+		p.Why["learn_cross_delay"] = fmt.Sprintf("upload delay from download activity: p50 %.1f, p95 %.1f ms (on above %.0f ms)", c.P50, c.P95, calCrossDelayMinMs)
+	}
+	p.UlThrMs = p.DlThrMs
+	if g := r.GrantDelayMs; g.N > 0 {
+		floor := math.Ceil(g.P50 + calGrantMarginMs)
+		p.Why["upload threshold"] = fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings); threshold >= p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
+		p.UlThrMs = math.Max(p.UlThrMs, floor)
+	}
+
+	// Ping method and reflectors.
+	var owd []string
+	for _, rf := range r.Reflectors {
+		if rf.OWD {
+			owd = append(owd, rf.Addr)
+		}
+	}
+	p.PingMethod = "icmp"
+	if len(owd) >= calMinReflectors {
+		p.PingMethod = "icmp-timestamp"
+		p.Reflectors = owd
+		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps; sorted by idle jitter, the first %d are active", len(owd), pingerCount)
+	} else {
+		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
+	}
+	return p
+}
+
+// writeCalConfig writes the proposal as a config file, based on the
+// config of the session (interfaces). Each value has a comment with the
+// measured data.
+func writeCalConfig(w io.Writer, dir string, cfg *Config, r *calResult, p calProposal) {
+	link := cfg.Links[0]
+	fmt.Fprintf(w, "# cake-autorate-go config from the calibration of %s\n", dir)
+	fmt.Fprintf(w, "# Generated %s. Examine each value before use.\n", time.Now().Format(time.DateOnly))
+	for _, n := range r.Notes {
+		fmt.Fprintf(w, "# NOTE: %s\n", n)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "links:")
+	fmt.Fprintf(w, "  - name: %s\n", link.Name)
+	dir2 := func(name string, dc DirectionConfig, minR, baseR, maxR int, thr float64, why, whyThr string) {
+		fmt.Fprintf(w, "    %s:\n", name)
+		fmt.Fprintf(w, "      interface: %s\n", dc.Interface)
+		fmt.Fprintf(w, "      adjust: true\n")
+		if why != "" {
+			fmt.Fprintf(w, "      # %s\n", why)
+			fmt.Fprintf(w, "      min_rate_kbps: %d\n      base_rate_kbps: %d\n      max_rate_kbps: %d\n", minR, baseR, maxR)
+		} else {
+			fmt.Fprintf(w, "      # not measured: values of the session config\n")
+			fmt.Fprintf(w, "      min_rate_kbps: %d\n      base_rate_kbps: %d\n      max_rate_kbps: %d\n", dc.MinRateKbps, dc.BaseRateKbps, dc.MaxRateKbps)
+		}
+		if whyThr != "" {
+			fmt.Fprintf(w, "      # %s\n", whyThr)
+		}
+		fmt.Fprintf(w, "      owd_delta_delay_thr_ms: %g\n", thr)
+		fmt.Fprintf(w, "      avg_owd_delta_max_adjust_down_thr_ms: %g\n", 2*thr)
+	}
+	dir2("download", link.Download, p.DlMin, p.DlBase, p.DlMax, p.DlThrMs, p.Why["download rates"], p.Why["download threshold"])
+	dir2("upload", link.Upload, p.UlMin, p.UlBase, p.UlMax, p.UlThrMs, p.Why["upload rates"], p.Why["upload threshold"])
+	if link.PingInterfaceName != "" {
+		fmt.Fprintf(w, "    ping_interface: %s\n", link.PingInterfaceName)
+	}
+	if len(p.Reflectors) > 0 {
+		fmt.Fprintf(w, "    # %s\n", p.Why["reflectors"])
+		fmt.Fprintln(w, "    reflectors:")
+		for i, a := range p.Reflectors {
+			j := ""
+			for _, rf := range r.Reflectors {
+				if rf.Addr == a {
+					j = fmt.Sprintf("  # idle jitter p95 %.1f ms", rf.IdleP95Ms)
+				}
+			}
+			if i == cfg.PingerCount {
+				fmt.Fprintln(w, "      # spares:")
+			}
+			fmt.Fprintf(w, "      - %s%s\n", a, j)
+		}
+	}
+	fmt.Fprintln(w)
+	if why, ok := p.Why["ping_method"]; ok {
+		fmt.Fprintf(w, "# %s\n", why)
+	}
+	fmt.Fprintf(w, "ping_method: %s\n", p.PingMethod)
+	if why, ok := p.Why["learn_cross_delay"]; ok {
+		fmt.Fprintf(w, "# %s\n", why)
+	}
+	fmt.Fprintf(w, "learn_cross_delay: %v\n", p.LearnCrossDelay)
+}
+
+// runCalibrate is the "calibrate" command.
+func runCalibrate(args []string) int {
+	fs := flag.NewFlagSet("calibrate", flag.ContinueOnError)
+	session := fs.String("session", "", "session directory of scripts/record-session.sh (required)")
+	out := fs.String("out", "", "write the config to this file (default: standard output)")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: cake-autorate-go calibrate -session DIR [-out FILE]")
+		fmt.Fprintln(fs.Output(), "Analyze a recorded session and propose a config for the link.")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *session == "" {
+		fs.Usage()
+		return 2
+	}
+	res, cfg, err := calibrateSession(*session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if len(cfg.Links) == 0 {
+		fmt.Fprintln(os.Stderr, "error: the session config has no link")
+		return 1
+	}
+	w := io.Writer(os.Stdout)
+	if *out != "" {
+		f, err := os.Create(*out)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		defer f.Close()
+		w = f
+	}
+	writeCalConfig(w, *session, cfg, res, res.propose(cfg.PingerCount))
+	return 0
+}
