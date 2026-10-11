@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -488,8 +489,9 @@ func validateIfname(name string) error {
 
 // Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
-	if c.LatencyTargetWindowS <= 0 {
-		return fmt.Errorf("latency_target_window_s must be positive")
+	// YAML accepts .nan and .inf: a NaN is not <= 0.
+	if !(c.LatencyTargetWindowS > 0) || math.IsInf(c.LatencyTargetWindowS, 0) {
+		return fmt.Errorf("latency_target_window_s must be a positive finite number")
 	}
 	if len(c.Links) == 0 {
 		return fmt.Errorf("at least one link must be configured")
@@ -532,8 +534,8 @@ func (c *Config) Validate() error {
 			if dc.dir.AvgOWDDeltaMaxAdjDownThrMs <= 0 {
 				return fmt.Errorf("%s avg_owd_delta_max_adjust_down_thr_ms must be positive", dc.name)
 			}
-			if dc.dir.LatencyTargetP95Ms < 0 || dc.dir.LatencyTargetMinThrMs < 0 {
-				return fmt.Errorf("%s latency_target_p95_ms and latency_target_min_thr_ms must not be negative", dc.name)
+			if !finiteNonNeg(dc.dir.LatencyTargetP95Ms) || !finiteNonNeg(dc.dir.LatencyTargetMinThrMs) {
+				return fmt.Errorf("%s latency_target_p95_ms and latency_target_min_thr_ms must be finite numbers, 0 or more", dc.name)
 			}
 			// The minimum threshold must be reachable: not more than the
 			// maximum factor times the threshold. 0 means the default.
@@ -617,4 +619,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("shaper_rate_adjust_up_load_low must be >= 1")
 	}
 	return nil
+}
+
+// finiteNonNeg returns true if v is a finite number, 0 or more.
+func finiteNonNeg(v float64) bool {
+	return v >= 0 && !math.IsInf(v, 0)
 }

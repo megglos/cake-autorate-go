@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,14 +46,14 @@ func TestValidateIfname(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                  // empty
-		"../../etc/passwd",  // path traversal
-		"eth 0",             // whitespace
-		"eth0\n",            // newline
-		".eth0",             // starts with dot
-		"-eth0",             // starts with hyphen
-		"abcdefghijklmnop",  // 16 chars (exceeds IFNAMSIZ-1)
-		"eth0/sub",          // path separator
+		"",                 // empty
+		"../../etc/passwd", // path traversal
+		"eth 0",            // whitespace
+		"eth0\n",           // newline
+		".eth0",            // starts with dot
+		"-eth0",            // starts with hyphen
+		"abcdefghijklmnop", // 16 chars (exceeds IFNAMSIZ-1)
+		"eth0/sub",         // path separator
 	}
 	for _, name := range invalid {
 		if err := validateIfname(name); err == nil {
@@ -591,7 +592,24 @@ func TestValidate_LatencyTarget(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
 		t.Errorf("window 0: Validate() = %v", err)
 	}
-	cfg.LatencyTargetWindowS = 30
+	// YAML accepts .nan and .inf.
+	for _, v := range []float64{math.NaN(), math.Inf(1)} {
+		cfg.LatencyTargetWindowS = v
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
+			t.Errorf("window %v: Validate() = %v", v, err)
+		}
+		cfg.LatencyTargetWindowS = 30
+		cfg.Links[0].Upload.LatencyTargetP95Ms = v
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_p95_ms") {
+			t.Errorf("target %v: Validate() = %v", v, err)
+		}
+		cfg.Links[0].Upload.LatencyTargetP95Ms = 50
+		cfg.Links[0].Upload.LatencyTargetMinThrMs = v
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_min_thr_ms") {
+			t.Errorf("minimum threshold %v: Validate() = %v", v, err)
+		}
+		cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("valid latency target: Validate() = %v", err)
 	}
