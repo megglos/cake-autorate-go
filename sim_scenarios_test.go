@@ -221,7 +221,7 @@ func TestSimScorecard(t *testing.T) {
 	for i := range simScenarios() {
 		for _, p := range []simPolicy{policyUnshaped, policyFixed, policyAutorate, policyAutorateOWD} {
 			r, sets := runSimSeeds(i, p, *simSeeds)
-			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7.0f\n",
+			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7.1f\n",
 				r.scenario, r.policy, r.latP50, r.latP95, r.latP99, r.bloatS,
 				100*r.dlUtil, 100*r.ulUtil, sets)
 		}
