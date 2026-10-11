@@ -642,3 +642,26 @@ func mean(v []float64) float64 {
 	}
 	return s / float64(len(v))
 }
+
+// learn_cross_delay must not learn the queue of the upload shaper. After an
+// upload capacity decrease, the upload load is less than half of the shaper
+// rate while the queue increases.
+func TestSimOWD_LearnCrossDelay_UploadCapacityDrop(t *testing.T) {
+	sc := scenarioByName(t, "5g-coupled")
+	sc.name = "5g-coupled-ul-drop"
+	sc.ulCapacity = steps([]float64{0, 40, 80}, []float64{30000, 3000, 30000})
+	sc.ulDemand = between(2, 118)
+	run := func(learn bool) simResult {
+		sc.tune = func(cfg *Config) { cfg.LearnCrossDelay = learn }
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(false), run(true)
+	t.Logf("p95 %.1f / %.1f ms, bloat %.1f / %.1f s, UL %.0f / %.0f %% (off / on)",
+		off.latP95, on.latP95, off.bloatS, on.bloatS, 100*off.ulUtil, 100*on.ulUtil)
+	if on.latP95 > math.Max(1.1*off.latP95, off.latP95+5) {
+		t.Errorf("p95 %.1f ms with learn_cross_delay, %.1f ms without", on.latP95, off.latP95)
+	}
+	if on.bloatS > math.Max(1.1*off.bloatS, off.bloatS+1) {
+		t.Errorf("bloat %.1f s with learn_cross_delay, %.1f s without", on.bloatS, off.bloatS)
+	}
+}

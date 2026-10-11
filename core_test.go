@@ -993,27 +993,33 @@ func TestHandlePing_RTTDelayAppliesToBothDirections(t *testing.T) {
 // activity and a low upload load goes into the learned cross delay. Then
 // the same delay does not decrease the upload rate. A larger delay does.
 func TestHandlePing_LearnCrossDelay(t *testing.T) {
-	run := func(learn bool) (*Core, func(int, float64)) {
+	// run returns a Core and two functions. ping sends n pings with an
+	// upload delay of ulMs, one every 50 ms. rate sends a rate sample.
+	run := func(learn bool) (*Core, func(int, float64), func(float64, float64)) {
 		c, _ := newTestCore(t)
 		c.cfg.LearnCrossDelay = learn
 		c.state = StateRunning
 		ts := time.Now()
 		c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
-		return c, func(n int, ulMs float64) {
+		ping := func(n int, ulMs float64) {
 			for range n {
 				ts = ts.Add(50 * time.Millisecond)
 				c.HandlePing(owdPing("1.1.1.1", ts, 10+ulMs, 10))
 			}
 		}
+		rate := func(dlKbps, ulKbps float64) {
+			c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: dlKbps, UlRateKbps: ulKbps})
+		}
+		return c, ping, rate
 	}
 	// Download active, upload load low (ACKs only): learn 25 ms.
 	for _, learn := range []bool{false, true} {
-		c, ping := run(learn)
-		c.dl.achievedKbps, c.ul.achievedKbps = 50000, 500
+		c, ping, rate := run(learn)
+		rate(50000, 500)
 		ping(200, 25)
 		// The upload is loaded now. 45 ms is above the 30 ms threshold,
 		// but not above the learned delay plus the threshold.
-		c.ul.achievedKbps, c.ul.loadPercent = 9000, 0.9
+		rate(50000, 9000)
 		before := c.ul.shaperRateKbps
 		ping(20, 45)
 		decreased := c.ul.shaperRateKbps < before
@@ -1031,5 +1037,38 @@ func TestHandlePing_LearnCrossDelay(t *testing.T) {
 				t.Errorf("with learn_cross_delay: rate %.0f -> %.0f at 95 ms, want a decrease", before, c.ul.shaperRateKbps)
 			}
 		}
+	}
+}
+
+// learn_cross_delay learns only after the upload load was low for
+// crossDelayMinLowLoad. After an upload capacity decrease, the load is low
+// for a short time while the queue of the upload shaper increases.
+func TestHandlePing_LearnCrossDelay_ShortLowLoad(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.LearnCrossDelay = true
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 500})
+	// 1.5 s of low load: no learning.
+	for range 30 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 35, 10))
+	}
+	if c.ul.crossDelayUs != 0 {
+		t.Fatalf("learned %.0f us after 1.5 s of low load, want 0", c.ul.crossDelayUs)
+	}
+	// After 2 s or more: learning.
+	for range 20 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 35, 10))
+	}
+	if c.ul.crossDelayUs == 0 {
+		t.Errorf("learned 0 us after 2.5 s of low load, want more")
+	}
+	// High load resets the low-load time.
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: c.ul.shaperRateKbps})
+	if !c.ul.lowLoadSince.IsZero() {
+		t.Errorf("low-load time not reset at high load")
 	}
 }

@@ -390,7 +390,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
-| `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. The learned delay is not more than the upload delay threshold |
+| `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |
 | `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
 | `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |
 | `global_ping_response_timeout_s` | `10.0` | All-reflector response timeout (s) |
