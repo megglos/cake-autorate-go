@@ -282,9 +282,26 @@ Update after the Copilot review of #18 (simulator, autorate-owd, 8 seeds):
 - Copilot found on #19: after an UL capacity drop, Core learned the shaper queue (sim: p95 60 → 129 ms). Fix: learn only after 2 s of low UL load.
 - Session 4 variants all had F8. A link test of `learn_cross_delay` alone is open: session 5.
 
-### Session 5 (prepared): main vs `learn_cross_delay` alone
+### Session 5 (2026-10-11 12:45, `recordings/20261011-1245-enp7s0`): main vs `learn_cross_delay` alone (30/30, no F8), 27 blocks, 3 rounds
 
-`recordings/5g-s5-learn.yaml` = `5g-owd-f1.yaml` + `learn_cross_delay: true` (30/30). Binary `../cake-autorate-go-cross/cake-autorate-go` (6e403f2, no F8). 3 rounds x 3 modes x 3 policies = 27 blocks, approximately 80 min.
+Mbit/s, values round 1 / 2 / 3. UL OWD p95 (pooled) in ms.
+
+| Mode | main | learn |
+|---|---|---|
+| dl: DL | 130 / 83 / 165 | 128 / 144 / 99 |
+| ul: UL (UL p95) | 23 / 21 / 23 (44/45/47) | 20 / 21 / 20 (46/45/42) |
+| both: DL | 125 / 176 / 204 | 120 / 121 / 131 |
+| both: UL (UL p95) | 16 / 10 / 7 (45/53/44) | 6 / 7 / 8 (52/64/82) |
+
+Result: no gain, in both mode worse. **Cause: test method.** Each block starts the program again. In both mode, DL and UL load start at the same time: Core never sees "DL active, UL low" for 2 s. Replay of the recordings: learned UL cross delay 22 ms in the dl blocks (correct), 3 / 6 / 10 ms in the both blocks (learned only in the first seconds, then frozen). Thus session 5 did not test the option in both mode. In normal operation the program runs for a long time and learns in DL-only periods.
+
+Fix for the test: PR #23 `record-session.sh -W SECONDS` (DL warm-up before both mode). Session 6 uses `-W 30`.
+
+Also open (product, not test): if DL and UL are always active together, Core never learns. Possible later: keep the learned value over restarts (state file), or learn at the start of each DL burst before the UL ramps up. Decide after session 6.
+
+### Session 6 (prepared): both mode only, with DL warm-up
+
+main binary (ace07c7, includes #20 and #22) for the two policies. `-m both -r 4 -W 30`: 12 blocks, approximately 45 min. Script from the worktree ../cake-autorate-go-warm (PR #23).
 
 ### Session 4 configs (prepared)
 
