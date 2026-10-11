@@ -21,7 +21,7 @@
 # Limit: the achieved rate is the capacity only if the load fills the link.
 # If the load generator or the servers limit the rate, the trace is too low.
 #
-# Requirements: jq, awk, gzip.
+# Requirements: jq, awk, gzip, date (GNU).
 
 set -euo pipefail
 
@@ -61,6 +61,8 @@ smooth() {
 
 dl=$(rates "$DL_BLOCK" dl dl_kbps | smooth)
 ul=$(rates "$UL_BLOCK" ul ul_kbps | smooth)
+[ -n "$dl" ] || die "block $DL_BLOCK has no rate samples in its load time"
+[ -n "$ul" ] || die "block $UL_BLOCK has no rate samples in its load time"
 
 echo "t_ms,dl_kbps,ul_kbps"
 # Use the time of the dl samples. For each, use the last ul sample before it.
