@@ -335,12 +335,24 @@ func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []floa
 
 // readBlocks reads blocks.tsv and the idle time from session.txt.
 func readBlocks(dir string) ([]calBlock, error) {
+	// The download warm-up of the mode both is not idle time. Thus, the
+	// analysis needs it. Sessions of an older script have no warm-up: their
+	// "block:" line has no warm-up value.
+	data, err := os.ReadFile(filepath.Join(dir, "session.txt"))
+	if err != nil {
+		return nil, err
+	}
+	m := regexp.MustCompile(`(?m)^block: idle \d+s, load \d+s(?:, download warm-up in the mode both (\d+)s)?$`).FindSubmatch(data)
+	if m == nil {
+		return nil, fmt.Errorf("%s: no valid \"block:\" line", filepath.Join(dir, "session.txt"))
+	}
 	warmup := time.Duration(0)
-	if data, err := os.ReadFile(filepath.Join(dir, "session.txt")); err == nil {
-		if m := regexp.MustCompile(`download warm-up in the mode both (\d+)s`).FindSubmatch(data); m != nil {
-			s, _ := strconv.Atoi(string(m[1]))
-			warmup = time.Duration(s) * time.Second
+	if len(m[1]) > 0 {
+		s, err := strconv.Atoi(string(m[1]))
+		if err != nil {
+			return nil, fmt.Errorf("session.txt: warm-up %q: %w", m[1], err)
 		}
+		warmup = time.Duration(s) * time.Second
 	}
 	f, err := os.Open(filepath.Join(dir, "blocks.tsv"))
 	if err != nil {

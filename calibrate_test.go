@@ -27,6 +27,8 @@ type calTestLink struct {
 	drift                bool    // the clock offset changes by 50 ms in each block
 	echo                 bool    // ICMP echo: no one-way delays
 	noisyReflector       bool    // reflector r5 has 5 times the idle jitter
+	warmupS              int     // download warm-up in the mode both (s)
+	noSessionTxt         bool    // do not write session.txt
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -51,7 +53,12 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 		for _, policy := range []string{"unshaped", "autorate"} {
 			num++
 			name := fmt.Sprintf("%02d-%s-%s.jsonl", num, mode, policy)
-			loadStart := start.Add(idleS * time.Second)
+			warm := 0
+			if mode == "both" {
+				warm = l.warmupS
+			}
+			warmStart := start.Add(idleS * time.Second)
+			loadStart := warmStart.Add(time.Duration(warm) * time.Second)
 			loadEnd := loadStart.Add(loadS * time.Second)
 			rec, err := newRecorderAt(filepath.Join(dir, name), 0, cfg, start, testLogger(t))
 			if err != nil {
@@ -65,10 +72,10 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 			if policy == "autorate" {
 				rec.Shaper("wan", UL, int(ulShaper), start)
 			}
-			for ms := 0; ms < (idleS+loadS)*1000; ms += 50 {
+			for ms := 0; ms < (idleS+warm+loadS)*1000; ms += 50 {
 				ts := start.Add(time.Duration(ms) * time.Millisecond)
 				load := !ts.Before(loadStart)
-				dlActive := load && mode != "ul"
+				dlActive := !ts.Before(warmStart) && mode != "ul"
 				ulActive := load && mode != "dl"
 				var dl, ul float64
 				switch {
@@ -120,13 +127,22 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 	if err := os.WriteFile(filepath.Join(dir, "blocks.tsv"), []byte(tsv.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if !l.noSessionTxt {
+		txt := fmt.Sprintf("block: idle %ds, load %ds\n", idleS, loadS)
+		if l.warmupS > 0 {
+			txt = fmt.Sprintf("block: idle %ds, load %ds, download warm-up in the mode both %ds\n", idleS, loadS, l.warmupS)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "session.txt"), []byte(txt), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return dir
 }
 
 func TestCalibrateSession(t *testing.T) {
 	dir := writeCalSession(t, calTestLink{
 		dlCapKbps: 200000, ulCapKbps: 40000, ulCapBothKbps: 10000,
-		idleJitterMs: 4, crossDelayMs: 20, grantDelayMs: 14, drift: true,
+		idleJitterMs: 4, crossDelayMs: 20, grantDelayMs: 14, drift: true, warmupS: 10,
 	})
 	res, cfg, err := calibrateSession(dir)
 	if err != nil {
@@ -419,5 +435,32 @@ func TestReadCalRecording_FormatVersion(t *testing.T) {
 	}
 	if _, err := readCalRecording(path); err == nil || !strings.Contains(err.Error(), "format version") {
 		t.Errorf("err = %v, want a format version error", err)
+	}
+}
+
+// Without a valid session.txt, the warm-up is unknown: calibrate stops.
+func TestCalibrateSession_NeedsSessionTxt(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2, noSessionTxt: true})
+	if _, _, err := calibrateSession(dir); err == nil {
+		t.Error("no error without session.txt")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.txt"), []byte("block: idle 15s, load 150s, download warm-up in the mode both xs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := calibrateSession(dir); err == nil || !strings.Contains(err.Error(), "block:") {
+		t.Errorf("err = %v, want an error for the invalid block line", err)
+	}
+}
+
+// The download warm-up of the mode both is not idle time: with a cross
+// delay of 20 ms in the warm-up, the idle jitter must stay low.
+func TestCalibrateSession_WarmupIsNotIdle(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 4, crossDelayMs: 20, warmupS: 10})
+	res, _, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IdleJitterMs.P50 > 5 {
+		t.Errorf("idle jitter %.1f ms, want approximately 4 (the warm-up is not idle time)", res.IdleJitterMs.P50)
 	}
 }
