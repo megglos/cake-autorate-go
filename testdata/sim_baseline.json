@@ -7,18 +7,18 @@
     "ul_util": 6.78
   },
   "autorate-owd/5g-recorded-a": {
-    "lat_p95_ms": 36.79,
-    "lat_p99_ms": 55.25,
-    "bloat_s": 14.97,
-    "dl_util": 76.18,
-    "ul_util": 88.08
+    "lat_p95_ms": 58.15,
+    "lat_p99_ms": 102.02,
+    "bloat_s": 89.36,
+    "dl_util": 47.01,
+    "ul_util": 10.91
   },
   "autorate-owd/5g-recorded-b": {
-    "lat_p95_ms": 35.22,
-    "lat_p99_ms": 44.93,
-    "bloat_s": 14.84,
-    "dl_util": 86.26,
-    "ul_util": 89.47
+    "lat_p95_ms": 49.59,
+    "lat_p99_ms": 133.52,
+    "bloat_s": 78.47,
+    "dl_util": 31.59,
+    "ul_util": 11.04
   },
   "autorate-owd/5g-variable": {
     "lat_p95_ms": 58.44,
@@ -70,18 +70,18 @@
     "ul_util": 46.22
   },
   "autorate/5g-recorded-a": {
-    "lat_p95_ms": 67.73,
-    "lat_p99_ms": 100.21,
-    "bloat_s": 48.07,
-    "dl_util": 67.67,
-    "ul_util": 86.61
+    "lat_p95_ms": 53.95,
+    "lat_p99_ms": 106.44,
+    "bloat_s": 69.71,
+    "dl_util": 43.42,
+    "ul_util": 15.25
   },
   "autorate/5g-recorded-b": {
-    "lat_p95_ms": 64.48,
-    "lat_p99_ms": 86.97,
-    "bloat_s": 56.26,
-    "dl_util": 75.19,
-    "ul_util": 72.96
+    "lat_p95_ms": 56,
+    "lat_p99_ms": 146.67,
+    "bloat_s": 59.62,
+    "dl_util": 29.96,
+    "ul_util": 22.28
   },
   "autorate/5g-variable": {
     "lat_p95_ms": 89.79,

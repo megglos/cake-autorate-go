@@ -222,12 +222,16 @@ func simScenariosVariant(variant uint64) []simScenario {
 		},
 		{
 			// The capacity of a real 5G link (unshaped blocks of a session,
-			// scripts/trace-from-session.sh). Load in the two directions,
-			// large cellular buffers (the unshaped blocks showed up to 1.1 s).
+			// scripts/trace-from-session.sh -r: each 200 ms sample, because
+			// the mean of each second hides short capacity decreases). Load in
+			// the two directions, large cellular buffers (the unshaped blocks
+			// showed up to 1.1 s), and the upload delays of the same link
+			// (as 5g-coupled).
 			name: "5g-recorded-a", duration: dur, seed: 7 + v,
 			dlCapacity: recADl, ulCapacity: recAUl,
 			dlDemand: between(2, 118), ulDemand: between(30, 90),
 			bufferMs: 1000, baseRTT: reflectorBase(25), jitterMs: 3,
+			ulCouplingMs: 10, ulCouplingJitterMs: 12, ulGrantMs: 8, ulGrantJitterMs: 6,
 			link: link5GRec,
 		},
 		{
@@ -236,6 +240,7 @@ func simScenariosVariant(variant uint64) []simScenario {
 			dlCapacity: recBDl, ulCapacity: recBUl,
 			dlDemand: between(2, 118), ulDemand: between(30, 90),
 			bufferMs: 1000, baseRTT: reflectorBase(25), jitterMs: 3,
+			ulCouplingMs: 10, ulCouplingJitterMs: 12, ulGrantMs: 8, ulGrantJitterMs: 6,
 			link: link5GRec,
 		},
 		{
@@ -671,5 +676,37 @@ func TestSimOWD_LearnCrossDelay_UploadCapacityDrop(t *testing.T) {
 	}
 	if after > before+2000 {
 		t.Errorf("learned cross delay increased from %.1f to %.1f ms after the upload capacity decrease", before/1000, after/1000)
+	}
+}
+
+// The simulator must give results near the results of the 5G link for the
+// same capacity trace. 5g-recorded-b uses the unshaped blocks 10 (dl) and
+// 13 (ul) of the 5G session of 2026-10-11 12:45. In the autorate blocks of
+// this session (one-way delays, refractory_on_decrease, 3 rounds), the
+// download got 22 to 50 % of the unshaped rate with load on the download
+// only, and the upload got 56 to 63 % with load on the upload only.
+// Before the calibration (trace with the mean of each second, no upload
+// delays), the simulator gave 87 % and 95 %.
+func TestSimCalibration_5GRecorded(t *testing.T) {
+	run := func(dl, ul bool) simResult {
+		sc := scenarioByName(t, "5g-recorded-b")
+		sc.dlDemand, sc.ulDemand = never, never
+		if dl {
+			sc.dlDemand = between(2, 118)
+		}
+		if ul {
+			sc.ulDemand = between(2, 118)
+		}
+		sc.tune = func(cfg *Config) { cfg.RefractoryOnDecrease = true }
+		return runSim(sc, policyAutorateOWD)
+	}
+	dlOnly, ulOnly := run(true, false), run(false, true)
+	t.Logf("download only: DL %.0f %%, p95 %.1f ms; upload only: UL %.0f %%, p95 %.1f ms",
+		100*dlOnly.dlUtil, dlOnly.latP95, 100*ulOnly.ulUtil, ulOnly.latP95)
+	if dlOnly.dlUtil < 0.2 || dlOnly.dlUtil > 0.6 {
+		t.Errorf("download only: DL utilization %.0f%%, want 20 to 60%% (link: 22 to 50%%)", 100*dlOnly.dlUtil)
+	}
+	if ulOnly.ulUtil < 0.45 || ulOnly.ulUtil > 0.75 {
+		t.Errorf("upload only: UL utilization %.0f%%, want 45 to 75%% (link: 56 to 63%%)", 100*ulOnly.ulUtil)
 	}
 }

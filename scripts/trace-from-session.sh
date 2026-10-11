@@ -9,7 +9,12 @@
 # (200 ms). The first 3 s of the load are not used (TCP slow start).
 #
 # Usage:
-#   ./scripts/trace-from-session.sh SESSION_DIR DL_BLOCK UL_BLOCK > trace.csv
+#   ./scripts/trace-from-session.sh [-r] SESSION_DIR DL_BLOCK UL_BLOCK > trace.csv
+#
+#   -r                   raw: write each rate sample (200 ms), without the
+#                        mean of each second. The mean hides short capacity
+#                        decreases (on 5G, 5 to 10 % of the 200 ms samples
+#                        are below half of the 2 s mean).
 #
 #   DL_BLOCK, UL_BLOCK   block numbers of unshaped blocks (column "block" in
 #                        blocks.tsv) with the modes dl and ul.
@@ -25,6 +30,8 @@
 
 set -euo pipefail
 
+RAW=0
+if [ "${1:-}" = -r ]; then RAW=1; shift; fi
 [ $# -eq 3 ] || { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 1; }
 DIR=$1 DL_BLOCK=$2 UL_BLOCK=$3
 
@@ -53,6 +60,7 @@ rates() {
 
 # smooth: mean of the samples in the last second, at each sample.
 smooth() {
+    if [ "$RAW" -eq 1 ]; then cat; return; fi
     awk '{ t[NR] = $1; v[NR] = $2
            s = 0; n = 0
            for (i = NR; i >= 1 && t[NR] - t[i] < 1000; i--) { s += v[i]; n++ }
