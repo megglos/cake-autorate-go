@@ -33,6 +33,11 @@
 #   -I SECONDS  time without load at the start of each block (default: 15)
 #   -r ROUNDS   number of rounds (default: 2)
 #   -F PERCENT  add the fixed policy at PERCENT of the capacity (default: off)
+#   -A NAME=CONFIG[,BINARY]
+#               add the policy autorate-NAME: autorate with a different config
+#               (and optionally a different binary). Use it more than one
+#               time for more variants. The blocks of all variants alternate,
+#               thus the variants get the same link conditions (A/B test).
 #   -w WORKERS  load workers for each direction (default: from the saturation check)
 #   -C DL,UL    capacity in kbit/s (default: from the saturation check)
 #   -s          do not do the saturation check (then -w is necessary, and
@@ -84,7 +89,9 @@ usage() {
     exit "${1:-0}"
 }
 
-while getopts "i:c:x:o:m:b:I:r:F:w:C:sh" opt; do
+VARIANTS=()
+
+while getopts "i:c:x:o:m:b:I:r:F:w:C:A:sh" opt; do
     case $opt in
         i) IFACE="$OPTARG" ;;
         c) CONFIG="$OPTARG" ;;
@@ -95,6 +102,7 @@ while getopts "i:c:x:o:m:b:I:r:F:w:C:sh" opt; do
         I) IDLE_S="$OPTARG" ;;
         r) ROUNDS="$OPTARG" ;;
         F) FIXED_PCT="$OPTARG" ;;
+        A) VARIANTS+=("$OPTARG") ;;
         w) WORKERS="$OPTARG" ;;
         C) CAPACITY="$OPTARG" ;;
         s) SKIP_CHECK=1 ;;
@@ -133,6 +141,21 @@ BLOCKS="$OUTDIR/blocks.tsv"
 POLICIES="unshaped"
 [ "$FIXED_PCT" -gt 0 ] && POLICIES="$POLICIES fixed"
 POLICIES="$POLICIES autorate"
+
+# Variants: autorate-NAME uses VARIANT_CONFIG[NAME] and VARIANT_BINARY[NAME].
+declare -A VARIANT_CONFIG VARIANT_BINARY
+for v in "${VARIANTS[@]}"; do
+    vname=${v%%=*}
+    vspec=${v#*=}
+    [ "$vname" != "$v" ] && [ -n "$vname" ] || die "-A needs NAME=CONFIG[,BINARY]: $v"
+    [[ $vname =~ ^[a-zA-Z0-9_]+$ ]] || die "-A: NAME must contain only letters, digits and _: $vname"
+    VARIANT_CONFIG[$vname]=${vspec%%,*}
+    VARIANT_BINARY[$vname]=$BINARY
+    [ "$vspec" != "${vspec#*,}" ] && VARIANT_BINARY[$vname]=${vspec#*,}
+    [ -f "${VARIANT_CONFIG[$vname]}" ] || die "config ${VARIANT_CONFIG[$vname]} does not exist"
+    [ -x "${VARIANT_BINARY[$vname]}" ] || die "binary ${VARIANT_BINARY[$vname]} does not exist"
+    POLICIES="$POLICIES autorate-$vname"
+done
 
 # --- Cleanup ---------------------------------------------------------------
 
@@ -199,6 +222,9 @@ measure_load() {
 log "Output directory: $OUTDIR"
 "$CAKE_PC" up "$IFACE" >/dev/null
 cp "$CONFIG" "$OUTDIR/config.yaml"
+for vname in "${!VARIANT_CONFIG[@]}"; do
+    cp "${VARIANT_CONFIG[$vname]}" "$OUTDIR/config-$vname.yaml"
+done
 
 {
     echo "date: $(date -Iseconds)"
@@ -212,6 +238,9 @@ cp "$CONFIG" "$OUTDIR/config.yaml"
     echo "route: $(ip route get 1.1.1.1 2>/dev/null | head -n 1)"
     echo "modes: $MODES"
     echo "policies: $POLICIES"
+    for vname in "${!VARIANT_CONFIG[@]}"; do
+        echo "variant $vname: config ${VARIANT_CONFIG[$vname]}, binary ${VARIANT_BINARY[$vname]} ($("${VARIANT_BINARY[$vname]}" --version 2>&1))"
+    done
     echo "rounds: $ROUNDS"
     echo "block: idle ${IDLE_S}s, load ${BLOCK_S}s"
 } > "$SESSION"
@@ -277,6 +306,7 @@ for round in $(seq 1 "$ROUNDS"); do
             rec="$OUTDIR/$name.jsonl.gz"
             blog="$OUTDIR/$name.log"
             args=(--config "$CONFIG" --record "$rec")
+            bin=$BINARY
             case $policy in
                 unshaped)
                     set_cake unlimited unlimited
@@ -288,6 +318,11 @@ for round in $(seq 1 "$ROUNDS"); do
                     args+=(--no-adjust) ;;
                 autorate)
                     cake_dl=autorate; cake_ul=autorate ;;
+                autorate-*)
+                    vname=${policy#autorate-}
+                    args=(--config "${VARIANT_CONFIG[$vname]}" --record "$rec")
+                    bin=${VARIANT_BINARY[$vname]}
+                    cake_dl=autorate; cake_ul=autorate ;;
             esac
 
             log "Block $block/$total: round $round, $mode, $policy"
@@ -295,7 +330,7 @@ for round in $(seq 1 "$ROUNDS"); do
                 $BLOCK_START_HOOK "$block" "$mode" "$policy"
             fi
             start=$(date +%s)
-            "$BINARY" "${args[@]}" > "$blog" 2>&1 &
+            "$bin" "${args[@]}" > "$blog" 2>&1 &
             CAR_PID=$!
             sleep "$IDLE_S"
             kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped. See $blog"

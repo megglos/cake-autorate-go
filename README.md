@@ -346,6 +346,7 @@ global_ping_response_timeout_s: 10.0    # All reflectors must respond within thi
 ```yaml
 monitor_interval_ms: 200                # How often to sample interface throughput
 bufferbloat_refractory_period_ms: 300   # Cooldown between rate increases after bufferbloat
+refractory_on_decrease: false           # true: also only one rate decrease in each refractory period
 decay_refractory_period_ms: 1000        # Cooldown between low-load decay adjustments
 ```
 
@@ -385,6 +386,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `high_load_thr` | `0.75` | High-load threshold (0.0–1.0) |
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
+| `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
 | `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
 | `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |
 | `global_ping_response_timeout_s` | `10.0` | All-reflector response timeout (s) |
