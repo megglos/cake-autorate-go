@@ -43,6 +43,8 @@
 #   MIN_UNSHAPED_P95_MS [100]  unshaped: minimum p95 of the excess RTT
 #   MIN_DL_PCT [50], MIN_UL_PCT [40]  autorate: minimum throughput in
 #                       percent of the mean capacity
+#   MIN_LOAD_REPLY_PCT [80] minimum replies of the RTT probe under load, in
+#                       percent (else the p95 is nan and the check fails)
 #   MIN_SHAPER_EVENTS [10]  autorate: minimum number of shaper rate changes
 #   MIN_OWD_PINGS [100]     autorate: minimum number of pings with one-way
 #                       delays
@@ -75,6 +77,7 @@ MAX_P95_MS=${MAX_P95_MS:-60}
 MIN_UNSHAPED_P95_MS=${MIN_UNSHAPED_P95_MS:-100}
 MIN_DL_PCT=${MIN_DL_PCT:-50}
 MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-10}
+MIN_LOAD_REPLY_PCT=${MIN_LOAD_REPLY_PCT:-80}
 MIN_OWD_PINGS=${MIN_OWD_PINGS:-100}
 MIN_UL_PCT=${MIN_UL_PCT:-40}
 
@@ -305,19 +308,22 @@ wait "$AUTORATE_PID" 2>/dev/null || true
 # the minimum RTT of the idle time. ping prints one line for each reply.
 # It sends at 0.1 s: icmp_seq N is at N/10 s.
 # The first awk prints "idle RTT" or "load RTT"; sort puts the idle lines
-# first and sorts the RTTs (portable: no GNU awk asort).
+# first and sorts the RTTs (portable: no GNU awk asort). With fewer than
+# MIN_LOAD_REPLY_PCT of the load probes answered, it prints nan (the check
+# fails): lost probes are not in the p95. The p95 is the sample
+# floor(0.95 * n) + 1, as in the simulator and summarize-session.sh.
 excess_p95() {
     awk -v idle="$IDLE_S" '
         /time=/ {
             seq = $0; sub(/.*icmp_seq=/, "", seq); sub(/ .*/, "", seq)
             rtt = $0; sub(/.*time=/, "", rtt); sub(/ ms.*/, "", rtt)
             print (seq + 0 <= idle * 10 ? "idle" : "load"), rtt + 0
-        }' "$1" | sort -k1,1 -k2,2n | awk '
+        }' "$1" | sort -k1,1 -k2,2n | awk -v want=$(( LOAD_S * 10 * MIN_LOAD_REPLY_PCT / 100 )) '
         $1 == "idle" { if (min == "") min = $2; next }
         { load[++k] = $2 }
         END {
-            if (k == 0 || min == "") { print "nan"; exit }
-            i = int(0.95 * k); if (i < 1) i = 1
+            if (k == 0 || k < want || min == "") { print "nan"; exit }
+            i = int(0.95 * k) + 1; if (i > k) i = k
             printf "%.1f\n", load[i] - min
         }'
 }
