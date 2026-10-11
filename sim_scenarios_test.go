@@ -209,6 +209,9 @@ func TestSimScorecard(t *testing.T) {
 	if testing.Short() {
 		t.Skip("simulation scorecard skipped in -short mode")
 	}
+	if *simSeeds < 1 {
+		t.Fatalf("-sim.seeds must be 1 or more, got %d", *simSeeds)
+	}
 	var b strings.Builder
 	if *simSeeds > 1 {
 		fmt.Fprintf(&b, "\nmean of %d seed variants for each scenario", *simSeeds)
@@ -217,10 +220,10 @@ func TestSimScorecard(t *testing.T) {
 		"scenario", "policy", "p50 ms", "p95 ms", "p99 ms", "bloat s", "dl %", "ul %", "sets")
 	for i := range simScenarios() {
 		for _, p := range []simPolicy{policyUnshaped, policyFixed, policyAutorate, policyAutorateOWD} {
-			r := runSimSeeds(i, p, *simSeeds)
-			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7d\n",
+			r, sets := runSimSeeds(i, p, *simSeeds)
+			fmt.Fprintf(&b, "%-16s %-12s %8.1f %8.1f %8.1f %8.1f %7.1f %7.1f %7.0f\n",
 				r.scenario, r.policy, r.latP50, r.latP95, r.latP99, r.bloatS,
-				100*r.dlUtil, 100*r.ulUtil, r.rateChanges)
+				100*r.dlUtil, 100*r.ulUtil, sets)
 		}
 	}
 	t.Log(b.String())
@@ -232,10 +235,12 @@ func TestSimScorecard(t *testing.T) {
 }
 
 // runSimSeeds runs scenario i of simScenariosVariant with n seed variants
-// and returns the mean of the scores.
-func runSimSeeds(i int, p simPolicy, n int) simResult {
+// (n >= 1). It returns the mean of the scores and the mean number of rate
+// changes (rateChanges of the result is not used, because it is an int).
+func runSimSeeds(i int, p simPolicy, n int) (simResult, float64) {
 	var m simResult
-	for v := range max(n, 1) {
+	var sets float64
+	for v := range n {
 		r := runSim(simScenariosVariant(uint64(v))[i], p)
 		m.scenario, m.policy = r.scenario, r.policy
 		m.latP50 += r.latP50
@@ -244,17 +249,16 @@ func runSimSeeds(i int, p simPolicy, n int) simResult {
 		m.bloatS += r.bloatS
 		m.dlUtil += r.dlUtil
 		m.ulUtil += r.ulUtil
-		m.rateChanges += r.rateChanges
+		sets += float64(r.rateChanges)
 	}
-	k := float64(max(n, 1))
+	k := float64(n)
 	m.latP50 /= k
 	m.latP95 /= k
 	m.latP99 /= k
 	m.bloatS /= k
 	m.dlUtil /= k
 	m.ulUtil /= k
-	m.rateChanges /= max(n, 1)
-	return m
+	return m, sets / k
 }
 
 // Variant 0 gives the default seeds, and other variants give other traces.
