@@ -39,7 +39,7 @@ Keep the current code. Do not write it again from the start.
 
 The code review on 2026-10-10 found F1 to F7. The comparison with upstream on 2026-10-11 found F8. The IDs are also in the tests and commits.
 
-Status: F1 option merged (#11), F2 merged (#11), F3 rejected (PR #24: window average worse in the simulator, 8 seeds; unused EWMA removed), F4 merged (#10), F5 open (Starlink), F6 fixed (#4), F7 closed, F8 rejected (PR #18 draft: costs latency; `learn_cross_delay` solves the coupling better).
+Status: F1 option merged (#11), F2 merged (#11), F3 rejected (PR #24 merged: window average worse in the simulator, 8 seeds; unused EWMA removed), F4 merged (#10), F5 open (Starlink), F6 fixed (#4), F7 closed, F8 rejected (PR #18 draft: costs latency; `learn_cross_delay` solves the coupling better).
 
 | ID | Issue | Location | Effect | Simulator result |
 |---|---|---|---|---|
@@ -406,7 +406,7 @@ Local files (not committed): `recordings/*.yaml`, `recordings/upstream-5g-*.sh`,
   - Home line: UniFi UXG, Smart Queue 630/320 Mbit/s. Keep it on. Emulated rates must stay ≤ 70 % of it: DL ≤ 440 Mbit/s, UL ≤ 220 Mbit/s.
   - Traces: simulator traces first, then Mahimahi, then the capacity of the real 5G recordings.
   - Later: the same setup without internet (local iperf3 namespace) for CI (step 7).
-- [x] **2c. Replay and trace import.** Done 2026-10-11 (PR #25). Gap sim vs link explained by two causes: (1) 1-s mean in trace-from-session hides sub-second capacity dips (5–10 % of 200 ms samples < half of the 2 s mean); (2) recorded scenarios had no UL radio delays. With raw traces (`-r`) + coupling/grant: dl-only DL 36–39 % (link 22–50), ul-only UL 57–61 % (link 56–63). `TestSimCalibration_5GRecorded` keeps it. Remaining: UL capacity under DL load is ~1/3 on the link (11 vs 36 Mbit/s), not modelled. Also found: DL OWD under DL load has a heavy tail (p95 33–94 ms, also at shaper 10–40 % of mean capacity), mostly in bursts: short capacity dips.
+- [x] **2c. Replay and trace import.** Done 2026-10-11 (PR #25, merged). Gap sim vs link explained by two causes: (1) 1-s mean in trace-from-session hides sub-second capacity dips (5–10 % of 200 ms samples < half of the 2 s mean); (2) recorded scenarios had no UL radio delays. With raw traces (`-r`) + coupling/grant: dl-only DL 36–39 % (link 22–50), ul-only UL 57–61 % (link 56–63). `TestSimCalibration_5GRecorded` keeps it. Remaining: UL capacity under DL load is ~1/3 on the link (11 vs 36 Mbit/s), not modelled. Also found: DL OWD under DL load has a heavy tail (p95 33–94 ms, also at shaper 10–40 % of mean capacity), mostly in bursts: short capacity dips.
   - Replay a recording through `Core` as a test.
   - Import capacity traces (CSV, Mahimahi).
   - Calibrate the simulator with the 5G recordings. Compare the queue delay under load, the jitter and the capacity changes.
