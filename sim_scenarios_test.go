@@ -239,6 +239,16 @@ func simScenariosVariant(variant uint64) []simScenario {
 			link: link5GRec,
 		},
 		{
+			// Similar to the 5G link in the recordings: download activity
+			// delays the upload (the 5G scheduler). Load in the two
+			// directions. The upload shaper cannot remove this delay.
+			name: "5g-coupled", duration: dur, seed: 9 + v,
+			dlCapacity: constant(150000), ulCapacity: constant(30000),
+			dlDemand: between(2, 118), ulDemand: between(30, 100),
+			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12,
+			link: link5G,
+		},
+		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
 			// ping during the spike cuts the rate again).
 			name: "latency-spike", duration: dur, seed: 6 + v,
@@ -522,6 +532,19 @@ func TestSim_OutageAndPingLoss(t *testing.T) {
 		if r.dlUtil < base.dlUtil-0.03 {
 			t.Errorf("%s: DL utilization %.1f %% with 5 %% ping loss, %.1f %% without", p, 100*r.dlUtil, 100*base.dlUtil)
 		}
+	}
+}
+
+// With one-way delays, the upload delay from download activity must not
+// stop the upload increases (F8: the original increases the rate up to the
+// delay threshold).
+func TestSimOWD_CoupledUploadGetsCapacity(t *testing.T) {
+	r := runSim(scenarioByName(t, "5g-coupled"), policyAutorateOWD)
+	if r.ulUtil < 0.65 {
+		t.Errorf("UL utilization %.0f%% with download activity, want 65%% or more (25%% before F8)", 100*r.ulUtil)
+	}
+	if r.dlUtil < 0.9 {
+		t.Errorf("DL utilization %.0f%%, want 90%% or more", 100*r.dlUtil)
 	}
 }
 

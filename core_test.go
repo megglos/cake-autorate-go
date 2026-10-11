@@ -385,6 +385,30 @@ func TestAdjustRateHighLoad_IncreasesRate(t *testing.T) {
 	}
 }
 
+// With one-way delays, a delay between avg_owd_delta_max_adjust_up_thr_ms
+// and the delay threshold gives a smaller increase, not no increase (as
+// in the original).
+func TestAdjustRateHighLoad_OWDIncreasesUpToThreshold(t *testing.T) {
+	c, _ := newTestCore(t)
+	const thresholdUs = 30000
+	rate := func(owd bool, deltaUs float64) float64 {
+		c.lastPingOWD = owd
+		c.dl.shaperRateKbps = 20000
+		c.adjustRateHighLoad(DL, deltaUs, thresholdUs)
+		return c.dl.shaperRateKbps
+	}
+	full := rate(true, 5000)
+	half := rate(true, 20000)
+	none := rate(true, 30000)
+	if !(full > half && half > 20000 && none == 20000) {
+		t.Errorf("OWD rates after an increase at 5/20/30 ms delta: %.0f/%.0f/%.0f, want full > half > 20000 = none", full, half, none)
+	}
+	// With RTT/2, a delta above the max adjust up threshold stops the increase.
+	if r := rate(false, 20000); r != 20000 {
+		t.Errorf("RTT/2 rate after an increase at 20 ms delta: %.0f, want 20000", r)
+	}
+}
+
 func TestAdjustRateHighLoad_ClampsToMax(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)

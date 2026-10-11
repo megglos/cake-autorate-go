@@ -406,12 +406,28 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	ds := c.getDirState(dir)
 	dc := c.link.DirConfig(dir)
 
-	// The factor shows the remaining headroom below the delay threshold
+	// The factor shows the remaining headroom below the delay threshold.
 	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
 	if maxUpThrUs <= 0 {
 		maxUpThrUs = 1
 	}
 	factor := 1.0 - (deltaUs / maxUpThrUs)
+	if c.lastPingOWD {
+		// With one-way delays, use the factor of the original: the full
+		// increase up to avg_owd_delta_max_adjust_up_thr_ms, then less
+		// increase up to the delay threshold. The thresholds have the same
+		// compensation. Thus, a delay that the shaper cannot remove (for
+		// example, on 5G the upload delay from download activity) does not
+		// stop all increases.
+		// With RTT/2, keep the old factor: a queue in the other direction
+		// also increases the delta, and the larger increase in that
+		// direction gives more bufferbloat.
+		maxUpThrUs += thresholdUs - dc.OWDDeltaDelayThrMs*1000.0
+		factor = 1.0
+		if thresholdUs > maxUpThrUs {
+			factor = (thresholdUs - deltaUs) / (thresholdUs - maxUpThrUs)
+		}
+	}
 	factor = clamp(factor, 0, 1)
 
 	minAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh
