@@ -240,6 +240,9 @@ phase() {
     r iperf3 -c 10.210.1.2 -p 5202 -P 4 -t "$LOAD_S" -J > "$dir/iperf-ul.json" 2>&1 &
     local ul_pid=$!
     wait "$dl_pid" "$ul_pid" || log "warning: iperf3 failed (see $dir/iperf-*.json)"
+    # The wave runs until this kill. If it stopped before (a tc error), the
+    # phase did not have the square wave.
+    kill -0 "$wave_pid" 2>/dev/null || die "phase $name: the rate changes stopped (tc error)"
     kill "$wave_pid" 2>/dev/null || true
     wait "$wave_pid" 2>/dev/null || true
     wait "$ping_pid" || true
@@ -332,6 +335,9 @@ a_dl=$(kbps "$OUTDIR/autorate/iperf-dl.json"); a_ul=$(kbps "$OUTDIR/autorate/ipe
 a_dl_pct=$(( ${a_dl:-0} * 100 / mean_dl ))
 a_ul_pct=$(( ${a_ul:-0} * 100 / mean_ul ))
 shaper_events=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep -c '"type":"shaper"' || true)
+# The recording has the shaper events also if netlink fails: then the
+# shaper uses tc and logs it. The test must use netlink.
+tc_fallbacks=$(grep -c "tc exec" "$OUTDIR/autorate.log" || true)
 owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"ping"' | grep -c '"dl_owd_us"' || true)
 
 {
@@ -346,6 +352,7 @@ owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"pin
     check "autorate: download $a_dl_pct % >= $MIN_DL_PCT % of the mean capacity" "$(ge "$a_dl_pct" "$MIN_DL_PCT")"
     check "autorate: upload $a_ul_pct % >= $MIN_UL_PCT % of the mean capacity" "$(ge "$a_ul_pct" "$MIN_UL_PCT")"
     check "autorate: the shaper rate changed ($shaper_events times)" "$(ge "$shaper_events" 10)"
+    check "autorate: netlink, no tc fallback ($tc_fallbacks log lines)" "$(le "$tc_fallbacks" 0)"
     check "autorate: ICMP timestamp replies ($owd_pings)" "$(ge "$owd_pings" 100)"
 } > "$OUTDIR/result.txt"
 cat "$OUTDIR/result.txt"
