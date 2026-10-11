@@ -148,6 +148,12 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		if cfg == nil {
 			cfg = rec.config
 		}
+		// A variant config (record-session.sh -A) must be for the same link.
+		first, l := cfg.Links[0], rec.config.Links[0]
+		if l.Download.Interface != first.Download.Interface || l.Upload.Interface != first.Upload.Interface {
+			return nil, nil, fmt.Errorf("block %d: interfaces %s/%s, the first block has %s/%s (calibrate one link at a time)",
+				b.num, l.Download.Interface, l.Upload.Interface, first.Download.Interface, first.Upload.Interface)
+		}
 		for r, n := range rec.echo {
 			echo[r] += n
 		}
@@ -585,6 +591,12 @@ func (e *errWriter) Write(b []byte) (int, error) {
 // yamlString returns s as a YAML scalar. It quotes s if necessary (for
 // example "wan # backup" or "yes").
 func yamlString(s string) string {
+	// yaml.Marshal writes a block scalar for a string with a line break.
+	// The output needs one line. A Go quoted string is a valid YAML
+	// double-quoted scalar.
+	if strings.ContainsAny(s, "\n\r") {
+		return strconv.Quote(s)
+	}
 	b, err := yaml.Marshal(s)
 	if err != nil {
 		return strconv.Quote(s)

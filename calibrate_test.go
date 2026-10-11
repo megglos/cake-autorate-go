@@ -295,7 +295,7 @@ func TestWriteCalConfig_QuotesStrings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Links[0].Name = "wan # backup"
+	cfg.Links[0].Name = "wan # backup\nsecond line"
 	cfg.Links[0].PingInterfaceName = "yes"
 	cfg.Links[0].PingSourceAddr = "192.0.2.1"
 	var buf bytes.Buffer
@@ -310,7 +310,7 @@ func TestWriteCalConfig_QuotesStrings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Links[0].Name != "wan # backup" || got.Links[0].PingInterfaceName != "yes" || got.Links[0].PingSourceAddr != "192.0.2.1" {
+	if got.Links[0].Name != "wan # backup\nsecond line" || got.Links[0].PingInterfaceName != "yes" || got.Links[0].PingSourceAddr != "192.0.2.1" {
 		t.Errorf("name %q, ping_interface %q, ping_source_addr %q after reload", got.Links[0].Name, got.Links[0].PingInterfaceName, got.Links[0].PingSourceAddr)
 	}
 }
@@ -462,5 +462,23 @@ func TestCalibrateSession_WarmupIsNotIdle(t *testing.T) {
 	}
 	if res.IdleJitterMs.P50 > 5 {
 		t.Errorf("idle jitter %.1f ms, want approximately 4 (the warm-up is not idle time)", res.IdleJitterMs.P50)
+	}
+}
+
+// A variant config of another link is rejected.
+func TestCalibrateSession_OtherInterfaces(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2})
+	cfg := testConfig()
+	cfg.Links[0].Download.Interface = "ifb4lte"
+	cfg.Links[0].Upload.Interface = "lte"
+	rec, err := newRecorderAt(filepath.Join(dir, "06-both-autorate.jsonl"), 0, cfg, time.Unix(1_800_000_000, 0), testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := calibrateSession(dir); err == nil || !strings.Contains(err.Error(), "interfaces") {
+		t.Errorf("err = %v, want an error for other interfaces", err)
 	}
 }
