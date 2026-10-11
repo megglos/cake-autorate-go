@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -126,6 +127,54 @@ func TestShaper_FallbackToTc(t *testing.T) {
 	}
 }
 
+// After a netlink error, SetRate uses tc until the retry time. Then it
+// opens a new netlink socket.
+func TestShaper_NetlinkRetry(t *testing.T) {
+	now := time.Unix(1000, 0)
+	s := &Shaper{
+		logger:    testLogger(t),
+		fd:        -1,
+		ifIndices: make(map[string]int32),
+		lastRates: make(map[string]int),
+		msgBuf:    make([]byte, 64),
+		recvBuf:   make([]byte, 4096),
+		now:       func() time.Time { return now },
+	}
+	defer s.Close()
+
+	// No retry time: no netlink (the tests above use this).
+	if s.netlinkReady() {
+		t.Fatal("netlinkReady with a zero retry time, want false")
+	}
+
+	// A netlink error (here: the interface does not exist) closes the
+	// socket and sets the retry time.
+	fd, err := openNetlink()
+	if err != nil {
+		t.Skipf("no netlink socket: %v", err)
+	}
+	s.fd = fd
+	_ = s.SetRate("nonexistent-iface", 10000)
+	if s.fd >= 0 {
+		t.Fatal("socket open after a netlink error")
+	}
+	if want := now.Add(netlinkRetryInterval); !s.netlinkRetryAt.Equal(want) {
+		t.Fatalf("retry time %v, want %v", s.netlinkRetryAt, want)
+	}
+
+	// Before the retry time: tc.
+	now = now.Add(netlinkRetryInterval - time.Second)
+	if s.netlinkReady() {
+		t.Error("netlinkReady before the retry time, want false")
+	}
+
+	// At the retry time: a new socket.
+	now = now.Add(time.Second)
+	if !s.netlinkReady() || s.fd < 0 {
+		t.Error("netlinkReady at the retry time, want a new socket")
+	}
+}
+
 // --- Netlink message builder tests ---
 
 func TestBuildCakeRateMsg_Size(t *testing.T) {
@@ -211,7 +260,7 @@ func TestBuildCakeRateMsg_RateEncoding(t *testing.T) {
 		rateKbps    int
 		wantBytesPS uint64
 	}{
-		{10000, 1250000},  // 10 Mbit/s = 1,250,000 bytes/s
+		{10000, 1250000},   // 10 Mbit/s = 1,250,000 bytes/s
 		{100000, 12500000}, // 100 Mbit/s
 		{1000, 125000},     // 1 Mbit/s
 	}
