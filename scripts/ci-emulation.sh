@@ -39,14 +39,20 @@
 #   DELAY_MS [20]       base RTT of the emulated link
 #   QUEUE [1000]        queue of each bottleneck in packets
 #   IDLE_S [10], LOAD_S [60]
-#   MAX_P95_MS [60]     autorate: maximum p95 of the excess RTT under load
-#   MIN_UNSHAPED_P95_MS [100]  unshaped: minimum p95 of the excess RTT
-#   MIN_DL_PCT [50], MIN_UL_PCT [40]  autorate: minimum throughput in
+# The default limits come from the first 8 CI runs (GitHub ubuntu-latest):
+# autorate p95 42-46 ms, download 85-87 %, upload 76-78 %, unshaped p95
+# 929-1040 ms, 862-974 shaper changes, 1540-1840 pings with one-way delays.
+# Each limit is approximately 10 ms or 10 percent points from the worst
+# value (the counts: a factor of 1.5 or more): a regression fails, the
+# run-to-run variation does not.
+#   MAX_P95_MS [55]     autorate: maximum p95 of the excess RTT under load
+#   MIN_UNSHAPED_P95_MS [500]  unshaped: minimum p95 of the excess RTT
+#   MIN_DL_PCT [75], MIN_UL_PCT [65]  autorate: minimum throughput in
 #                       percent of the mean capacity
 #   MIN_LOAD_REPLY_PCT [80] minimum replies of the RTT probe under load, in
 #                       percent (else the p95 is nan and the check fails)
-#   MIN_SHAPER_EVENTS [10]  autorate: minimum number of shaper rate changes
-#   MIN_OWD_PINGS [100]     autorate: minimum number of pings with one-way
+#   MIN_SHAPER_EVENTS [200]  autorate: minimum number of shaper rate changes
+#   MIN_OWD_PINGS [1000]    autorate: minimum number of pings with one-way
 #                       delays
 #
 # Requirements: bash, iproute2, iperf3, iputils ping, awk, jq, ethtool, kernel modules
@@ -73,13 +79,13 @@ DELAY_MS=${DELAY_MS:-20}
 QUEUE=${QUEUE:-1000}
 IDLE_S=${IDLE_S:-10}
 LOAD_S=${LOAD_S:-60}
-MAX_P95_MS=${MAX_P95_MS:-60}
-MIN_UNSHAPED_P95_MS=${MIN_UNSHAPED_P95_MS:-100}
-MIN_DL_PCT=${MIN_DL_PCT:-50}
-MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-10}
+MAX_P95_MS=${MAX_P95_MS:-55}
+MIN_UNSHAPED_P95_MS=${MIN_UNSHAPED_P95_MS:-500}
+MIN_DL_PCT=${MIN_DL_PCT:-75}
+MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-200}
 MIN_LOAD_REPLY_PCT=${MIN_LOAD_REPLY_PCT:-80}
-MIN_OWD_PINGS=${MIN_OWD_PINGS:-100}
-MIN_UL_PCT=${MIN_UL_PCT:-40}
+MIN_OWD_PINGS=${MIN_OWD_PINGS:-1000}
+MIN_UL_PCT=${MIN_UL_PCT:-65}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 BINARY=./cake-autorate-go
