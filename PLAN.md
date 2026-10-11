@@ -325,9 +325,19 @@ DL unchanged in all. learn + UL 20 gives 4.6x the upload for +3 to +10 ms p95 (l
 
 Config `recordings/5g-s7-learn-u20.yaml` (= 5g-s5-learn + UL thr 20, adjust_down 40). 4 rounds x 3 policies + unshaped = 16 blocks, approximately 55 min.
 
+### Session 7 (2026-10-11 15:10, `recordings/20261011-1510-enp7s0`): both mode, 30 s warm-up, 4 rounds
+
+| Policy | DL Mbit/s (4 rounds) | mean | UL Mbit/s | mean | UL OWD p95 | mean | DL OWD p95 |
+|---|---|---|---|---|---|---|---|
+| main (30/30) | 115 111 106 119 | 113 | 16 6 5 5 | 8.0 | 73 62 65 73 | 68 | 46–73 |
+| learn30 | 109 86 114 107 | 104 | 11 12 19 8 | 12.5 | 118 101 101 65 | 96 | 46–57 |
+| learn20 | 114 90 108 106 | 104.5 | 7 18 8 19 | 13.0 | 96 89 86 84 | 89 | 47–53 |
+
+Result: learn20 gives the same UL as learn30 (+60 % vs main) at 7 ms lower UL p95; DL −8 % for both learn variants. Noisy (UL per block 5–19). Sessions 6+7 together: learn_cross_delay roughly doubles/×1.6 UL under two-way load for +20–30 ms UL p95. 5G profile proposal: `learn_cross_delay: true`, UL threshold 20–25 ms (calibrate floor 23–25). Defaults stay 30/30, learn off.
+
 ### Session 8 (prepared): latency target on the link (PR #27 binary)
 
-`recordings/5g-s8-ul-target60.yaml` = 5g-s5-learn + UL `latency_target_p95_ms: 60`, `latency_target_min_thr_ms: 25`, `latency_target_window_s: 20`. Binary `../cake-autorate-go-lt/cake-autorate-go` (e5378f9). Base policy: learn30 (main binary). Modes ul + both (warm-up), 3 rounds = 18 blocks, ~55 min:
+`recordings/5g-s8-ul-target60.yaml` = 5g-s5-learn + UL `latency_target_p95_ms: 60`, `latency_target_min_thr_ms: 25`, `latency_target_window_s: 20`. Binary `../cake-autorate-go-lt/cake-autorate-go` (41c53a4, rebuilt after the review fixes). Base policy: learn30 (main binary). Modes ul + both (warm-up), 3 rounds = 18 blocks, ~55 min:
 `sudo ./scripts/record-session.sh -i enp7s0 -c recordings/5g-s5-learn.yaml -m "ul both" -r 3 -W 30 -A target60=recordings/5g-s8-ul-target60.yaml,../cake-autorate-go-lt/cake-autorate-go`
 Expect (sim): UL p95 near 60–70 ms, more UL than learn30. Check the log for the threshold changes (`grep "latency target" NN-*.log`).
 
