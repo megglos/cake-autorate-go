@@ -49,10 +49,11 @@
 #   -U NAME=CONFIG
 #               add the policy upstream-NAME: the original cake-autorate with
 #               the config file CONFIG (config.primary.sh format). Set
-#               dl_if=ifb4IFACE and ul_if=IFACE in CONFIG. Use it more than
-#               one time for more variants. The environment variable
-#               UPSTREAM_DIR is the directory with cake-autorate.sh, lib.sh
-#               and defaults.sh (default: ../cake-autorate).
+#               dl_if=ifb4IFACE (the first 15 characters) and ul_if=IFACE
+#               in CONFIG. Use it more than one time for more variants. The
+#               environment variable UPSTREAM_DIR is the directory with
+#               cake-autorate.sh, lib.sh and defaults.sh (default:
+#               ../cake-autorate).
 #   -w WORKERS  load workers for each direction (default: from the saturation check)
 #   -C DL,UL    capacity in kbit/s (default: from the saturation check)
 #   -s          do not do the saturation check (then -w is necessary, and
@@ -181,6 +182,20 @@ for v in "${VARIANTS[@]}"; do
     POLICIES="$POLICIES autorate-$vname"
 done
 
+# config_value prints the value of KEY in the upstream config FILE (the last
+# line KEY=VALUE, without a comment and quotes). It compares the key as text,
+# not as a regular expression.
+config_value() {
+    awk -v key="$2" '
+        index($0, key "=") == 1 {
+            v = substr($0, length(key) + 2)
+            sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
+            if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
+            val = v
+        }
+        END { print val }' "$1"
+}
+
 # Upstream variants: upstream-NAME uses UPSTREAM_CONFIG[NAME].
 declare -A UPSTREAM_CONFIG
 for u in "${UPSTREAMS[@]}"; do
@@ -190,8 +205,8 @@ for u in "${UPSTREAMS[@]}"; do
     UPSTREAM_CONFIG[$uname]=$(realpath "${u#*=}")
     [ -f "${UPSTREAM_CONFIG[$uname]}" ] || die "config ${UPSTREAM_CONFIG[$uname]} does not exist"
     cp "${UPSTREAM_CONFIG[$uname]}" "$OUTDIR/upstream-$uname.sh"
-    grep -q "^dl_if=$IFB\b" "${UPSTREAM_CONFIG[$uname]}" || die "${UPSTREAM_CONFIG[$uname]}: set dl_if=$IFB"
-    grep -q "^ul_if=$IFACE\b" "${UPSTREAM_CONFIG[$uname]}" || die "${UPSTREAM_CONFIG[$uname]}: set ul_if=$IFACE"
+    [ "$(config_value "${UPSTREAM_CONFIG[$uname]}" dl_if)" = "$IFB" ] || die "${UPSTREAM_CONFIG[$uname]}: set dl_if=$IFB"
+    [ "$(config_value "${UPSTREAM_CONFIG[$uname]}" ul_if)" = "$IFACE" ] || die "${UPSTREAM_CONFIG[$uname]}: set ul_if=$IFACE"
     POLICIES="$POLICIES upstream-$uname"
 done
 if [ "${#UPSTREAMS[@]}" -gt 0 ]; then
@@ -386,7 +401,7 @@ for round in $(seq 1 "$ROUNDS"); do
                 uname=${policy#upstream-}
                 updir=$(realpath "$OUTDIR")/$name.upstream
                 mkdir -p "$updir"
-                { cat "${UPSTREAM_CONFIG[$uname]}"; echo; echo "log_file_path_override=\"$updir\""; } \
+                { cat "${UPSTREAM_CONFIG[$uname]}"; echo; printf 'log_file_path_override=%q\n' "$updir"; } \
                     > "$updir/config.$uname.sh"
                 CAKE_AUTORATE_SCRIPT_PREFIX="$UPSTREAM_DIR" \
                     bash "$UPSTREAM_DIR/cake-autorate.sh" "$updir/config.$uname.sh" \

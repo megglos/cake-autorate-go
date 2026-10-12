@@ -235,7 +235,7 @@ Before the blocks, the script does a saturation check. It applies the load with 
    - `NN-MODE-POLICY.log`: the log of cake-autorate-go and load-gen.sh.
    - `NN-MODE-upstream-NAME.upstream/`: the config and the log of cake-autorate (only with `-U`).
 
-For `-U`, clone cake-autorate to `../cake-autorate`, or set `UPSTREAM_DIR` to its directory. CONFIG is a file in the `config.primary.sh` format. Set `dl_if=ifb4<interface>` and `ul_if=<interface>` in it. cake-autorate sets the CAKE bandwidth in the upstream blocks. cake-autorate-go runs at the same time with `--no-adjust` and only records the pings and the throughput. Thus, the summary uses the same measurement for all policies.
+For `-U`, clone cake-autorate to `../cake-autorate`, or set `UPSTREAM_DIR` to its directory. CONFIG is a file in the `config.primary.sh` format. Set `dl_if=ifb4<interface>` and `ul_if=<interface>` in it. Linux limits interface names to 15 characters. Thus, for an interface name of more than 11 characters, the download interface is the first 15 characters of `ifb4<interface>`. If the config is not correct, the script shows the correct values. cake-autorate sets the CAKE bandwidth in the upstream blocks. cake-autorate-go runs at the same time with `--no-adjust` and only records the pings and the throughput. Thus, the summary uses the same measurement for all policies.
 
 If you stop the script with Ctrl+C, it stops all programs and removes CAKE.
 
