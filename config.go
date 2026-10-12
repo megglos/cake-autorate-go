@@ -108,7 +108,13 @@ type Config struct {
 	// RefractoryOnDecrease applies the bufferbloat refractory period also
 	// to decreases: one decrease in each period (as in the original). If
 	// false, each ping with bufferbloat decreases the rate.
-	RefractoryOnDecrease    bool `yaml:"refractory_on_decrease"`
+	RefractoryOnDecrease bool `yaml:"refractory_on_decrease"`
+	// RepeatDecreaseOnRise allows a second decrease in the refractory
+	// period only when the delay is higher than at the last decrease. After
+	// a decrease, the queue empties only slowly, and the detection window
+	// keeps the delayed pings. Without this option, each of these pings
+	// decreases the rate again. RefractoryOnDecrease has priority.
+	RepeatDecreaseOnRise    bool `yaml:"repeat_decrease_on_rise"`
 	DecayRefractoryPeriodMs int  `yaml:"decay_refractory_period_ms"`
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
