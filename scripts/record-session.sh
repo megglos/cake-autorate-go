@@ -188,8 +188,8 @@ for u in "${UPSTREAMS[@]}"; do
     [ "$uname" != "$u" ] && [ -n "$uname" ] || die "-U needs NAME=CONFIG: $u"
     [[ $uname =~ ^[a-zA-Z0-9_]+$ ]] || die "-U: NAME must contain only letters, digits and _: $uname"
     UPSTREAM_CONFIG[$uname]=$(realpath "${u#*=}")
-    cp "${UPSTREAM_CONFIG[$uname]}" "$OUTDIR/upstream-$uname.sh"
     [ -f "${UPSTREAM_CONFIG[$uname]}" ] || die "config ${UPSTREAM_CONFIG[$uname]} does not exist"
+    cp "${UPSTREAM_CONFIG[$uname]}" "$OUTDIR/upstream-$uname.sh"
     grep -q "^dl_if=$IFB\b" "${UPSTREAM_CONFIG[$uname]}" || die "${UPSTREAM_CONFIG[$uname]}: set dl_if=$IFB"
     grep -q "^ul_if=$IFACE\b" "${UPSTREAM_CONFIG[$uname]}" || die "${UPSTREAM_CONFIG[$uname]}: set ul_if=$IFACE"
     POLICIES="$POLICIES upstream-$uname"
