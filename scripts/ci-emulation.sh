@@ -15,7 +15,7 @@
 # square wave: the high rate and half of it, PERIOD_S each). The kernel of
 # the server namespace replies to ICMP echo and ICMP timestamp requests.
 #
-# The test has two phases. Each phase has IDLE_S without load, then LOAD_S
+# The test has two phases (three with -U). Each phase has IDLE_S without load, then LOAD_S
 # with load in the two directions (iperf3):
 #   1. unshaped: CAKE without a rate limit. The modem queue fills. This
 #      phase makes sure that the emulation has bufferbloat.
