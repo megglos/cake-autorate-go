@@ -153,7 +153,7 @@ The Go version also shows the types of decisions (bufferbloat, high load, decay)
 - Options for 5G links: `learn_cross_delay` (the upload delay that download activity causes) and `repeat_decrease_on_rise` (fewer decreases while the queue empties). See [5G links](#5g-links).
 - More than one link in one process.
 - `calibrate`: makes a proposed config from a test session on your link.
-- Recording and replay of all controller events, a link simulator, and link emulations for tests (see [Tests and tools](#tests-and-tools)).
+- Recording and replay of the controller inputs and decisions, a link simulator, and link emulations for tests (see [Tests and tools](#tests-and-tools)).
 - YAML config with default values for all settings.
 - Small resource usage for routers.
 
@@ -371,27 +371,31 @@ alpha_delta_ewma: 0.095          # Not used (kept for config compatibility)
 
 The two values are different on purpose. The baseline must increase slowly: else it includes the bufferbloat. The baseline must decrease quickly: then it follows a real decrease of the path delay.
 
-### Idle and sleep
+### Idle state
 
-These settings prevent rate adjustments on a connection without traffic:
+These settings stop the pings on a connection without traffic:
 
 ```yaml
 enable_sleep_function: true
 connection_active_thr_kbps: 2000   # Below this: idle
-sustained_idle_sleep_thr_s: 60.0   # Idle time (s) before the sleep state
+sustained_idle_sleep_thr_s: 60.0   # Time (s) with low traffic before the Idle state
 ```
 
-In the **Idle** state, the controller makes no adjustments for load, and the bandwidth moves to `base_rate_kbps`. After `sustained_idle_sleep_thr_s` seconds, the program stops the pings (**Sleep** state). When traffic starts again, the pings start again.
+When the download and the upload are both below `connection_active_thr_kbps` for `sustained_idle_sleep_thr_s` seconds, the controller goes into the **Idle** state. It stops the pings and makes no rate adjustments. The shaper rates do not change (with `min_shaper_rates_enforcement: true`, they go to `min_rate_kbps`). When the traffic in one direction is at `connection_active_thr_kbps` or more again, the controller goes back to **Running**. It sets the rates to `base_rate_kbps` and starts the pings again.
+
+Before the Idle state, with low traffic, the controller is in the Running state. Then, the rate moves slowly to `base_rate_kbps`.
 
 ### Stall detection
 
 The program finds a connection that has stopped:
 
 ```yaml
-stall_detection_thr: 5                  # Number of stall samples in sequence for a stall
-connection_stall_thr_kbps: 10           # Rate below this: a stall sample
-global_ping_response_timeout_s: 10.0    # Time in which at least one reflector must reply
+stall_detection_thr: 5                  # Number of ping timeouts in sequence for a stall
+global_ping_response_timeout_s: 10.0    # Minimum time since the last ping reply for a stall (s)
+connection_stall_thr_kbps: 10           # Traffic at or above this ends the stall
 ```
+
+The controller goes into the **Stall** state when the two conditions are true: `stall_detection_thr` ping timeouts in sequence, and no ping reply for more than `global_ping_response_timeout_s`. In the Stall state, it stops the pings and makes no rate adjustments. When the traffic in one direction is at `connection_stall_thr_kbps` or more, it goes back to **Running**, sets the rates to `base_rate_kbps` and starts the pings again.
 
 ### Timing
 
@@ -454,9 +458,9 @@ learn_cross_delay: true
 | `pinger_count` | `6` | Number of reflectors that the program pings at the same time |
 | `ping_interval_ms` | `300` | Time between two pings to one reflector (ms) |
 | `ping_method` | `icmp` | `icmp` (RTT/2 for each direction) or `icmp-timestamp` (delay of each direction) |
-| `enable_sleep_function` | `true` | Use the idle and sleep states |
+| `enable_sleep_function` | `true` | Use the Idle state (stop the pings without traffic) |
 | `connection_active_thr_kbps` | `2000` | Idle threshold (kbit/s) |
-| `sustained_idle_sleep_thr_s` | `60.0` | Idle time before the sleep state (s) |
+| `sustained_idle_sleep_thr_s` | `60.0` | Time with low traffic before the Idle state (s) |
 | `bufferbloat_detection_window` | `6` | Number of samples in the detection window |
 | `bufferbloat_detection_thr` | `3` | Number of bufferbloat samples in the window for bufferbloat |
 | `alpha_baseline_increase` | `0.001` | EWMA alpha when the baseline increases |
@@ -470,7 +474,7 @@ learn_cross_delay: true
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |
 | `decay_refractory_period_ms` | `1000` | Time between two adjustments for low load (ms) |
 | `reflector_response_deadline_s` | `1.0` | Time in which a reflector must reply (s) |
-| `global_ping_response_timeout_s` | `10.0` | Time in which at least one reflector must reply (s) |
+| `global_ping_response_timeout_s` | `10.0` | Minimum time since the last ping reply for the Stall state (s) |
 | `log_to_file` | `true` | Write the log to a file |
 | `log_file_path` | `/var/log/cake-autorate.log` | Path of the log file |
 | `log_file_max_size_kb` | `2000` | Maximum size of the log file (KB) |
@@ -488,7 +492,7 @@ sudo ./cake-autorate-go --config /path/to/config.yaml
 # Write more log messages
 sudo ./cake-autorate-go --debug
 
-# Record all controller events (see docs/recording.md)
+# Record the controller inputs and decisions (see docs/recording.md)
 sudo ./cake-autorate-go --record /tmp/session.jsonl.gz
 
 # Measure the link without changes to the shaper rates
@@ -505,7 +509,7 @@ The program must have root privileges (or `CAP_NET_RAW` and `CAP_NET_ADMIN`): it
 
 ### Recording
 
-The `--record FILE` option writes all controller events to a JSONL file. A replay of the file through the controller gives the same decisions. Use recordings to analyze a session, to calibrate the link simulator and to tune the controller. For the file format and a recording procedure, see [docs/recording.md](docs/recording.md).
+The `--record FILE` option writes the inputs of the controller (pings, throughput samples, reflector changes) and its decisions (shaper rates, state changes) to a JSONL file. It does not record the start and stop of the pingers. A replay of the file through the controller gives the same decisions. Use recordings to analyze a session, to calibrate the link simulator and to tune the controller. For the file format and a recording procedure, see [docs/recording.md](docs/recording.md).
 
 ### Calibration from a session
 
