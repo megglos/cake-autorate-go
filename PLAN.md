@@ -39,7 +39,7 @@ Keep the current code. Do not write it again from the start.
 | PR #26: `calibrate` command (offline, from a session) | Open: Copilot rounds done (3 + 1 user request), ready for user review/merge |
 | PR #27: latency target per direction | Open: Copilot rounds done (3 + 1 user request), ready for user review/merge. Changed after session 8: ref gate 20 % load, stale windows, RTT mode uses RTT increase |
 | PR #29: CI emulation (`scripts/ci-emulation.sh`, CI job `emulation`) | Open: first CI run passed (autorate p95 42 ms, DL 87 %, UL 78 %; unshaped p95 1024 ms). Copilot round 2 pending |
-| Old worktrees of merged branches (-bl, -cal, -cross, -docs, -f3, -f7, -grant, -keys, -loss, -nl, -seeds, -trace, -warm, -tune) | Remove (housekeeping) |
+| Old worktrees of merged branches (-bl, -cal, -cross, -docs, -f3, -f7, -grant, -keys, -loss, -nl, -seeds, -trace, -warm, -tune) | Removed 2026-10-12 (except -tune: 9 uncommitted files, user decides) |
 
 ## Findings
 
@@ -374,7 +374,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up). No 5G tests until the next 5G day pass. Local tests on fiber: CI emulation (no internet), `emulate-link.sh` with 5G traces.
 
 
-1. User: review and merge #26, #27, #29, #34. Review rounds done 2026-10-11 19:45 (3 more rounds after the user request; #34 got "Approval recommended"; #28 merged).
+1. Merged 2026-10-12: #26 (calibrate), #29 (CI emulation), #34 (known-issue links). Open: #27 (latency target), Copilot cycles 2026-10-12.
 2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
 4. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
@@ -466,7 +466,7 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
   - Use more seeds for each scenario and the recorded traces.
   - Do parameter sweeps on the simulator. Then, examine the best values on the real links.
   - Make the defaults better, or add link profiles (for example `profile: starlink`).
-- [~] **6b. Calibration mode** (offline part: PR #26; online part `--iface` open) (after step 6: tuning shows which parameters matter).
+- [~] **6b. Calibration mode** (offline part: PR #26 merged 2026-10-12; online part `--iface` open; after #27: emit `latency_target_min_thr_ms` from the grant floor) (after step 6: tuning shows which parameters matter).
   - 2026-10-11: offline part, PR #26 `cake-autorate-go calibrate -session DIR` (worktree ../cake-autorate-go-calib). Copilot up to 6 rounds (user request). Rules: rates from unshaped 1 s means (min p5/2, base p25, UL base ≤ p50 with DL load, max p95); DL thr max(30, 2× idle jitter); learn_cross_delay if cross p50 > 10 ms (from autorate dl blocks); UL thr ≥ grant p50 + 10 ms; reflectors: best pinger_count+2 by idle jitter. On 3 sessions: cross p50 25–33, grant p50 13–15, UL base ~10 Mbit/s. Open: online part (run the measurements), emit `latency_target_min_thr_ms` for UL from the grant floor once #27 merges.
   - Goal: at a new place (other 5G cell, Starlink), measure the link and generate a fitting config file.
   - `cake-autorate-go calibrate --iface IFACE --out FILE.yaml`. It uses the session tools (load generation, saturation check, recording). It can also use a saved recording (offline).
@@ -495,7 +495,7 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
     ```
   - Alternative (simpler): one knob `balance: 0..1` that selects threshold presets. Less exact, does not adapt to the cell. Prefer the target.
   - Determinism: the outer loop is in `Core` (time from events), so record/replay and the simulator can test it. Simulator test: the same target on 5g-variable and 5g-coupled gives p95 near the target and higher throughput than a fixed low threshold.
-- [~] **7. CI emulation** (level 3). PR #29.
+- [x] **7. CI emulation** (level 3). PR #29, merged 2026-10-12. CI: 8 runs + 1 local run, autorate p95 42–46 ms, DL 85–87 %, UL 76–78 %.
   - 2026-10-11: branch `ci/emulation` (PR #29). `scripts/ci-emulation.sh`: 3 namespaces (cie-router: CAKE via cake-pc.sh + binary + iperf3 clients + ping probe; cie-modem: tbf+netem bottleneck on each egress, square wave 40/20 Mbit/s DL, 10/5 UL, 15 s; cie-server: reflectors 10.210.2.1-6 on lo, kernel ICMP timestamp replies, iperf3 servers). Phases unshaped vs autorate (10 s idle + 60 s both-direction load). Checks: unshaped p95 ≥ 100 ms, autorate p95 ≤ 60 ms, DL ≥ 50 %, UL ≥ 40 % of mean capacity, ≥ 10 shaper changes, ≥ 100 OWD pings. CI job `emulation` (apt iperf3, ethtool, linux-modules-extra). Review fixes: netlink check (fails on a tc fallback), rate-wave liveness, time-weighted mean capacity, portable p95, all namespaces checked before setup, limits as environment variables. First CI run passed with margin (see Status).
 - [ ] **8. Comparison with upstream and darkmoon** (before 9 and 10). Latency, throughput (session with `-U`, emulation first, then 5G) and resource use (`benchmark.sh` on the GL-MT6000).
   - darkmoon (github.com/kamikaonashi/openwrt-package-darkmoon, MIT, C, 5434c96 2026-03-14): C port of upstream for OpenWrt with uloop, netlink, UCI, procd and a LuCI app. Add it as a policy in `record-session.sh` (like `-U`) and in `benchmark.sh` (CPU/RAM on the GL-MT6000).
