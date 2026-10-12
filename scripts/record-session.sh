@@ -12,6 +12,9 @@
 #              (the bandwidth reference) and the bufferbloat without a shaper.
 #   fixed      CAKE with a fixed bandwidth (-F percent of the capacity).
 #   autorate   cake-autorate-go controls the CAKE bandwidth.
+#   upstream-NAME
+#              the original cake-autorate (bash) controls the CAKE bandwidth
+#              (option -U). cake-autorate-go measures with --no-adjust.
 #
 # Each block: start cake-autorate-go, wait without load (-I), apply the load
 # for -b seconds, wait 5 s, stop cake-autorate-go.
@@ -43,6 +46,14 @@
 #               (and optionally a different binary). Use it more than one
 #               time for more variants. The blocks of all variants alternate,
 #               thus the variants get the same link conditions (A/B test).
+#   -U NAME=CONFIG
+#               add the policy upstream-NAME: the original cake-autorate with
+#               the config file CONFIG (config.primary.sh format). Set
+#               dl_if=ifb4IFACE (the first 15 characters) and ul_if=IFACE
+#               in CONFIG. Use it more than one time for more variants. The
+#               environment variable UPSTREAM_DIR is the directory with
+#               cake-autorate.sh, lib.sh and defaults.sh (default:
+#               ../cake-autorate).
 #   -w WORKERS  load workers for each direction (default: from the saturation check)
 #   -C DL,UL    capacity in kbit/s (default: from the saturation check)
 #   -s          do not do the saturation check (then -w is necessary, and
@@ -57,6 +68,7 @@
 #   blocks.tsv             one line for each block, with the times (Unix s)
 #   NN-MODE-POLICY.jsonl.gz    recording of each block
 #   NN-MODE-POLICY.log         log of cake-autorate-go and load-gen.sh
+#   NN-MODE-upstream-NAME.upstream/  config and log of cake-autorate (-U)
 #
 # Environment:
 #   BLOCK_START_HOOK   a command that the script runs at the start of each
@@ -67,7 +79,8 @@
 # After each block, the script shows a summary (scripts/summarize-session.sh).
 # This needs jq.
 #
-# Requirements: bash, tc, curl, awk. Run from the repository root.
+# Requirements: bash, tc, curl, awk. With -U: the pinger of the upstream
+# config (for example fping). Run from the repository root.
 
 set -euo pipefail
 
@@ -89,6 +102,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_DIR=$(dirname "$SCRIPT_DIR")
 LOADGEN="${LOADGEN:-$REPO_DIR/load-gen.sh}"
 CAKE_PC="$SCRIPT_DIR/cake-pc.sh"
+UPSTREAM_DIR="${UPSTREAM_DIR:-$REPO_DIR/../cake-autorate}"
 
 usage() {
     sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
@@ -96,8 +110,9 @@ usage() {
 }
 
 VARIANTS=()
+UPSTREAMS=()
 
-while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:sh" opt; do
+while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:U:sh" opt; do
     case $opt in
         i) IFACE="$OPTARG" ;;
         c) CONFIG="$OPTARG" ;;
@@ -110,6 +125,7 @@ while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:sh" opt; do
         W) WARMUP_S="$OPTARG" ;;
         F) FIXED_PCT="$OPTARG" ;;
         A) VARIANTS+=("$OPTARG") ;;
+        U) UPSTREAMS+=("$OPTARG") ;;
         w) WORKERS="$OPTARG" ;;
         C) CAPACITY="$OPTARG" ;;
         s) SKIP_CHECK=1 ;;
@@ -158,6 +174,7 @@ for v in "${VARIANTS[@]}"; do
     vspec=${v#*=}
     [ "$vname" != "$v" ] && [ -n "$vname" ] || die "-A needs NAME=CONFIG[,BINARY]: $v"
     [[ $vname =~ ^[a-zA-Z0-9_]+$ ]] || die "-A: NAME must contain only letters, digits and _: $vname"
+    [ -z "${VARIANT_CONFIG[$vname]+x}" ] || die "-A: NAME $vname is used more than one time"
     VARIANT_CONFIG[$vname]=${vspec%%,*}
     VARIANT_BINARY[$vname]=$BINARY
     [ "$vspec" != "${vspec#*,}" ] && VARIANT_BINARY[$vname]=${vspec#*,}
@@ -166,12 +183,48 @@ for v in "${VARIANTS[@]}"; do
     POLICIES="$POLICIES autorate-$vname"
 done
 
+# config_value prints the value of KEY in the upstream config FILE (the last
+# line KEY=VALUE, without a comment and quotes). It compares the key as text,
+# not as a regular expression.
+config_value() {
+    awk -v key="$2" '
+        index($0, key "=") == 1 {
+            v = substr($0, length(key) + 2)
+            sub(/[ \t]+#.*$/, "", v); sub(/[ \t]+$/, "", v)
+            if (v ~ /^".*"$/ || v ~ /^\047.*\047$/) v = substr(v, 2, length(v) - 2)
+            val = v
+        }
+        END { print val }' "$1"
+}
+
+# Upstream variants: upstream-NAME uses UPSTREAM_CONFIG[NAME].
+declare -A UPSTREAM_CONFIG
+for u in "${UPSTREAMS[@]}"; do
+    uname=${u%%=*}
+    [ "$uname" != "$u" ] && [ -n "$uname" ] || die "-U needs NAME=CONFIG: $u"
+    [[ $uname =~ ^[a-zA-Z0-9_]+$ ]] || die "-U: NAME must contain only letters, digits and _: $uname"
+    [ -z "${UPSTREAM_CONFIG[$uname]+x}" ] || die "-U: NAME $uname is used more than one time"
+    UPSTREAM_CONFIG[$uname]=$(realpath "${u#*=}")
+    [ -f "${UPSTREAM_CONFIG[$uname]}" ] || die "config ${UPSTREAM_CONFIG[$uname]} does not exist"
+    cp "${UPSTREAM_CONFIG[$uname]}" "$OUTDIR/upstream-$uname.sh"
+    [ "$(config_value "${UPSTREAM_CONFIG[$uname]}" dl_if)" = "$IFB" ] || die "${UPSTREAM_CONFIG[$uname]}: set dl_if=$IFB"
+    [ "$(config_value "${UPSTREAM_CONFIG[$uname]}" ul_if)" = "$IFACE" ] || die "${UPSTREAM_CONFIG[$uname]}: set ul_if=$IFACE"
+    POLICIES="$POLICIES upstream-$uname"
+done
+if [ "${#UPSTREAMS[@]}" -gt 0 ]; then
+    for f in cake-autorate.sh lib.sh defaults.sh; do
+        [ -f "$UPSTREAM_DIR/$f" ] || die "$UPSTREAM_DIR/$f does not exist (set UPSTREAM_DIR)"
+    done
+fi
+
 # --- Cleanup ---------------------------------------------------------------
 
 CAR_PID=""
 LOAD_PID=""
+UP_PID=""
 cleanup() {
     [ -n "$LOAD_PID" ] && kill "$LOAD_PID" 2>/dev/null && wait "$LOAD_PID" 2>/dev/null
+    [ -n "$UP_PID" ] && kill "$UP_PID" 2>/dev/null && wait "$UP_PID" 2>/dev/null
     [ -n "$CAR_PID" ] && kill -INT "$CAR_PID" 2>/dev/null && wait "$CAR_PID" 2>/dev/null
     "$CAKE_PC" down "$IFACE" >/dev/null 2>&1 || true
     # Give the files to the user who started sudo.
@@ -334,6 +387,9 @@ for round in $(seq 1 "$ROUNDS"); do
                     args=(--config "${VARIANT_CONFIG[$vname]}" --record "$rec")
                     bin=${VARIANT_BINARY[$vname]}
                     cake_dl=autorate; cake_ul=autorate ;;
+                upstream-*)
+                    args+=(--no-adjust)
+                    cake_dl=upstream; cake_ul=upstream ;;
             esac
 
             log "Block $block/$total: round $round, $mode, $policy"
@@ -341,10 +397,26 @@ for round in $(seq 1 "$ROUNDS"); do
                 $BLOCK_START_HOOK "$block" "$mode" "$policy"
             fi
             start=$(date +%s)
+            if [[ $policy == upstream-* ]]; then
+                # cake-autorate gets its instance name from config.NAME.sh
+                # and writes its log to log_file_path_override.
+                uname=${policy#upstream-}
+                updir=$(realpath "$OUTDIR")/$name.upstream
+                mkdir -p "$updir"
+                { cat "${UPSTREAM_CONFIG[$uname]}"; echo; printf 'log_file_path_override=%q\n' "$updir"; } \
+                    > "$updir/config.$uname.sh"
+                CAKE_AUTORATE_SCRIPT_PREFIX="$UPSTREAM_DIR" \
+                    bash "$UPSTREAM_DIR/cake-autorate.sh" "$updir/config.$uname.sh" \
+                    > "$updir/stdout.log" 2>&1 &
+                UP_PID=$!
+            fi
             "$bin" "${args[@]}" > "$blog" 2>&1 &
             CAR_PID=$!
             sleep "$IDLE_S"
             kill -0 "$CAR_PID" 2>/dev/null || die "cake-autorate-go stopped. See $blog"
+            if [ -n "$UP_PID" ]; then
+                kill -0 "$UP_PID" 2>/dev/null || die "cake-autorate stopped. See $OUTDIR/$name.upstream/"
+            fi
 
             if [ "$mode" = both ] && [ "$WARMUP_S" -gt 0 ]; then
                 "$LOADGEN" -m dl -w "$WORKERS" -d "$WARMUP_S" -i "$IFACE" >> "$blog" 2>&1 &
@@ -366,6 +438,14 @@ for round in $(seq 1 "$ROUNDS"); do
             kill -INT "$CAR_PID"
             wait "$CAR_PID" 2>/dev/null || true
             CAR_PID=""
+            if [ -n "$UP_PID" ]; then
+                kill -0 "$UP_PID" 2>/dev/null || die "cake-autorate stopped during the load. See $OUTDIR/$name.upstream/"
+                kill "$UP_PID" 2>/dev/null || true
+                wait "$UP_PID" 2>/dev/null || true
+                UP_PID=""
+                # cake-autorate leaves its last rate. The next block sets
+                # the rate that it needs.
+            fi
             end=$(date +%s)
 
             printf '%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n' \

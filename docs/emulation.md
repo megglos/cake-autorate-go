@@ -34,6 +34,16 @@ CAKE on emu-wan            ──veth── emu-modem egress
 - At the start of each block, the trace starts again from t=0. Thus, each
   policy (unshaped, fixed, autorate) gets the same capacity changes.
 - The script writes the applied capacity to `DIR/capacity.tsv`.
+- Each second, the script writes counters to `DIR/stats.tsv`: the queue
+  size (packets) and the drops of the two bottlenecks, and the entries,
+  invalid packets, drops and insert failures of conntrack. Use them to find
+  the cause of a link outage in a block.
+- During the emulation, the script turns off GRO on the uplink, and turns
+  it on again at the end. With GRO, the download bottleneck gets packets of
+  up to 64 KB. tbf does not send a packet that is larger than its burst.
+  When the trace decreases the rate (and thus the burst), the queue stops
+  until the rate increases again. This causes link outages that are not in
+  the trace.
 - The script calls `scripts/record-session.sh` for the test session.
 - At the end, or after Ctrl+C, the script removes the namespace, the
   interfaces and the iptables rules.
@@ -42,7 +52,7 @@ CAKE on emu-wan            ──veth── emu-modem egress
 
 - Linux with the kernel modules `sch_cake`, `sch_tbf`, `sch_netem`, `ifb`
   and `act_mirred`.
-- bash, iproute2, iptables, curl, awk, jq, gzip.
+- bash, iproute2, iptables, ethtool, curl, awk, jq, gzip.
 - Root access.
 - A real connection that is much faster than the trace. Keep the maximum
   of the trace at 70 % or less of the real capacity. If not, the real

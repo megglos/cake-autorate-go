@@ -206,6 +206,8 @@ You can connect the modem directly to a Linux PC (USB or Ethernet). The PC then 
 | `unshaped` | unlimited | The capacity of the link (the bandwidth reference) and the bufferbloat without a shaper |
 | `fixed` (optional, `-F`) | a fixed percentage of the capacity | A static shaper |
 | `autorate` | set by cake-autorate-go | The result of the controller |
+| `autorate-NAME` (optional, `-A NAME=CONFIG[,BINARY]`) | set by cake-autorate-go with a different config or binary | An A/B test of two configs or versions |
+| `upstream-NAME` (optional, `-U NAME=CONFIG`) | set by the original [cake-autorate](https://github.com/lynxthecat/cake-autorate) | A comparison with the original script |
 
 The goal of autorate is low bufferbloat and a throughput near the capacity. Thus, compare `autorate` with `unshaped` for the throughput, and with `unshaped` and `fixed` for the bufferbloat.
 
@@ -231,6 +233,9 @@ Before the blocks, the script does a saturation check. It applies the load with 
    - `blocks.tsv`: one line for each block, with the start and end times of the load (Unix time).
    - `NN-MODE-POLICY.jsonl.gz`: the recording of each block.
    - `NN-MODE-POLICY.log`: the log of cake-autorate-go and load-gen.sh.
+   - `NN-MODE-upstream-NAME.upstream/`: the config and the log of cake-autorate (only with `-U`).
+
+For `-U`, clone cake-autorate to `../cake-autorate`, or set `UPSTREAM_DIR` to its directory. CONFIG is a file in the `config.primary.sh` format. Set `dl_if=ifb4<interface>` and `ul_if=<interface>` in it. Linux limits interface names to 15 characters. Thus, for an interface name of more than 11 characters, the download interface is the first 15 characters of `ifb4<interface>`. If the config is not correct, the script shows the correct values. cake-autorate sets the CAKE bandwidth in the upstream blocks. cake-autorate-go runs at the same time with `--no-adjust` and only records the pings and the throughput. Thus, the summary uses the same measurement for all policies.
 
 If you stop the script with Ctrl+C, it stops all programs and removes CAKE.
 

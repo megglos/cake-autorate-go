@@ -23,7 +23,8 @@
 # At the start of each block, the trace starts again from t=0. Thus, each
 # policy gets the same capacity changes. The script writes the applied
 # capacity to DIR/capacity.tsv. scripts/summarize-session.sh uses it as the
-# reference for the throughput.
+# reference for the throughput. Each second, it writes the queue and drop
+# counters of the bottlenecks and of conntrack to DIR/stats.tsv.
 #
 # Usage:
 #   sudo ./scripts/emulate-link.sh -u UPLINK -t TRACE [options] [-- SESSION-OPTIONS]
@@ -103,7 +104,9 @@ log() { echo "[emulate] [$(date '+%H:%M:%S')] $*"; }
 
 RUN=""
 PLAYER_PID=""
+STATS_PID=""
 FORWARD_BEFORE=""
+GRO_BEFORE=""
 
 # iptables_rule adds (-I/-A) or deletes (-D) the forward and NAT rules.
 iptables_rules() {
@@ -118,6 +121,7 @@ iptables_rules() {
 
 teardown() {
     [ -n "$PLAYER_PID" ] && kill "$PLAYER_PID" 2>/dev/null && wait "$PLAYER_PID" 2>/dev/null
+    [ -n "$STATS_PID" ] && kill "$STATS_PID" 2>/dev/null && wait "$STATS_PID" 2>/dev/null
     ip netns del "$NS" 2>/dev/null || true
     ip link del "$IFB_UL" 2>/dev/null || true
     ip link del "$VETH_ROOT" 2>/dev/null || true
@@ -130,6 +134,7 @@ teardown() {
             done
     done
     [ -n "$FORWARD_BEFORE" ] && sysctl -qw net.ipv4.ip_forward="$FORWARD_BEFORE"
+    if [ "$GRO_BEFORE" = "on" ]; then ethtool -K "$UPLINK" gro on 2>/dev/null || true; fi
     rm -rf "/etc/netns/$NS"
     [ -n "$RUN" ] && rm -rf "$RUN"
     if [ -n "$OUTDIR" ] && [ -d "$OUTDIR" ] && [ -n "${SUDO_USER:-}" ]; then
@@ -148,7 +153,7 @@ fi
 ip link show "$UPLINK" >/dev/null 2>&1 || die "interface $UPLINK does not exist"
 [ -f "$TRACE" ] || die "trace $TRACE does not exist"
 ip netns list | grep -qw "$NS" && die "namespace $NS exists. Remove the old setup with: sudo $0 -k"
-for cmd in tc iptables curl awk; do
+for cmd in tc iptables curl awk ethtool; do
     command -v "$cmd" >/dev/null || die "$cmd is not installed"
 done
 
@@ -212,6 +217,18 @@ ip netns exec "$NS" ip route add default via "$NET_ROOT"
 # so that the bottleneck and CAKE see packets of the MTU size.
 ethtool -K "$VETH_ROOT" gro off gso off tso off >/dev/null 2>&1 || true
 ip netns exec "$NS" ethtool -K "$VETH_NS" gro off gso off tso off >/dev/null 2>&1 || true
+
+# Also turn off GRO on the uplink (the script turns it on again at the end).
+# With GRO, the download bottleneck gets packets of up to 64 KB. tbf does
+# not send a packet that is larger than its burst. When the trace lowers
+# the rate (and thus the burst) while such a packet is in the queue, the
+# queue stops until the rate increases again: a link outage of up to a
+# minute, which the trace does not contain.
+GRO_BEFORE=$(ethtool -k "$UPLINK" 2>/dev/null | awk '/^generic-receive-offload:/ { print $2 }')
+if [ "$GRO_BEFORE" = "on" ]; then
+    ethtool -K "$UPLINK" gro off || die "cannot turn off GRO on $UPLINK"
+    log "GRO on $UPLINK is off during the emulation"
+fi
 
 # DNS in the namespace (systemd-resolved at 127.0.0.53 is not available there)
 mkdir -p "/etc/netns/$NS"
@@ -293,6 +310,39 @@ play_trace() {
 }
 play_trace &
 PLAYER_PID=$!
+
+# --- Diagnostics -------------------------------------------------------------
+
+# sample_stats writes each second the counters of the bottlenecks and of
+# conntrack to stats.tsv: queue backlog (packets) and total drops of each
+# bottleneck, and the conntrack entries and total invalid, drop and
+# insert_failed counts of all CPUs. Use it to find the cause of a link
+# outage (a stalled bottleneck, or packets that conntrack does not accept).
+sample_stats() {
+    trap - EXIT
+    trap 'exit 0' INT TERM
+    local out="$OUTDIR/stats.tsv"
+    printf 'unix_ms\tdl_backlog_p\tdl_drops\tul_backlog_p\tul_drops\tct_entries\tct_invalid\tct_drop\tct_insert_failed\n' > "$out"
+    # qdisc_stats prints the backlog (packets) and the drops of the root qdisc.
+    qdisc_stats() {
+        tc -s qdisc show dev "$1" | awk '
+            /^qdisc/ { root = ($0 ~ / root /) }
+            root && /dropped/ { d = $7; sub(",", "", d) }
+            root && /backlog/ { b = $3; sub("p", "", b); print b, d; exit }'
+    }
+    while true; do
+        local e=${EPOCHREALTIME/[.,]/} dl ul ct
+        dl=$(qdisc_stats "$VETH_ROOT")
+        ul=$(qdisc_stats "$IFB_UL")
+        ct=$(awk 'NR > 1 { e = strtonum("0x" $1); i += strtonum("0x" $5);
+                d += strtonum("0x" $11); f += strtonum("0x" $10) }
+                END { print e, i, d, f }' /proc/net/stat/nf_conntrack)
+        printf '%d\t%s\t%s\t%s\n' $(( e / 1000 )) "${dl// /$'\t'}" "${ul// /$'\t'}" "${ct// /$'\t'}" >> "$out"
+        sleep 1
+    done
+}
+sample_stats &
+STATS_PID=$!
 
 # --- Session ---------------------------------------------------------------
 
