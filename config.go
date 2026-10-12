@@ -489,9 +489,10 @@ func validateIfname(name string) error {
 
 // Validate checks that the configuration values are sensible.
 func (c *Config) Validate() error {
-	// YAML accepts .nan and .inf: a NaN is not <= 0.
-	if !(c.LatencyTargetWindowS > 0) || math.IsInf(c.LatencyTargetWindowS, 0) {
-		return fmt.Errorf("latency_target_window_s must be a positive finite number")
+	// YAML accepts .nan and .inf: a NaN fails the range check. The upper
+	// limit also limits the samples of one window (memory and sort time).
+	if !(c.LatencyTargetWindowS >= 1 && c.LatencyTargetWindowS <= 3600) {
+		return fmt.Errorf("latency_target_window_s must be between 1 and 3600")
 	}
 	if len(c.Links) == 0 {
 		return fmt.Errorf("at least one link must be configured")

@@ -1393,22 +1393,20 @@ func TestObserveLatency_ScaleChangeClearsDetectionWindow(t *testing.T) {
 	}
 }
 
-// A very small window time (valid, positive) does not make each gap a new
-// window: the gap check is in seconds, without a duration overflow.
-func TestObserveLatency_ExtremeWindowTime(t *testing.T) {
-	for _, w := range []float64{1e-10, 1e12} {
-		c, _ := newTestCore(t)
-		c.link.Download.LatencyTargetP95Ms = 30
-		c.cfg.LatencyTargetWindowS = w
-		c.dl.loadPercent = 1
-		ts := time.Unix(1_800_000_000, 0)
-		for i := 0; i < 3; i++ {
-			c.observeLatency(DL, "r1", 90000, 10000, ts)
-			ts = ts.Add(time.Second)
-		}
-		if w > 1 && len(c.dl.ltSamples) != 3 {
-			t.Errorf("window %g s: %d samples after 3 pings at 1 s, want 3 (no gap reset)", w, len(c.dl.ltSamples))
-		}
+// A short window time (1 s) with few pings (one each 2 s): the gaps do not
+// start new windows, and the window gets enough samples.
+func TestObserveLatency_ShortWindowFewPings(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 1
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+1; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(2 * time.Second)
+	}
+	if got := c.dl.scale(); got != latencyTargetStepDown {
+		t.Errorf("scale %.2f, want %.1f (p95 80 ms, target 30 ms)", got, latencyTargetStepDown)
 	}
 }
 

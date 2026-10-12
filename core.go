@@ -318,6 +318,9 @@ const (
 	// latencyTargetFloorTime is the time that Core keeps a found floor.
 	// The link conditions change; after this time, Core tries again.
 	latencyTargetFloorTime = 5 * time.Minute
+	// latencyTargetMinGapS is the minimum time without high-load pings that
+	// starts a new window (s).
+	latencyTargetMinGapS = 60
 	// latencyTargetRefMaxLoad is the maximum load when the reference of
 	// the latency target follows the baseline of the controller. Also, the
 	// achieved rate must be below connection_active_thr_kbps (idle): on
@@ -408,9 +411,10 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// load, or a stop of the pingers) is old: start a new window. Also at
 	// low load: else the next ping can complete the old window. A window
 	// starts with its first sample.
-	// In seconds: a conversion to time.Duration can overflow (or give 0)
-	// for valid but extreme values of latency_target_window_s.
-	if now.Sub(ds.ltLastSample).Seconds() > c.cfg.LatencyTargetWindowS {
+	// The gap is at least latencyTargetMinGapS: with a short window time
+	// and few pings, each gap would otherwise start a new window, and the
+	// window would never have enough samples.
+	if now.Sub(ds.ltLastSample).Seconds() > math.Max(c.cfg.LatencyTargetWindowS, latencyTargetMinGapS) {
 		ds.ltSamples = ds.ltSamples[:0]
 		// The next window is from another time of load: do not compare
 		// its p95 with the last window (no undo, no floor from it).

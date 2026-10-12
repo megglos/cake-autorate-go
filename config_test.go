@@ -598,6 +598,12 @@ func TestValidate_LatencyTarget(t *testing.T) {
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
 			t.Errorf("window %v: Validate() = %v", v, err)
 		}
+		for _, w := range []float64{0.1, 3601} {
+			cfg.LatencyTargetWindowS = w
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_window_s") {
+				t.Errorf("window %v s: Validate() = %v, want the range error", w, err)
+			}
+		}
 		cfg.LatencyTargetWindowS = 30
 		cfg.Links[0].Upload.LatencyTargetP95Ms = v
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "latency_target_p95_ms") {
