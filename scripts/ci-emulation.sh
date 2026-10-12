@@ -15,21 +15,27 @@
 # square wave: the high rate and half of it, PERIOD_S each). The kernel of
 # the server namespace replies to ICMP echo and ICMP timestamp requests.
 #
-# The test has two phases. Each phase has IDLE_S without load, then LOAD_S
+# The test has two phases (three with -U). Each phase has IDLE_S without load, then LOAD_S
 # with load in the two directions (iperf3):
 #   1. unshaped: CAKE without a rate limit. The modem queue fills. This
 #      phase makes sure that the emulation has bufferbloat.
 #   2. autorate: cake-autorate-go controls CAKE.
+#   3. upstream (only with -U): the original cake-autorate controls CAKE.
+#      This phase is for comparison. It has no limits, and an error in it
+#      does not change the exit code.
 # Then the script compares the results with the limits. The exit code is 1
 # if a limit is not met.
 #
 # Usage:
-#   sudo ./scripts/ci-emulation.sh [-b BINARY] [-o DIR]
+#   sudo ./scripts/ci-emulation.sh [-b BINARY] [-o DIR] [-U UPSTREAM_DIR]
 #   sudo ./scripts/ci-emulation.sh -k
 #
 # Options:
 #   -b BINARY  cake-autorate-go binary (default: ./cake-autorate-go)
 #   -o DIR     output directory (default: recordings/<date>-ci-emu)
+#   -U DIR     add the upstream phase. DIR is a clone of cake-autorate
+#              (github.com/lynxthecat/cake-autorate) with cake-autorate.sh,
+#              lib.sh and defaults.sh. It needs fping.
 #   -k         remove an old setup (after a crash), then stop
 #   -h         show this help
 #
@@ -39,6 +45,8 @@
 #   DELAY_MS [20]       base RTT of the emulated link
 #   QUEUE [1000]        queue of each bottleneck in packets
 #   IDLE_S [10], LOAD_S [60]
+#   UPSTREAM_PINGER [fping-ts]  pinger_method of cake-autorate (fping-ts
+#                       uses ICMP timestamps, as cake-autorate-go here)
 # The default limits come from the first 8 CI runs (GitHub ubuntu-latest):
 # autorate p95 42-46 ms, download 85-87 %, upload 76-78 %, unshaped p95
 # 929-1040 ms, 862-974 shaper changes, 1540-1840 pings with one-way delays.
@@ -86,10 +94,12 @@ MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-200}
 MIN_LOAD_REPLY_PCT=${MIN_LOAD_REPLY_PCT:-80}
 MIN_OWD_PINGS=${MIN_OWD_PINGS:-1000}
 MIN_UL_PCT=${MIN_UL_PCT:-65}
+UPSTREAM_PINGER=${UPSTREAM_PINGER:-fping-ts}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 BINARY=./cake-autorate-go
 OUTDIR=""
+UPSTREAM_DIR=""
 CLEANUP_ONLY=0
 
 usage() {
@@ -97,10 +107,11 @@ usage() {
     exit "${1:-0}"
 }
 
-while getopts "b:o:kh" opt; do
+while getopts "b:o:U:kh" opt; do
     case $opt in
         b) BINARY="$OPTARG" ;;
         o) OUTDIR="$OPTARG" ;;
+        U) UPSTREAM_DIR="$OPTARG" ;;
         k) CLEANUP_ONLY=1 ;;
         h) usage 0 ;;
         *) usage 1 ;;
@@ -116,9 +127,10 @@ log() { echo "[ci-emu] [$(date '+%H:%M:%S')] $*"; }
 # a later kill could hit a new process with the same PID.
 WAVE_PID=""
 AUTORATE_PID=""
+UPSTREAM_PID=""
 
 teardown() {
-    for pid in "$WAVE_PID" "$AUTORATE_PID"; do
+    for pid in "$WAVE_PID" "$AUTORATE_PID" "$UPSTREAM_PID"; do
         [ -n "$pid" ] && { kill "$pid" 2>/dev/null || true; }
     done
     # Stop all processes in the namespaces (iperf3 servers and clients,
@@ -149,6 +161,17 @@ for cmd in tc iperf3 ping awk jq ethtool; do
 done
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build -o cake-autorate-go .)"
 BINARY=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
+if [ -n "$UPSTREAM_DIR" ]; then
+    for f in cake-autorate.sh lib.sh defaults.sh; do
+        [ -f "$UPSTREAM_DIR/$f" ] || die "$UPSTREAM_DIR/$f does not exist"
+    done
+    command -v fping >/dev/null || die "fping is not installed (necessary for -U)"
+    if [ "$UPSTREAM_PINGER" = fping-ts ]; then
+        fping --help 2>&1 | grep -q -- --icmp-timestamp \
+            || die "fping $(fping -v 2>&1 | awk '{ print $NF }') has no --icmp-timestamp (fping 5.2 or later is necessary for fping-ts)"
+    fi
+    UPSTREAM_DIR=$(cd "$UPSTREAM_DIR" && pwd)
+fi
 for ns in "$NS_R" "$NS_M" "$NS_S"; do
     ip netns list | grep -qw "$ns" && die "namespace $ns exists. Remove the old setup with: sudo $0 -k"
 done
@@ -307,7 +330,10 @@ ping_method: icmp-timestamp
 pinger_count: 6
 log_to_file: false
 EOF
-r "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
+# Not with r: a function in the background is a subshell, and a kill of its
+# PID does not stop the binary. ip netns exec replaces itself with the
+# command, thus the PID is the PID of the binary.
+ip netns exec "$NS_R" "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
 AUTORATE_PID=$!
 sleep 5
 kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped"; }
@@ -316,6 +342,62 @@ kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "ca
 kill "$AUTORATE_PID"
 wait "$AUTORATE_PID" 2>/dev/null || true
 AUTORATE_PID=""
+
+# upstream_ok is 1 when the upstream phase has a result.
+upstream_ok=0
+if [ -n "$UPSTREAM_DIR" ]; then
+    # cake-autorate gets its instance name from config.NAME.sh and writes
+    # its log to log_file_path_override. The values are the same as in
+    # config.yaml; the other values are the defaults of cake-autorate.
+    UP_OUT="$OUTDIR/upstream"
+    mkdir -p "$UP_OUT"
+    UP_CONFIG="$UP_OUT/config.ci.sh"
+    {
+        echo "# Made by ci-emulation.sh."
+        echo "dl_if=$IFB"
+        echo "ul_if=$WAN"
+        echo "adjust_dl_shaper_rate=1"
+        echo "adjust_ul_shaper_rate=1"
+        echo "min_dl_shaper_rate_kbps=$(( DL_KBPS / 10 ))"
+        echo "base_dl_shaper_rate_kbps=$(( DL_KBPS / 2 ))"
+        echo "max_dl_shaper_rate_kbps=$DL_KBPS"
+        echo "min_ul_shaper_rate_kbps=$(( UL_KBPS / 10 ))"
+        echo "base_ul_shaper_rate_kbps=$(( UL_KBPS / 2 ))"
+        echo "max_ul_shaper_rate_kbps=$UL_KBPS"
+        # cake-autorate stops if this threshold is above a minimum rate.
+        # cake-autorate-go uses 2000 kbit/s and has no such limit.
+        echo "connection_active_thr_kbps=$(( UL_KBPS / 10 < 2000 ? UL_KBPS / 10 : 2000 ))"
+        echo "pinger_method=$UPSTREAM_PINGER"
+        echo "reflectors=($REFLECTORS)"
+        echo "no_pingers=6"
+        echo "output_summary_stats=1"
+        printf 'log_file_path_override=%q\n' "$UP_OUT"
+    } > "$UP_CONFIG"
+    # The rate that cake-autorate-go set stays until cake-autorate starts.
+    r tc qdisc change dev "$WAN" root cake bandwidth "$(( UL_KBPS / 2 ))kbit"
+    r tc qdisc change dev "$IFB" root cake bandwidth "$(( DL_KBPS / 2 ))kbit"
+    ip netns exec "$NS_R" env CAKE_AUTORATE_SCRIPT_PREFIX="$UPSTREAM_DIR" \
+        bash "$UPSTREAM_DIR/cake-autorate.sh" "$UP_CONFIG" > "$UP_OUT/stdout.log" 2>&1 &
+    UPSTREAM_PID=$!
+    sleep 5
+    if kill -0 "$UPSTREAM_PID" 2>/dev/null; then
+        phase upstream
+        if ! kill -0 "$UPSTREAM_PID" 2>/dev/null; then
+            log "warning: cake-autorate stopped during the load (see $UP_OUT)"
+        elif ! grep -q '^SUMMARY;' "$UP_OUT"/cake-autorate.*.log 2>/dev/null; then
+            # Without ping replies, cake-autorate does not change the rate
+            # and writes no SUMMARY line.
+            log "warning: cake-autorate got no ping replies (see $UP_OUT)"
+        else
+            upstream_ok=1
+        fi
+    else
+        log "warning: cake-autorate stopped (see $UP_OUT/stdout.log)"
+    fi
+    kill "$UPSTREAM_PID" 2>/dev/null || true
+    wait "$UPSTREAM_PID" 2>/dev/null || true
+    UPSTREAM_PID=""
+fi
 
 # --- Results ---------------------------------------------------------------
 
@@ -365,6 +447,17 @@ shaper_events=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep -c '"typ
 # The recording has the shaper events also if netlink fails: then the
 # shaper uses tc and logs it. The test must use netlink.
 tc_fallbacks=$(grep -c "tc exec" "$OUTDIR/autorate.log" || true)
+if [ "$upstream_ok" -eq 1 ]; then
+    p_p95=$(excess_p95 "$OUTDIR/upstream/ping.txt")
+    p_dl=$(kbps "$OUTDIR/upstream/iperf-dl.json"); p_ul=$(kbps "$OUTDIR/upstream/iperf-ul.json")
+    p_dl_pct=$(( ${p_dl:-0} * 100 / mean_dl ))
+    p_ul_pct=$(( ${p_ul:-0} * 100 / mean_ul ))
+    # Changes of the CAKE rates in the SUMMARY lines of the cake-autorate log
+    # (the last two fields).
+    upstream_changes=$(cat "$OUTDIR"/upstream/cake-autorate.*.log 2>/dev/null | awk -F'; ' '
+        $1 == "SUMMARY" { r = $(NF - 1) " " $NF; if (p != "" && r != p) n++; p = r }
+        END { print n + 0 }')
+fi
 owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"ping"' | grep -c '"dl_owd_us"' || true)
 
 {
@@ -372,7 +465,16 @@ owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"pin
     printf '%-9s %8s ms   %9s   %9s\n' unshaped "$u_p95" "${u_dl:-?}" "${u_ul:-?}"
     printf '%-9s %8s ms   %9s   %9s   (%d %% / %d %% of the mean capacity %d / %d)\n' \
         autorate "$a_p95" "${a_dl:-?}" "${a_ul:-?}" "$a_dl_pct" "$a_ul_pct" "$mean_dl" "$mean_ul"
+    if [ "$upstream_ok" -eq 1 ]; then
+        printf '%-9s %8s ms   %9s   %9s   (%d %% / %d %%, for comparison: no limits)\n' \
+            upstream "$p_p95" "${p_dl:-?}" "${p_ul:-?}" "$p_dl_pct" "$p_ul_pct"
+    elif [ -n "$UPSTREAM_DIR" ]; then
+        echo "upstream  no result (see $OUTDIR/upstream)"
+    fi
     echo "shaper rate changes: $shaper_events, pings with one-way delays: $owd_pings"
+    if [ "$upstream_ok" -eq 1 ]; then
+        echo "upstream shaper rate changes: $upstream_changes"
+    fi
     echo
     check "unshaped: excess RTT p95 $u_p95 ms >= $MIN_UNSHAPED_P95_MS ms (the emulation has bufferbloat)" "$(ge "$u_p95" "$MIN_UNSHAPED_P95_MS")"
     check "autorate: excess RTT p95 $a_p95 ms <= $MAX_P95_MS ms" "$(le "$a_p95" "$MAX_P95_MS")"

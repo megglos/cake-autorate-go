@@ -64,8 +64,27 @@ jobs:
           sudo apt-get install -y -q iperf3 ethtool "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3 ethtool
           for m in sch_cake sch_netem sch_tbf ifb act_mirred; do sudo modprobe "$m"; done
 
+      # fping for cake-autorate: the Ubuntu package (5.1) has no
+      # --icmp-timestamp (pinger_method=fping-ts).
+      - name: Build fping
+        run: |
+          curl -sSfLO https://github.com/schweikert/fping/releases/download/v5.5/fping-5.5.tar.gz
+          echo "15c4e32b6c55ff105bafe03e8c91c7ca1b2eda31bf9a7127326bb87887ee18fe  fping-5.5.tar.gz" | sha256sum -c -
+          tar xzf fping-5.5.tar.gz
+          (cd fping-5.5 && ./configure -q && make -s && sudo make -s install)
+          rm -rf fping-5.5 fping-5.5.tar.gz
+          fping -v
+
+      # The original cake-autorate for the comparison phase, at a fixed
+      # commit: a new upstream version does not change the result.
+      - uses: actions/checkout@v4
+        with:
+          repository: lynxthecat/cake-autorate
+          ref: ac75f49348c2ce697e698270a340d42e499cd953
+          path: upstream
+
       - name: Emulation test
-        run: sudo ./scripts/ci-emulation.sh -o ci-emu
+        run: sudo ./scripts/ci-emulation.sh -o ci-emu -U upstream
 
       - name: Result
         if: ${{ !cancelled() }}
