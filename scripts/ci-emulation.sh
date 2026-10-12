@@ -166,6 +166,10 @@ if [ -n "$UPSTREAM_DIR" ]; then
         [ -f "$UPSTREAM_DIR/$f" ] || die "$UPSTREAM_DIR/$f does not exist"
     done
     command -v fping >/dev/null || die "fping is not installed (necessary for -U)"
+    if [ "$UPSTREAM_PINGER" = fping-ts ]; then
+        fping --help 2>&1 | grep -q -- --icmp-timestamp \
+            || die "fping $(fping -v 2>&1 | awk '{ print $NF }') has no --icmp-timestamp (fping 5.2 or later is necessary for fping-ts)"
+    fi
     UPSTREAM_DIR=$(cd "$UPSTREAM_DIR" && pwd)
 fi
 for ns in "$NS_R" "$NS_M" "$NS_S"; do
@@ -326,7 +330,10 @@ ping_method: icmp-timestamp
 pinger_count: 6
 log_to_file: false
 EOF
-r "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
+# Not with r: a function in the background is a subshell, and a kill of its
+# PID does not stop the binary. ip netns exec replaces itself with the
+# command, thus the PID is the PID of the binary.
+ip netns exec "$NS_R" "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
 AUTORATE_PID=$!
 sleep 5
 kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped"; }
@@ -369,16 +376,20 @@ if [ -n "$UPSTREAM_DIR" ]; then
     # The rate that cake-autorate-go set stays until cake-autorate starts.
     r tc qdisc change dev "$WAN" root cake bandwidth "$(( UL_KBPS / 2 ))kbit"
     r tc qdisc change dev "$IFB" root cake bandwidth "$(( DL_KBPS / 2 ))kbit"
-    r env CAKE_AUTORATE_SCRIPT_PREFIX="$UPSTREAM_DIR" \
+    ip netns exec "$NS_R" env CAKE_AUTORATE_SCRIPT_PREFIX="$UPSTREAM_DIR" \
         bash "$UPSTREAM_DIR/cake-autorate.sh" "$UP_CONFIG" > "$UP_OUT/stdout.log" 2>&1 &
     UPSTREAM_PID=$!
     sleep 5
     if kill -0 "$UPSTREAM_PID" 2>/dev/null; then
         phase upstream
-        if kill -0 "$UPSTREAM_PID" 2>/dev/null; then
-            upstream_ok=1
-        else
+        if ! kill -0 "$UPSTREAM_PID" 2>/dev/null; then
             log "warning: cake-autorate stopped during the load (see $UP_OUT)"
+        elif ! grep -q '^SUMMARY;' "$UP_OUT"/cake-autorate.*.log 2>/dev/null; then
+            # Without ping replies, cake-autorate does not change the rate
+            # and writes no SUMMARY line.
+            log "warning: cake-autorate got no ping replies (see $UP_OUT)"
+        else
+            upstream_ok=1
         fi
     else
         log "warning: cake-autorate stopped (see $UP_OUT/stdout.log)"
