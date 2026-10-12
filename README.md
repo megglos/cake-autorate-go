@@ -39,7 +39,7 @@ These functions are only in cake-autorate-go:
 - **Netlink** sets the CAKE bandwidth. The original starts `tc` for each change.
 - **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease` (see [5G links](#5g-links)). Their default is off. Thus, the default behavior stays near the original.
 - **`calibrate`** makes a proposed config from a test session on your link.
-- **Config checks:** a warning for each unknown key (with a similar known key), and a warning for each reflector that is known to not reply to ICMP timestamp requests. If no reflector of a link replies, the program does not start.
+- **Config checks:** a warning for each unknown key (with a similar known key), and a warning for each reflector that is known to not reply to ICMP timestamp requests. If all reflectors of a link are known to not reply, the program does not start.
 - **Recording and replay** (`--record`, `--no-adjust`): the same events always give the same decisions. A simulator, emulations and session scripts use this to compare configs and versions, also with the original (see [Tests and tools](#tests-and-tools)).
 
 These functions are only in the original: the pingers irtt and tsping, a reflector list from a URL, the MQTT publisher, the CPU statistics, and the export of the log.
@@ -147,7 +147,7 @@ The Go version also shows the types of decisions (bufferbloat, high load, decay)
 - Changes the CAKE bandwidth from delay measurements.
 - Baselines with EWMA, and bufferbloat detection.
 - Three states: **Running**, **Idle** and **Stall**.
-- Monitors the reflectors and replaces a bad reflector.
+- Monitors the replies of the reflectors and replaces a reflector that misses too many replies.
 - Compensation for the serialization delay of the packets.
 - One-way delays with ICMP timestamps (`ping_method: icmp-timestamp`), without an external pinger: a queue in one direction decreases only the rate of that direction.
 - Options for 5G links: `learn_cross_delay` (the upload delay that download activity causes) and `repeat_decrease_on_rise` (fewer decreases while the queue empties). See [5G links](#5g-links).
@@ -294,7 +294,7 @@ pinger_count: 6          # Number of reflectors that the program pings at the sa
 ping_interval_ms: 300    # Time between two pings to one reflector (ms)
 ```
 
-The program finds reflectors that stop to reply or that have an unusual delay, and replaces them with other reflectors from the list.
+The program counts the missed replies of each active reflector. When a reflector misses too many replies (`reflector_misbehaving_detection_thr` in the last `reflector_misbehaving_detection_window` pings), the program replaces it with a different reflector from the list. The program does not examine the delay of a reflector: a reflector with a high or unstable delay stays active.
 
 ### Ping method
 
@@ -321,7 +321,7 @@ Requirements for `icmp-timestamp`:
     - hel1-speed.hetzner.com
   ```
 
-  If you set reflectors, use only reflectors that reply. The program shows a warning for each reflector that is known to not reply. If no reflector of a link replies, the program does not start. The program replaces a reflector that does not reply with a different reflector from the list.
+  If you set reflectors, use only reflectors that reply. The program shows a warning for each reflector that is known to not reply (the default reflectors for `icmp`). If all reflectors of a link are known to not reply, the program does not start. The program does not test the other reflectors at the start. The program replaces a reflector that does not reply with a different reflector from the list.
 - A firewall that lets ICMP timestamp replies (type 14) through.
 - A correct clock (NTP) on the router. The controller uses only the change of each one-way delay. Thus, a constant clock offset has no effect, but a fast clock drift can look like a delay change.
 
