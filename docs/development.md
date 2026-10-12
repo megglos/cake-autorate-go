@@ -92,9 +92,12 @@ The test always uses its own simulator recording. The helper `replayRecording` i
 
 The simulator does not test the netlink code, the pingers and the CAKE qdisc. `scripts/ci-emulation.sh` tests the real binary on an emulated link in three network namespaces (router, modem, server). It does not need an internet connection. The modem has a large queue and a rate that changes. The test has two phases with load in the two directions (iperf3): CAKE without a rate limit, then cake-autorate-go. It fails if the unshaped phase has no bufferbloat, or if autorate does not keep the delay and the throughput in the limits. CI runs it in the job `emulation`.
 
+With `-U DIR`, the test has a third phase: the original [cake-autorate](https://github.com/lynxthecat/cake-autorate) (a clone in DIR) controls CAKE with the same rates and reflectors. This phase has no limits. The result shows its delay and throughput next to the values of cake-autorate-go. CI uses it with a fixed commit of cake-autorate. It needs fping.
+
 ```sh
 go build -o cake-autorate-go .
 sudo ./scripts/ci-emulation.sh        # result in recordings/<date>-ci-emu/result.txt
+sudo ./scripts/ci-emulation.sh -U ../cake-autorate   # with the upstream phase
 sudo ./scripts/ci-emulation.sh -k     # remove the setup after a crash
 ```
 

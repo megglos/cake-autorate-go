@@ -61,11 +61,19 @@ jobs:
       - name: Install the tools and the kernel modules
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q iperf3 ethtool "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3 ethtool
+          sudo apt-get install -y -q iperf3 ethtool fping "linux-modules-extra-$(uname -r)" || sudo apt-get install -y -q iperf3 ethtool fping
           for m in sch_cake sch_netem sch_tbf ifb act_mirred; do sudo modprobe "$m"; done
 
+      # The original cake-autorate for the comparison phase, at a fixed
+      # commit: a new upstream version does not change the result.
+      - uses: actions/checkout@v4
+        with:
+          repository: lynxthecat/cake-autorate
+          ref: ac75f49348c2ce697e698270a340d42e499cd953
+          path: upstream
+
       - name: Emulation test
-        run: sudo ./scripts/ci-emulation.sh -o ci-emu
+        run: sudo ./scripts/ci-emulation.sh -o ci-emu -U upstream
 
       - name: Result
         if: ${{ !cancelled() }}
