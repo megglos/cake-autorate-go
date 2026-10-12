@@ -98,7 +98,8 @@ func (pm *PingerManager) GetState(reflector string) *ReflectorState {
 }
 
 // Run starts pinging active reflectors, sending results to the channel.
-// It staggers pings across reflectors within each interval.
+// It staggers pings across reflectors within each interval. When ctx is
+// cancelled, it returns after all pingers have stopped.
 func (pm *PingerManager) Run(ctx context.Context, resultCh chan<- PingResult) {
 	active := pm.ActiveReflectors()
 	interval := time.Duration(pm.cfg.PingIntervalMs) * time.Millisecond
@@ -107,6 +108,7 @@ func (pm *PingerManager) Run(ctx context.Context, resultCh chan<- PingResult) {
 
 	pm.logger.Infof("[%s] starting %d pingers with %v interval", pm.link.Name, len(active), interval)
 
+	var wg sync.WaitGroup
 	for i, reflector := range active {
 		state := pm.GetState(reflector)
 		state.mu.Lock()
@@ -115,10 +117,15 @@ func (pm *PingerManager) Run(ctx context.Context, resultCh chan<- PingResult) {
 
 		// Stagger the start of each pinger
 		delay := stagger * time.Duration(i)
-		go pm.runPinger(ctx, reflector, interval, deadline, delay, resultCh)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pm.runPinger(ctx, reflector, interval, deadline, delay, resultCh)
+		}()
 	}
 
 	<-ctx.Done()
+	wg.Wait()
 }
 
 func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interval, deadline, initialDelay time.Duration, resultCh chan<- PingResult) {

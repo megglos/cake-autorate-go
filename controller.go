@@ -37,6 +37,8 @@ type LinkController struct {
 	runCtx context.Context
 	// Cancellation for sub-goroutines (pingers)
 	pingerCancel context.CancelFunc
+	// pingerDone is closed when all pingers of the running set have stopped.
+	pingerDone chan struct{}
 }
 
 // NewLinkController creates a new LinkController for a single WAN link.
@@ -133,15 +135,26 @@ func (c *LinkController) restartPingers() {
 func (c *LinkController) StartPingers() {
 	c.StopPingers()
 	pingerCtx, cancel := context.WithCancel(c.runCtx)
-	c.pingerCancel = cancel
-	go c.pingerMgr.Run(pingerCtx, c.pingCh)
+	done := make(chan struct{})
+	c.pingerCancel, c.pingerDone = cancel, done
+	go func() {
+		defer close(done)
+		c.pingerMgr.Run(pingerCtx, c.pingCh)
+	}()
 }
 
-// StopPingers implements Actuator.
+// StopPingers implements Actuator. It returns after all pingers have
+// stopped. Thus, the pingers of an old set do not change the reflector
+// states after a new set starts. The pingers do not block on a full result
+// channel after the cancel, thus the wait is short.
 func (c *LinkController) StopPingers() {
 	if c.pingerCancel != nil {
 		c.pingerCancel()
 		c.pingerCancel = nil
+	}
+	if c.pingerDone != nil {
+		<-c.pingerDone
+		c.pingerDone = nil
 	}
 }
 

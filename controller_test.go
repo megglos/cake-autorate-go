@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // --- readInterfaceMTU tests ---
@@ -88,5 +92,58 @@ func TestRestartPingers_RestartsRunningPingers(t *testing.T) {
 	}
 	if c.pingerCancel == nil {
 		t.Error("restartPingers did not start the new pingers")
+	}
+}
+
+// This test needs CAP_NET_RAW. Without it, the test is skipped. To run it
+// without root:
+//
+//	unshare -rn sh -c 'ip link set lo up && go test -run TestPingers_RestartWithLivePingers -v'
+func TestPingers_RestartWithLivePingers(t *testing.T) {
+	conn, err := listenICMP(context.Background(), "", "")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, os.ErrPermission) {
+			t.Skip("CAP_NET_RAW is necessary")
+		}
+		t.Fatal(err)
+	}
+	conn.Close()
+
+	c := testPingerController(t)
+	c.cfg.PingIntervalMs = 20
+	c.cfg.PingerCount = 1
+	c.link.Reflectors = []string{"127.0.0.1"}
+	c.pingerMgr = NewPingerManager(c.link, c.cfg, c.logger)
+	c.pingCh = make(chan PingResult, 1000)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.runCtx = ctx
+
+	waitResult := func() {
+		t.Helper()
+		select {
+		case <-c.pingCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("no ping result in 2 s")
+		}
+	}
+
+	c.StartPingers()
+	waitResult()
+	for range 3 {
+		c.restartPingers()
+		waitResult()
+	}
+	c.StopPingers()
+
+	if c.pingerMgr.GetState("127.0.0.1").Active {
+		t.Error("the reflector is active after StopPingers returned")
+	}
+	for len(c.pingCh) > 0 {
+		<-c.pingCh
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(c.pingCh); n > 0 {
+		t.Errorf("got %d ping results after StopPingers returned, want 0", n)
 	}
 }
