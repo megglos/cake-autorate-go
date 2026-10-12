@@ -299,13 +299,13 @@ links:
     upload:
       latency_target_p95_ms: 60        # 0 = off (default)
       latency_target_min_thr_ms: 25    # minimum delay threshold (0 = 10 ms)
-latency_target_window_s: 30            # time between two changes
+latency_target_window_s: 30            # minimum time between two changes (also 100 pings at high load)
 ```
 
 - After each window, the three delay thresholds of the direction change by a factor: × 0.8 if the p95 is more than 10 % above the target, × 1.1 if it is more than 10 % below. The factor stays between `latency_target_min_thr_ms` / `owd_delta_delay_thr_ms` and 3.
 - The p95 contains the delay that no shaper can remove (for example, the 5G radio delay). A lower threshold that does not decrease the p95 by 5 % or more is undone, and that threshold is the minimum for 5 minutes. If the target is not reachable, the log tells it.
 - On 5G, set `latency_target_min_thr_ms` of the upload above the upload grant delay: the upload delay at a low upload rate (on the 5G recordings, a median of 13 to 15 ms; a minimum of 25 ms worked). Below it, the upload rate collapses.
-- Only the windows with high load count (`high_load_thr`).
+- Only the pings at high load count (`high_load_thr`). A window needs 100 of them: with 6 reflectors at 300 ms, this is approximately 5 s of load; with one reflector at 4 s, approximately 400 s. A time without load pings of more than one window starts a new window.
 - With `ping_method: icmp` (no one-way delays), the target applies to the RTT increase. With load in the two directions, the queues of the two directions are both in it. Use `icmp-timestamp` for a target for each direction.
 
 Simulator results (10 minutes, one-way delays): a constant link with download target 20 ms gave a p95 of 22 ms (default thresholds: 32 ms) at the same throughput. A 5G-like link with upload target 80 ms gave 81 ms and 74 % of the upload capacity (default thresholds: 68 ms, 61 %). The p95 values include the random path delay. With the capacity traces of the 5G link, the download delay changed little: short capacity decreases cause most of it.
@@ -411,7 +411,7 @@ debug: false                  # Enable verbose debug logging (or use --debug fla
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
-| `latency_target_window_s` | `30` | Time between two threshold changes of the latency target (see Latency Target) |
+| `latency_target_window_s` | `30` | Minimum time between two threshold changes of the latency target. A change also needs 100 pings at high load: with few pings (for example one reflector at 4 s), the time is longer (see Latency Target) |
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |
 | `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
 | `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |

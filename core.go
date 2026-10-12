@@ -411,14 +411,20 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	window := time.Duration(c.cfg.LatencyTargetWindowS * float64(time.Second))
 	if now.Sub(ds.ltLastSample) > window {
 		ds.ltSamples = ds.ltSamples[:0]
+		// The next window is from another time of load: do not compare
+		// its p95 with the last window (no undo, no floor from it).
+		ds.ltLastDown = false
 	}
-	if ds.loadPercent >= c.cfg.HighLoadThr {
-		if len(ds.ltSamples) == 0 {
-			ds.ltWindowStart = now
-		}
-		ds.ltSamples = append(ds.ltSamples, math.Max(delayUs-ref, 0))
-		ds.ltLastSample = now
+	// Only a ping at high load completes a window. A ping at low load
+	// (idle, or between two load bursts) does not change the thresholds.
+	if ds.loadPercent < c.cfg.HighLoadThr {
+		return
 	}
+	if len(ds.ltSamples) == 0 {
+		ds.ltWindowStart = now
+	}
+	ds.ltSamples = append(ds.ltSamples, math.Max(delayUs-ref, 0))
+	ds.ltLastSample = now
 	elapsed := now.Sub(ds.ltWindowStart).Seconds()
 	if elapsed < c.cfg.LatencyTargetWindowS {
 		return
