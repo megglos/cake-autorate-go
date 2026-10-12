@@ -422,6 +422,7 @@ for round in $(seq 1 "$ROUNDS"); do
             wait "$CAR_PID" 2>/dev/null || true
             CAR_PID=""
             if [ -n "$UP_PID" ]; then
+                kill -0 "$UP_PID" 2>/dev/null || die "cake-autorate stopped during the load. See $OUTDIR/$name.upstream/"
                 kill "$UP_PID" 2>/dev/null || true
                 wait "$UP_PID" 2>/dev/null || true
                 UP_PID=""
