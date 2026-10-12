@@ -357,6 +357,9 @@ if [ -n "$UPSTREAM_DIR" ]; then
         echo "min_ul_shaper_rate_kbps=$(( UL_KBPS / 10 ))"
         echo "base_ul_shaper_rate_kbps=$(( UL_KBPS / 2 ))"
         echo "max_ul_shaper_rate_kbps=$UL_KBPS"
+        # cake-autorate stops if this threshold is above a minimum rate.
+        # cake-autorate-go uses 2000 kbit/s and has no such limit.
+        echo "connection_active_thr_kbps=$(( UL_KBPS / 10 < 2000 ? UL_KBPS / 10 : 2000 ))"
         echo "pinger_method=$UPSTREAM_PINGER"
         echo "reflectors=($REFLECTORS)"
         echo "no_pingers=6"
