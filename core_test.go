@@ -1213,8 +1213,7 @@ func TestObserveLatency_StaleWindowExpires(t *testing.T) {
 		c.observeLatency(DL, "r1", 90000, 10000, ts)
 		ts = ts.Add(100 * time.Millisecond)
 	}
-	// The pingers stop for 2 minutes (less than latencyTargetMaxWindows
-	// windows), then high load with a small delay.
+	// The pingers stop for 2 minutes, then high load with a small delay.
 	ts = ts.Add(2 * time.Minute)
 	for i := 0; i < 2*latencyTargetMinSamples; i++ {
 		c.observeLatency(DL, "r1", 20000, 10000, ts)
@@ -1328,6 +1327,25 @@ func TestObserveLatency_ReferenceNeedsIdle(t *testing.T) {
 	}
 	if got := c.dl.scale(); got >= 1 {
 		t.Errorf("scale %.2f, want a decrease (p95 70 ms, target 50 ms)", got)
+	}
+}
+
+// With sparse pings (one reflector at 4 s, 30 s window), a window needs
+// 400 s for 100 samples. It must continue until it has them: a cap on the
+// window time would discard them again and again, and the target would
+// never act.
+func TestObserveLatency_SparsePingsReachTarget(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+5; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(4 * time.Second)
+	}
+	if got := c.dl.scale(); got != latencyTargetStepDown {
+		t.Errorf("scale %.2f after %d pings at 4 s, want %.1f", got, latencyTargetMinSamples+5, latencyTargetStepDown)
 	}
 }
 

@@ -318,9 +318,6 @@ const (
 	// latencyTargetFloorTime is the time that Core keeps a found floor.
 	// The link conditions change; after this time, Core tries again.
 	latencyTargetFloorTime = 5 * time.Minute
-	// latencyTargetMaxWindows: if a window has too few samples, it
-	// continues, but not for more than this number of window times.
-	latencyTargetMaxWindows = 10
 	// latencyTargetRefMaxLoad is the maximum load when the reference of
 	// the latency target follows the baseline of the controller. Also, the
 	// achieved rate must be below connection_active_thr_kbps (idle): on
@@ -426,12 +423,10 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	if elapsed < c.cfg.LatencyTargetWindowS {
 		return
 	}
-	// With few samples (low load, or few pings), continue the window.
+	// With few samples (few pings), continue the window until it has
+	// enough. Old samples do not stay: a gap of more than one window time
+	// starts a new window (see above).
 	if len(ds.ltSamples) < latencyTargetMinSamples {
-		if elapsed >= latencyTargetMaxWindows*c.cfg.LatencyTargetWindowS {
-			ds.ltWindowStart = now
-			ds.ltSamples = ds.ltSamples[:0]
-		}
 		return
 	}
 	ds.ltWindowStart = now
