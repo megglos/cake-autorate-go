@@ -1,6 +1,6 @@
 # Plan: OpenWrt package and LuCI app
 
-On the branch `plans`, like PLAN.md. This is roadmap step 9 in PLAN.md. It is the **last step**: start it only after the core work (steps 5 to 7) and the comparison with upstream and darkmoon (step 8).
+On the branch `plans`, like PLAN.md. This is roadmap step 9 in PLAN.md. It is the **last step**: start it only after the core work (steps 5 to 7) and the comparison with upstream (step 8). darkmoon is not in the comparison (user decision 2026-10-12), but its packaging stays a reference here.
 
 ## 1. Goals
 
