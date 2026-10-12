@@ -106,6 +106,7 @@ RUN=""
 PLAYER_PID=""
 STATS_PID=""
 FORWARD_BEFORE=""
+GRO_BEFORE=""
 
 # iptables_rule adds (-I/-A) or deletes (-D) the forward and NAT rules.
 iptables_rules() {
@@ -133,6 +134,7 @@ teardown() {
             done
     done
     [ -n "$FORWARD_BEFORE" ] && sysctl -qw net.ipv4.ip_forward="$FORWARD_BEFORE"
+    if [ "$GRO_BEFORE" = "on" ]; then ethtool -K "$UPLINK" gro on 2>/dev/null || true; fi
     rm -rf "/etc/netns/$NS"
     [ -n "$RUN" ] && rm -rf "$RUN"
     if [ -n "$OUTDIR" ] && [ -d "$OUTDIR" ] && [ -n "${SUDO_USER:-}" ]; then
@@ -151,7 +153,7 @@ fi
 ip link show "$UPLINK" >/dev/null 2>&1 || die "interface $UPLINK does not exist"
 [ -f "$TRACE" ] || die "trace $TRACE does not exist"
 ip netns list | grep -qw "$NS" && die "namespace $NS exists. Remove the old setup with: sudo $0 -k"
-for cmd in tc iptables curl awk; do
+for cmd in tc iptables curl awk ethtool; do
     command -v "$cmd" >/dev/null || die "$cmd is not installed"
 done
 
@@ -215,6 +217,18 @@ ip netns exec "$NS" ip route add default via "$NET_ROOT"
 # so that the bottleneck and CAKE see packets of the MTU size.
 ethtool -K "$VETH_ROOT" gro off gso off tso off >/dev/null 2>&1 || true
 ip netns exec "$NS" ethtool -K "$VETH_NS" gro off gso off tso off >/dev/null 2>&1 || true
+
+# Also turn off GRO on the uplink (the script turns it on again at the end).
+# With GRO, the download bottleneck gets packets of up to 64 KB. tbf does
+# not send a packet that is larger than its burst. When the trace lowers
+# the rate (and thus the burst) while such a packet is in the queue, the
+# queue stops until the rate increases again: a link outage of up to a
+# minute, which the trace does not contain.
+GRO_BEFORE=$(ethtool -k "$UPLINK" 2>/dev/null | awk '/^generic-receive-offload:/ { print $2 }')
+if [ "$GRO_BEFORE" = "on" ]; then
+    ethtool -K "$UPLINK" gro off || die "cannot turn off GRO on $UPLINK"
+    log "GRO on $UPLINK is off during the emulation"
+fi
 
 # DNS in the namespace (systemd-resolved at 127.0.0.53 is not available there)
 mkdir -p "/etc/netns/$NS"
