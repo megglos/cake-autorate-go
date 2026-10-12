@@ -374,7 +374,7 @@ Main (`./cake-autorate-go`, F1 option) with `5g-owd-f1.yaml` vs branch feat/lear
 Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up). No 5G tests until the next 5G day pass. Local tests on fiber: CI emulation (no internet), `emulate-link.sh` with 5G traces.
 
 
-1. Merged 2026-10-12: #26 (calibrate), #29 (CI emulation), #34 (known-issue links). Open: #27 (latency target), Copilot cycles 2026-10-12.
+1. Merged 2026-10-12: #26 (calibrate), #29 (CI emulation), #34 (known-issue links). #27 (latency target) parked as draft 2026-10-12 (user decision): small gain on the link (UL-only +15 % UL for +20 ms p95; both directions: target not reachable), high complexity (~15 Copilot cycles, each found a new edge case). Startup fix in a local stash in ../cake-autorate-go-lt. Revisit with Starlink data or user demand.
 2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
 4. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
@@ -466,7 +466,7 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
   - Use more seeds for each scenario and the recorded traces.
   - Do parameter sweeps on the simulator. Then, examine the best values on the real links.
   - Make the defaults better, or add link profiles (for example `profile: starlink`).
-- [~] **6b. Calibration mode** (offline part: PR #26 merged 2026-10-12; online part `--iface` open; after #27: emit `latency_target_min_thr_ms` from the grant floor) (after step 6: tuning shows which parameters matter).
+- [~] **6b. Calibration mode** (offline part: PR #26 merged 2026-10-12; online part `--iface` open) (after step 6: tuning shows which parameters matter).
   - 2026-10-11: offline part, PR #26 `cake-autorate-go calibrate -session DIR` (worktree ../cake-autorate-go-calib). Copilot up to 6 rounds (user request). Rules: rates from unshaped 1 s means (min p5/2, base p25, UL base ≤ p50 with DL load, max p95); DL thr max(30, 2× idle jitter); learn_cross_delay if cross p50 > 10 ms (from autorate dl blocks); UL thr ≥ grant p50 + 10 ms; reflectors: best pinger_count+2 by idle jitter. On 3 sessions: cross p50 25–33, grant p50 13–15, UL base ~10 Mbit/s. Open: online part (run the measurements), emit `latency_target_min_thr_ms` for UL from the grant floor once #27 merges.
   - Goal: at a new place (other 5G cell, Starlink), measure the link and generate a fitting config file.
   - `cake-autorate-go calibrate --iface IFACE --out FILE.yaml`. It uses the session tools (load generation, saturation check, recording). It can also use a saved recording (offline).
@@ -481,7 +481,7 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
   - Data: approximately 3-5 GB on 5G (mostly the saturation check).
   - The cell changes during the day. Thus, calibration sets the ranges and the start values. Values that change (cross delay, threshold from the idle jitter) adapt at run time.
 - 5G profile docs: PR #28 (README "5G Links": learn_cross_delay, UL threshold 20, learning condition).
-- [~] **6c. Latency target mode** (PR #27; session 8 done) (after 6, with or after 6b). User idea 2026-10-11: "max bandwidth for a given latency target".
+- [-] **6c. Latency target mode** (PR #27 parked as draft 2026-10-12; session 8 done) (after 6, with or after 6b). User idea 2026-10-11: "max bandwidth for a given latency target".
   - 2026-10-11: PR #27 (worktree ../cake-autorate-go-lt). Per direction `latency_target_p95_ms`, `latency_target_min_thr_ms`; global `latency_target_window_s` (30). Scales the 3 thresholds ×0.8/×1.1 per window, range [min/thr, 3]. Floor detection: undo a decrease without ≥5 % p95 gain, keep that floor 5 min. Sim (10 min, 4 seeds): steady-dl target 20 → 21 ms; 5g-coupled UL 40/60/80 → 39/69/87 ms at 44/68/76 % (default 55 ms, 61 %); recorded UL 60 → 63–66 ms at 52–53 % (default 34–40 %). Recorded DL: weak effect (capacity dips). Needs a link test.
   - Problem: the thresholds are an indirect control. The delay that users see under load is threshold + overshoot + radio floor. Session 4: DL threshold 15 → DL p95 ~33 ms, 30 → ~50 ms. The same threshold gives a different p95 on another cell.
   - Design: a slow outer loop (window 60 s or more) above `Core`. It measures the p95 of the OWD delta while the load is high (achieved > 75 % of the shaper rate). It adjusts the delay threshold (and maybe `adjust_down`) of each direction: p95 above the target → threshold down, p95 below the target with margin → threshold up. Small steps, limits `[min_thr, max_thr]`.
