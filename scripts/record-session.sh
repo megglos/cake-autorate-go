@@ -174,6 +174,7 @@ for v in "${VARIANTS[@]}"; do
     vspec=${v#*=}
     [ "$vname" != "$v" ] && [ -n "$vname" ] || die "-A needs NAME=CONFIG[,BINARY]: $v"
     [[ $vname =~ ^[a-zA-Z0-9_]+$ ]] || die "-A: NAME must contain only letters, digits and _: $vname"
+    [ -z "${VARIANT_CONFIG[$vname]+x}" ] || die "-A: NAME $vname is used more than one time"
     VARIANT_CONFIG[$vname]=${vspec%%,*}
     VARIANT_BINARY[$vname]=$BINARY
     [ "$vspec" != "${vspec#*,}" ] && VARIANT_BINARY[$vname]=${vspec#*,}
@@ -202,6 +203,7 @@ for u in "${UPSTREAMS[@]}"; do
     uname=${u%%=*}
     [ "$uname" != "$u" ] && [ -n "$uname" ] || die "-U needs NAME=CONFIG: $u"
     [[ $uname =~ ^[a-zA-Z0-9_]+$ ]] || die "-U: NAME must contain only letters, digits and _: $uname"
+    [ -z "${UPSTREAM_CONFIG[$uname]+x}" ] || die "-U: NAME $uname is used more than one time"
     UPSTREAM_CONFIG[$uname]=$(realpath "${u#*=}")
     [ -f "${UPSTREAM_CONFIG[$uname]}" ] || die "config ${UPSTREAM_CONFIG[$uname]} does not exist"
     cp "${UPSTREAM_CONFIG[$uname]}" "$OUTDIR/upstream-$uname.sh"
