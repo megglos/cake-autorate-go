@@ -270,7 +270,16 @@ First run (`recordings/20261012-0834-emu-upstream`, 2 rounds, GRO still on: see 
 - Result: ours has much lower typical delay (p95 −35…−45 % in all modes), upstream gets +5…+15 points DL throughput; UL equal. p99 in both-direction mode worse for ours (capacity cliffs). Next tuning targets: DL throughput (increase rate faster after a cut?) and the cliff response.
 - Correction 2026-10-12: the earlier DL-only results (ours 74–75 %) had GRO effects too (short tbf stalls). After the GRO fix (`recordings/20261012-1059-emu-rise`): ours DL 87–88 %, upstream 93–95 %.
 - DL gap cause: decrease cascade (median 7 decreases in 0.3 s per bufferbloat event, rate to 0.59×; detection window keeps the delayed pings). Tried in sim: increase gate per rate sample (rejected: less throughput), `refractory_on_decrease` (too much delay), `repeat_decrease_on_rise` (decrease again in the refractory period only while the delta rises). Emulation A/B: rise gives DL 93 % (= upstream) for +1 ms p95; both directions +2/+4 points for +6 ms p95. Sim: bad with RTT/2. PR #36 merged 2026-10-12: option, default false (user decision 2026-10-12: keep it off by default), README recommends with icmp-timestamp.
-- Remaining: p99 at UL capacity cliffs (both directions). Check on the next 5G day pass with rise.
+- p99 analysis (2026-10-12, after PR #37): the p99 in the both-direction mode comes from the deep fades of the trace, for all policies. Seconds with excess RTT > 150 ms (`20261012-1059-emu-rise`) are the same in all blocks: 80–82 s (UL 50 → 5 Mbit/s for 1.6 s), 102–103 s (UL 74 → 5 Mbit/s for 1.6 s) and 180–183 s (DL 350 → 30 Mbit/s for 1.2 s, then UL 16 → 5 Mbit/s for 2.4 s). Peak excess RTT in these seconds: ours 494–844 ms, rise 550–763 ms, upstream 584–631 ms.
+- Pings with excess RTT (whole block, both mode, 4 pairs from `1031-emu-both` and `1059-emu-rise`):
+
+  | Policy | > 100 ms | > 200 ms | > 400 ms |
+  |---|---|---|---|
+  | ours | 118–139 | 63–75 | 31–53 |
+  | ours + rise | 190–200 | 62–68 | 44–45 |
+  | upstream fping-ts | 371–427 | 38–80 | 21–46 |
+
+  Upstream has 3× more pings above 100 ms. Above 400 ms, ours has 0–30 more pings for each block (< 1 % of 3970 pings), thus the p99 difference. Cause: ours shapes closer to the capacity, and a fade fills the 1000-packet queue before the first cut takes effect (at 40 Mbit/s excess, 100 ms of reaction fills 0.5 MB = 0.8 s at 5 Mbit/s). A controller cannot prevent most of this delay. A faster cut at a very large delta can remove a part. Low priority for 5G; check again for Starlink (handover every 15 s).
 
 ### A/B: `repeat_decrease_on_rise` (`recordings/20261012-1059-emu-rise`, after the GRO fix, 2 rounds)
 

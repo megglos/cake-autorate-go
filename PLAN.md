@@ -33,7 +33,7 @@ Keep the current code. Do not write it again from the start.
 | Branch `sim/ul-grant-delay` (worktree ../cake-autorate-go-grant, 52ea8db): UL grant delay model in 5g-coupled, test for the UL threshold floor, drop test that learns first | PR #22 (Copilot: 0 findings, ready for user review) |
 | PR #12 unknown config keys, PR #13 netlink retry, PR #14 development docs, PR #15 simulator seeds, PR #16 ping loss and outages, PR #17 recorded 5G traces | Merged |
 | Worktree ../cake-autorate-go-tune (not committed, detached) | Obsolete (session 3 done, results in #20/#22). Remove |
-| Branch `feat/upstream-compare` (worktree ../cake-autorate-go-up, 4f3ed41): `record-session.sh -U` | Rebased on main 2026-10-11 19:10 (with `-W`), not pushed. For step 8 |
+| PR #37: `record-session.sh -U` (upstream policy), `emulate-link.sh` GRO off + `stats.tsv`, docs | Merged 2026-10-12 (4 Copilot rounds, 0 open findings). Worktree ../cake-autorate-go-up removed |
 | PR #22 UL grant delay model, #23 `-W` warm-up, #24 remove delta EWMA (F3 rejected), #25 sim calibration with 5G | Merged |
 | PR #28: README "5G Links" (5G profile: learn_cross_delay, UL threshold 20) | Merged |
 | PR #26: `calibrate` command (offline, from a session) | Open: Copilot rounds done (3 + 1 user request), ready for user review/merge |
@@ -126,7 +126,7 @@ Mean p95 / mean utilization of 8 scenarios × 8 seeds: f1 48.1 / 90.0, f8 52.2 /
 - With thr 15, F8 alone does not help the coupled UL (8 %): the coupling delay is above 15 ms in half of the pings. Thus, a low threshold needs the cross delay.
 - Cross delay for DL: no difference in the simulator, but a risk on the real link (after a capacity decrease, DL can learn its own queue). Use the cross delay for UL only.
 
-## Comparison with upstream (LAST step: after the plan is done and the tool is tuned; prepared, branch feat/upstream-compare, worktree ../cake-autorate-go-up, 3422428, not pushed)
+## Comparison with upstream (tooling merged in PR #37, 2026-10-12)
 
 - `record-session.sh -U NAME=CONFIG`: policy upstream-NAME. The original (clone in `../cake-autorate`, ac75f49) controls CAKE. cake-autorate-go measures with `--no-adjust` (same measurement for all policies).
 - Configs: `recordings/upstream-5g-fping.sh` (RTT/2, echo reflectors), `recordings/upstream-5g-fping-ts.sh` (ICMP timestamps with fping, timestamp reflectors). Same rates and interfaces as `5g-owd.yaml`. fping 5.5 output matches the upstream fping-ts parser (checked on loopback).
@@ -139,9 +139,9 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
 
 
 1. Merged 2026-10-12: #26 (calibrate), #29 (CI emulation), #34 (known-issue links). #27 (latency target) parked as draft 2026-10-12 (user decision): small gain on the link (UL-only +15 % UL for +20 ms p95; both directions: target not reachable), high complexity (~15 Copilot cycles, each found a new edge case). Startup fix in a local stash in ../cake-autorate-go-lt. Revisit with Starlink data or user demand.
-2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
+2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Tooling is on main (PR #37); run the session below.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
-4. Fiber emulation comparison with upstream done 2026-10-12 ([RESULTS.md](RESULTS.md#fiber-emulation-comparison-with-upstream-2026-10-12)). Ours: much lower delay (p95 −35…−45 %), DL 87–88 % vs upstream 93–95 %, UL equal. Emulation bug (GRO + tbf burst) fixed on feat/upstream-compare; pinger leak fixed (PR #35). `repeat_decrease_on_rise` (PR #36, merged, default off by user decision) closes the DL gap with `icmp-timestamp`. Remaining: p99 at UL capacity cliffs (both directions); check on the next 5G day pass with the option.
+4. Fiber emulation comparison with upstream done 2026-10-12 ([RESULTS.md](RESULTS.md#fiber-emulation-comparison-with-upstream-2026-10-12)). Ours: much lower delay (p95 −35…−45 %), DL 87–88 % vs upstream 93–95 %, UL equal. Emulation bug (GRO + tbf burst) fixed (PR #37); pinger leak fixed (PR #35). `repeat_decrease_on_rise` (PR #36, merged, default off by user decision) closes the DL gap with `icmp-timestamp`. p99 in both-direction mode analyzed 2026-10-12: the trace fades cause it for all policies (ours 0–30 more pings > 400 ms per block, < 1 %); low priority, see RESULTS.md. Check the option on the next 5G day pass.
 5. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
 6. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
 7. Step 9: LuCI/OpenWrt package (`PLAN-LUCI.md`). Needs the QEMU VM (user: `modprobe kvm_amd`, `pacman -S qemu-base`).
