@@ -23,7 +23,8 @@
 # At the start of each block, the trace starts again from t=0. Thus, each
 # policy gets the same capacity changes. The script writes the applied
 # capacity to DIR/capacity.tsv. scripts/summarize-session.sh uses it as the
-# reference for the throughput.
+# reference for the throughput. Each second, it writes the queue and drop
+# counters of the bottlenecks and of conntrack to DIR/stats.tsv.
 #
 # Usage:
 #   sudo ./scripts/emulate-link.sh -u UPLINK -t TRACE [options] [-- SESSION-OPTIONS]
@@ -103,6 +104,7 @@ log() { echo "[emulate] [$(date '+%H:%M:%S')] $*"; }
 
 RUN=""
 PLAYER_PID=""
+STATS_PID=""
 FORWARD_BEFORE=""
 
 # iptables_rule adds (-I/-A) or deletes (-D) the forward and NAT rules.
@@ -118,6 +120,7 @@ iptables_rules() {
 
 teardown() {
     [ -n "$PLAYER_PID" ] && kill "$PLAYER_PID" 2>/dev/null && wait "$PLAYER_PID" 2>/dev/null
+    [ -n "$STATS_PID" ] && kill "$STATS_PID" 2>/dev/null && wait "$STATS_PID" 2>/dev/null
     ip netns del "$NS" 2>/dev/null || true
     ip link del "$IFB_UL" 2>/dev/null || true
     ip link del "$VETH_ROOT" 2>/dev/null || true
@@ -293,6 +296,39 @@ play_trace() {
 }
 play_trace &
 PLAYER_PID=$!
+
+# --- Diagnostics -------------------------------------------------------------
+
+# sample_stats writes each second the counters of the bottlenecks and of
+# conntrack to stats.tsv: queue backlog (packets) and total drops of each
+# bottleneck, and the conntrack entries and total invalid, drop and
+# insert_failed counts of all CPUs. Use it to find the cause of a link
+# outage (a stalled bottleneck, or packets that conntrack does not accept).
+sample_stats() {
+    trap - EXIT
+    trap 'exit 0' INT TERM
+    local out="$OUTDIR/stats.tsv"
+    printf 'unix_ms\tdl_backlog_p\tdl_drops\tul_backlog_p\tul_drops\tct_entries\tct_invalid\tct_drop\tct_insert_failed\n' > "$out"
+    # qdisc_stats prints the backlog (packets) and the drops of the root qdisc.
+    qdisc_stats() {
+        tc -s qdisc show dev "$1" | awk '
+            /^qdisc/ { root = ($0 ~ / root /) }
+            root && /dropped/ { d = $7; sub(",", "", d) }
+            root && /backlog/ { b = $3; sub("p", "", b); print b, d; exit }'
+    }
+    while true; do
+        local e=${EPOCHREALTIME/[.,]/} dl ul ct
+        dl=$(qdisc_stats "$VETH_ROOT")
+        ul=$(qdisc_stats "$IFB_UL")
+        ct=$(awk 'NR > 1 { e = strtonum("0x" $1); i += strtonum("0x" $5);
+                d += strtonum("0x" $11); f += strtonum("0x" $10) }
+                END { print e, i, d, f }' /proc/net/stat/nf_conntrack)
+        printf '%d\t%s\t%s\t%s\n' $(( e / 1000 )) "${dl// /$'\t'}" "${ul// /$'\t'}" "${ct// /$'\t'}" >> "$out"
+        sleep 1
+    done
+}
+sample_stats &
+STATS_PID=$!
 
 # --- Session ---------------------------------------------------------------
 
