@@ -193,6 +193,7 @@ func printDefaults() {
 	fmt.Printf("\nmonitor_interval_ms: %d\n", cfg.MonitorIntervalMs)
 	fmt.Printf("bufferbloat_refractory_period_ms: %d\n", cfg.BufferbloatRefractoryPeriodMs)
 	fmt.Printf("refractory_on_decrease: %v\n", cfg.RefractoryOnDecrease)
+	fmt.Printf("repeat_decrease_on_rise: %v\n", cfg.RepeatDecreaseOnRise)
 	fmt.Printf("decay_refractory_period_ms: %d\n", cfg.DecayRefractoryPeriodMs)
 	fmt.Printf("learn_cross_delay: %v\n", cfg.LearnCrossDelay)
 	fmt.Printf("\nreflector_response_deadline_s: %g\n", cfg.ReflectorResponseDeadlineS)

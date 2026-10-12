@@ -58,6 +58,7 @@ type dirState struct {
 	delayWindowIdx   int
 	delayWindowCount int // number of true entries (no O(n) scan)
 	bbDetected       bool
+	lastBBDeltaUs    float64 // delta at the last decrease
 	lastBBTime       time.Time
 	lastDecayTime    time.Time
 	crossDelayUs     float64   // learned delay from activity in the other direction
@@ -377,11 +378,18 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		// keeps the old delayed pings for some time. Without the refractory
 		// period, each new ping decreases the rate again before the
 		// decrease can have an effect.
-		if c.cfg.RefractoryOnDecrease && ds.bbDetected && now.Sub(ds.lastBBTime) <= bbRefractoryDur {
+		// With RepeatDecreaseOnRise, decrease the rate again in the
+		// refractory period only while the delay increases.
+		inRefractory := ds.bbDetected && now.Sub(ds.lastBBTime) <= bbRefractoryDur
+		if c.cfg.RefractoryOnDecrease && inRefractory {
+			return
+		}
+		if c.cfg.RepeatDecreaseOnRise && inRefractory && deltaUs <= ds.lastBBDeltaUs {
 			return
 		}
 		ds.bbDetected = true
 		ds.lastBBTime = now
+		ds.lastBBDeltaUs = deltaUs
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
 	} else if ds.loadPercent >= c.cfg.HighLoadThr {
 		// High load and no bufferbloat: increase the rate

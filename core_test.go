@@ -286,6 +286,46 @@ func TestProcessDelay_BufferbloatDetection(t *testing.T) {
 	}
 }
 
+func TestProcessDelay_RepeatDecreaseOnRise(t *testing.T) {
+	run := func(onRise bool, deltasMs []float64) int {
+		c, _ := newTestCore(t)
+		c.state = StateRunning
+		c.cfg.BufferbloatDetectionWindow = 4
+		c.cfg.BufferbloatDetectionThr = 2
+		c.cfg.RepeatDecreaseOnRise = onRise
+		c.dl = dirState{
+			shaperRateKbps: float64(c.link.Download.BaseRateKbps),
+			mtuBytes:       defaultMTU,
+			delayWindow:    make([]bool, 4),
+		}
+		decreases := 0
+		now := time.Now()
+		for _, d := range deltasMs {
+			before := c.dl.shaperRateKbps
+			c.processDelay(DL, d*1000, now)
+			if c.dl.shaperRateKbps < before {
+				decreases++
+			}
+			now = now.Add(50 * time.Millisecond) // in the refractory period
+		}
+		return decreases
+	}
+
+	// The queue empties after the first decrease: the delay goes down.
+	falling := []float64{100, 100, 90, 80, 70}
+	if got := run(false, falling); got != 4 {
+		t.Errorf("without the option: %d decreases, want 4 (one for each ping with bufferbloat)", got)
+	}
+	if got := run(true, falling); got != 1 {
+		t.Errorf("falling delay: %d decreases, want 1", got)
+	}
+	// The delay still increases: each new maximum decreases the rate again.
+	rising := []float64{100, 100, 120, 110, 140}
+	if got := run(true, rising); got != 3 {
+		t.Errorf("rising delay: %d decreases, want 3", got)
+	}
+}
+
 func TestProcessDelay_NoFalsePositive(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.state = StateRunning
