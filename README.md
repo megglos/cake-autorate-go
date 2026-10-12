@@ -30,6 +30,20 @@ Go is a good choice for these reasons:
 - **One static binary**: the router needs no other programs.
 - **Channels** replace the FIFOs.
 
+## Differences from the original
+
+These functions are only in cake-autorate-go:
+
+- **One process for all links.** The original starts one instance with its own processes for each link.
+- **ICMP timestamps in the program.** `icmp-timestamp` needs no external pinger. The original needs tsping, irtt or fping 5.2 or later for one-way delays.
+- **Netlink** sets the CAKE bandwidth. The original starts `tc` for each change.
+- **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease` (see [5G links](#5g-links)). Their default is off. Thus, the default behavior stays near the original.
+- **`calibrate`** makes a proposed config from a test session on your link.
+- **Config checks:** a warning for each unknown key (with a similar known key), and a warning for each reflector that is known to not reply to ICMP timestamp requests. If no reflector of a link replies, the program does not start.
+- **Recording and replay** (`--record`, `--no-adjust`): the same events always give the same decisions. A simulator, emulations and session scripts use this to compare configs and versions, also with the original (see [Tests and tools](#tests-and-tools)).
+
+These functions are only in the original: the pingers irtt and tsping, a reflector list from a URL, the MQTT publisher, the CPU statistics, and the export of the log.
+
 ## Comparison with the original
 
 These tests compare the delay and the throughput of the two controllers on the same emulated link. Each controller sets the CAKE rate on the same link, with the same rates and reflectors. Both use one-way delays from ICMP timestamps (cake-autorate-go: `icmp-timestamp`, cake-autorate: `fping-ts`). All other values are the defaults of each program. Each test uses the same load in each block, and the same capacity changes.
@@ -135,7 +149,7 @@ The Go version also shows the types of decisions (bufferbloat, high load, decay)
 - Three states: **Running**, **Idle** and **Stall**.
 - Monitors the reflectors and replaces a bad reflector.
 - Compensation for the serialization delay of the packets.
-- One-way delays with ICMP timestamps (`ping_method: icmp-timestamp`): a queue in one direction decreases only the rate of that direction.
+- One-way delays with ICMP timestamps (`ping_method: icmp-timestamp`), without an external pinger: a queue in one direction decreases only the rate of that direction.
 - Options for 5G links: `learn_cross_delay` (the upload delay that download activity causes) and `repeat_decrease_on_rise` (fewer decreases while the queue empties). See [5G links](#5g-links).
 - More than one link in one process.
 - `calibrate`: makes a proposed config from a test session on your link.
