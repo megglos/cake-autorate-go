@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -1365,6 +1366,49 @@ func TestObserveLatency_LowLoadPingDoesNotComplete(t *testing.T) {
 	c.observeLatency(DL, "r1", 10000, 10000, ts.Add(20*time.Second))
 	if got := c.dl.scale(); got != 1 {
 		t.Errorf("scale %.2f after a low-load ping, want 1 (no change while idle)", got)
+	}
+}
+
+// A threshold change clears the bufferbloat detection window: its entries
+// were classified with the old threshold.
+func TestObserveLatency_ScaleChangeClearsDetectionWindow(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	for i := range c.dl.delayWindow {
+		c.dl.delayWindow[i] = true
+	}
+	c.dl.delayWindowCount = len(c.dl.delayWindow)
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+1; i++ { // p95 5 ms: increase
+		c.observeLatency(DL, "r1", 15000, 10000, ts)
+		ts = ts.Add(300 * time.Millisecond)
+	}
+	if c.dl.scale() == 1 {
+		t.Fatal("no threshold change")
+	}
+	if c.dl.delayWindowCount != 0 || slices.Contains(c.dl.delayWindow, true) {
+		t.Errorf("detection window count %d after a threshold change, want 0", c.dl.delayWindowCount)
+	}
+}
+
+// A very small window time (valid, positive) does not make each gap a new
+// window: the gap check is in seconds, without a duration overflow.
+func TestObserveLatency_ExtremeWindowTime(t *testing.T) {
+	for _, w := range []float64{1e-10, 1e12} {
+		c, _ := newTestCore(t)
+		c.link.Download.LatencyTargetP95Ms = 30
+		c.cfg.LatencyTargetWindowS = w
+		c.dl.loadPercent = 1
+		ts := time.Unix(1_800_000_000, 0)
+		for i := 0; i < 3; i++ {
+			c.observeLatency(DL, "r1", 90000, 10000, ts)
+			ts = ts.Add(time.Second)
+		}
+		if w > 1 && len(c.dl.ltSamples) != 3 {
+			t.Errorf("window %g s: %d samples after 3 pings at 1 s, want 3 (no gap reset)", w, len(c.dl.ltSamples))
+		}
 	}
 }
 

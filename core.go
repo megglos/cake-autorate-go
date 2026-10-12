@@ -408,8 +408,9 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	// load, or a stop of the pingers) is old: start a new window. Also at
 	// low load: else the next ping can complete the old window. A window
 	// starts with its first sample.
-	window := time.Duration(c.cfg.LatencyTargetWindowS * float64(time.Second))
-	if now.Sub(ds.ltLastSample) > window {
+	// In seconds: a conversion to time.Duration can overflow (or give 0)
+	// for valid but extreme values of latency_target_window_s.
+	if now.Sub(ds.ltLastSample).Seconds() > c.cfg.LatencyTargetWindowS {
 		ds.ltSamples = ds.ltSamples[:0]
 		// The next window is from another time of load: do not compare
 		// its p95 with the last window (no undo, no floor from it).
@@ -465,6 +466,12 @@ func (c *Core) observeLatency(dir Direction, reflector string, delayUs, baseline
 	ds.ltLastDown = ds.thrScale < old
 	ds.ltPrevScale, ds.ltPrevP95Ms = old, p95Ms
 	if ds.thrScale != old {
+		// The detection window has the results of the old threshold:
+		// clear it. Else old results can cause a decrease (after an
+		// increase of the threshold) or delay the detection (after a
+		// decrease).
+		clear(ds.delayWindow)
+		ds.delayWindowCount = 0
 		c.logger.Infof("[%s] [%s] latency target %.0f ms: p95 %.1f ms (%d pings), delay threshold %.1f -> %.1f ms",
 			c.name, dir, target, p95Ms, len(samples), dc.OWDDeltaDelayThrMs*old, dc.OWDDeltaDelayThrMs*ds.thrScale)
 	}
