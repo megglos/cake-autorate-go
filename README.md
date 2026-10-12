@@ -450,6 +450,22 @@ The `--record FILE` option writes all controller events to a JSONL file. A repla
 
 To test the controller on an emulated 5G link on a fast connection, see [docs/emulation.md](docs/emulation.md).
 
+### Calibration from a session
+
+`cake-autorate-go calibrate -session DIR [-out FILE]` analyzes a session of `scripts/record-session.sh` and writes a proposed config for the link. Each value has a comment with the measured data. Examine the values before you use them.
+
+For the full procedure (how to record the session, what the script does, and how to read the result), see [docs/calibration.md](docs/calibration.md).
+
+| Measurement | From | Config value |
+|---|---|---|
+| Capacity (1 s means) | unshaped `dl`, `ul` and `both` blocks | `min_rate_kbps` (p5 / 2), `base_rate_kbps` (p25; upload: not more than the p50 with download load), `max_rate_kbps` (p95) |
+| Idle jitter of each reflector | the idle time at the start of each block | delay thresholds (at least 2 × the median jitter, at least 30 ms); `reflectors`: the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the median (the program selects the active reflectors at random from the list) |
+| Upload delay from download activity | autorate `dl` blocks | `learn_cross_delay` (on if the median is more than 10 ms; without these blocks, the value of the session config stays) |
+| Upload grant delay (5G) | autorate `ul` blocks, while the upload shaper rate is less than half of the capacity | upload threshold: at least the median + 10 ms |
+| ICMP timestamp replies | all blocks | `ping_method` (`icmp-timestamp` with 4 or more reflectors) |
+
+Use a session of one link with the modes `dl`, `ul` and `both` and the policies `unshaped` and `autorate`. If a block type is missing, the output tells which values are not measured. A session with more than one link is rejected.
+
 ## Prerequisites
 
 - **CAKE qdisc** must already be configured on your interfaces. This tool only adjusts the bandwidth parameter — it does not set up CAKE itself.
