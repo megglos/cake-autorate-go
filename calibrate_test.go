@@ -712,6 +712,20 @@ func TestPropose_SlowLinkRates(t *testing.T) {
 	}
 }
 
+// On a link below connection_active_thr_kbps, the loaded pings still give
+// the cross delay and the grant delay: any throughput in the load time is
+// load.
+func TestCalibrateSession_SlowLinkDelays(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 1000, ulCapKbps: 800, ulCapBothKbps: 800, idleJitterMs: 2, crossDelayMs: 25, grantDelayMs: 15})
+	res, _, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CrossDelayMs.N == 0 || res.GrantDelayMs.N == 0 {
+		t.Errorf("cross delay N %d, grant delay N %d; want samples on a 1 Mbit/s link (notes %q)", res.CrossDelayMs.N, res.GrantDelayMs.N, res.Notes)
+	}
+}
+
 // The output keeps the session activity threshold if it is below the
 // minimum rates.
 func TestWriteCalConfig_ActiveThreshold(t *testing.T) {

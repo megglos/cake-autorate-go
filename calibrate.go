@@ -212,10 +212,13 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 			// The download shaper keeps the ACK rate low. Thus, the upload
 			// has no queue (unshaped, the ACKs can fill the upload).
 			// Only the pings with download throughput: without it (the load
-			// generator failed), the delay is not a cross delay.
+			// generator failed), the delay is not a cross delay. Any
+			// throughput counts (not connection_active_thr_kbps): the pings
+			// are in the load time, and a slow link can be below the
+			// threshold.
 			d, used := loadDeltas(rec.pings, b, inLoad, func(p calSample) float64 { return p.ulUs })
 			for i, p := range used {
-				if p.dlKbps >= float64(rec.config.ConnectionActiveThrKbps) {
+				if p.dlKbps > 0 {
 					cross = append(cross, d[i])
 				} else {
 					crossNoLoad++
@@ -402,13 +405,13 @@ func loadDeltas(pings []calSample, b calBlock, in func(time.Time) bool, get func
 // grantDeltas returns pairs (upload delta in ms, upload shaper rate in
 // kbit/s) for each ping in the load with upload throughput.
 func (b calBlock) grantDeltas(rec *calRecording, in func(time.Time) bool) []float64 {
-	active := float64(rec.config.ConnectionActiveThrKbps)
 	d, pings := loadDeltas(rec.pings, b, in, func(p calSample) float64 { return p.ulUs })
 	var out []float64
 	for i, p := range pings {
 		// Without upload throughput (the load generator failed), the
-		// delay is not a grant delay.
-		if p.ulShaperKbps > 0 && p.ulKbps >= active {
+		// delay is not a grant delay. Any throughput counts, as for the
+		// cross delay.
+		if p.ulShaperKbps > 0 && p.ulKbps > 0 {
 			out = append(out, d[i], p.ulShaperKbps)
 		}
 	}
