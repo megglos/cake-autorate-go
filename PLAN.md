@@ -377,12 +377,18 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
 1. Merged 2026-10-12: #26 (calibrate), #29 (CI emulation), #34 (known-issue links). #27 (latency target) parked as draft 2026-10-12 (user decision): small gain on the link (UL-only +15 % UL for +20 ms p95; both directions: target not reachable), high complexity (~15 Copilot cycles, each found a new edge case). Startup fix in a local stash in ../cake-autorate-go-lt. Revisit with Starlink data or user demand.
 2. Upstream comparison on 5G (step 8): moved to another day (user decision 2026-10-11 19:20). Needs a new 5G data pass. Branch `feat/upstream-compare` is rebased and ready; run the session below, then the emulation comparison.
 3. After #27: `calibrate` proposes `latency_target_min_thr_ms` from the grant floor (small PR on #26 code).
-4. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
-5. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
-6. Step 9: LuCI/OpenWrt package (`PLAN-LUCI.md`). Needs the QEMU VM (user: `modprobe kvm_amd`, `pacman -S qemu-base`).
-7. Step 10: Starlink from 2026-10-28 (branch `feat/starlink-reconfig`).
-8. Known issues are GitHub issues #30 (F1), #31 (F2), #32 (F4), #33 (F5); PR #34 links them in the CI summary. `refractory_on_decrease` as default rejected 2026-10-11: sim baseline 5g-variable OWD p95 58 → 115 ms (more throughput, much more delay). Idea for F1/F2 without that cost: block repeated cuts only during a short spike (e.g. no second cut while the delta decreases).
-9. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
+4. Fiber emulation upstream comparison done 2026-10-12 (`recordings/20261012-0834-emu-upstream`, trace-5g.csv 400/80 max, 2 rounds, ours icmp-timestamp defaults vs upstream fping-ts, same rates and reflectors). Clean modes (excess RTT p50/p95/p99, throughput % of trace capacity):
+   - DL: ours 1.4–1.6 / 43–44 / 64–67 ms, 74–75 %; upstream 5.7–7.9 / 66–69 / 89–92 ms, 89–91 %; unshaped p95 175–601 ms.
+   - UL: ours 9–10 / 39–40 / 165–178 ms, 86–87 %; upstream 2.1–5.3 / 63–64 / 265–280 ms, 87 %.
+   - Both directions: NOT valid. Link outages of 15–65 s (DL 0 bytes, all pings lost, while trace capacity 30–400 Mbit/s) in all unshaped and ours blocks (and dl-unshaped round 2), never in upstream blocks. Outages start at the same trace position (~100 s, where UL capacity drops 78 → 5 Mbit/s for 1.2 s; also +35 s once). Cause unknown: not the host firewall (few UFW logs, no ICMP), conntrack sysctl be_liberal 0. Suspect: UL bottleneck queue full (UL shaper 79 Mbit/s or unshaped) at the dip, then the tbf/netem bottleneck or NAT stalls. `emulate-link.sh` now writes `stats.tsv` (bottleneck backlog/drops, conntrack invalid/drop) each second (feat/upstream-compare b64754a). Next: short run `-m both -r 1` to find the cause, then repeat the both-direction comparison.
+   - Bug found by the outages: health check restarted pingers in STALL; on STALL → RUNNING a second set started and the first never stopped (3× ping rate to all 8 reflectors after 2 outages). Fix PR #35.
+   - Result so far: ours has lower delay (p95 −35 % DL, −38 % UL, p99 −30 % / −37 %), upstream has more DL throughput (+15 points); UL throughput equal.
+5. Step 8 without 5G: upstream comparison on the CI emulation (repeatable, no data cost): add `-U` to `ci-emulation.sh` or run `emulate-link.sh -- -U`. darkmoon: build for x86 in the OpenWrt VM (step 9 setup), then the same emulation; resource use with `benchmark.sh` on the GL-MT6000.
+6. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
+7. Step 9: LuCI/OpenWrt package (`PLAN-LUCI.md`). Needs the QEMU VM (user: `modprobe kvm_amd`, `pacman -S qemu-base`).
+8. Step 10: Starlink from 2026-10-28 (branch `feat/starlink-reconfig`).
+9. Known issues are GitHub issues #30 (F1), #31 (F2), #32 (F4), #33 (F5); PR #34 links them in the CI summary. `refractory_on_decrease` as default rejected 2026-10-11: sim baseline 5g-variable OWD p95 58 → 115 ms (more throughput, much more delay). Idea for F1/F2 without that cost: block repeated cuts only during a short spike (e.g. no second cut while the delta decreases).
+10. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
 
 5G tests still useful (next 5G day):
 - Upstream vs ours on 5G (step 8): `-U fts=recordings/upstream-5g-fping-ts.sh` vs `5g-s7-learn-u20.yaml` (our best 5G profile), modes `ul both`, `-W 30`, 2 rounds = 12 blocks ≈ 40 min. Gives the main result of the comparison on the real link.
