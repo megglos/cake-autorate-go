@@ -349,6 +349,7 @@ global_ping_response_timeout_s: 10.0    # All reflectors must respond within thi
 monitor_interval_ms: 200                # How often to sample interface throughput
 bufferbloat_refractory_period_ms: 300   # Cooldown between rate increases after bufferbloat
 refractory_on_decrease: false           # true: also only one rate decrease in each refractory period
+repeat_decrease_on_rise: false          # true: a second decrease in the refractory period only when the delay increases
 learn_cross_delay: false                # true: ignore the upload delay from download activity (icmp-timestamp only)
 decay_refractory_period_ms: 1000        # Cooldown between low-load decay adjustments
 ```
@@ -385,6 +386,7 @@ learn_cross_delay: true
 - `learn_cross_delay` learns the cross delay and ignores it. It learns only while the download is active and the upload load was below 50 % of the upload shaper rate for 2 s or more. Thus, it needs times with download load and a low upload. If the load starts in the two directions at the same time, the learned value can stay too low. In the tests, 30 s of download load came before the upload load. On the test link, it gave approximately 1.6 to 2 times the upload throughput under load in the two directions, for 20 to 30 ms more upload delay (p95).
 - A lower upload threshold (20 ms) with `learn_cross_delay` gave the same upload throughput as 30 ms, with approximately 7 ms less upload delay (p95). Do not set the upload threshold below the grant delay: then the upload rate collapses.
 - The results change much from one test to the next (5G capacity changes). Make a test on your link before you change the defaults.
+- `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity instead of 87 to 88 %, for approximately 1 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays.
 
 ### Configuration Reference
 
@@ -414,6 +416,7 @@ learn_cross_delay: true
 | `monitor_interval_ms` | `200` | Throughput sampling interval (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Cooldown after bufferbloat (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
+| `repeat_decrease_on_rise` | `false` | In the refractory period after a decrease, decrease the rate again only when the delay is higher than at the last decrease. After a decrease, the queue empties only slowly, and each delayed ping decreases the rate again. This option prevents these extra decreases. Use it with `icmp-timestamp` (see below). `refractory_on_decrease` has priority |
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |
 | `decay_refractory_period_ms` | `1000` | Cooldown between decay adjustments (ms) |
 | `reflector_response_deadline_s` | `1.0` | Per-reflector response timeout (s) |
