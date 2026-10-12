@@ -37,6 +37,8 @@ type LinkController struct {
 	runCtx context.Context
 	// Cancellation for sub-goroutines (pingers)
 	pingerCancel context.CancelFunc
+	// pingerDone is closed when all pingers of the running set have stopped.
+	pingerDone chan struct{}
 }
 
 // NewLinkController creates a new LinkController for a single WAN link.
@@ -111,26 +113,48 @@ func (c *LinkController) Run(ctx context.Context) error {
 				for _, r := range promoted {
 					c.core.ResetReflector(r, now)
 				}
-				// Restart pingers to pick up the new active set
-				c.StopPingers()
-				c.StartPingers()
+				c.restartPingers()
 			}
 		}
 	}
 }
 
-// StartPingers implements Actuator.
-func (c *LinkController) StartPingers() {
-	pingerCtx, cancel := context.WithCancel(c.runCtx)
-	c.pingerCancel = cancel
-	go c.pingerMgr.Run(pingerCtx, c.pingCh)
+// restartPingers starts the pingers again to use the new active set of
+// reflectors. When the Core stopped the pingers (IDLE or STALL), it does not
+// start them. The Core starts them with the new set when it goes back to
+// RUNNING.
+func (c *LinkController) restartPingers() {
+	if c.pingerCancel == nil {
+		return
+	}
+	c.StartPingers()
 }
 
-// StopPingers implements Actuator.
+// StartPingers implements Actuator. It stops the pingers that run before it
+// starts the new ones. Thus, only one set of pingers runs at a time.
+func (c *LinkController) StartPingers() {
+	c.StopPingers()
+	pingerCtx, cancel := context.WithCancel(c.runCtx)
+	done := make(chan struct{})
+	c.pingerCancel, c.pingerDone = cancel, done
+	go func() {
+		defer close(done)
+		c.pingerMgr.Run(pingerCtx, c.pingCh)
+	}()
+}
+
+// StopPingers implements Actuator. It returns after all pingers have
+// stopped. Thus, the pingers of an old set do not change the reflector
+// states after a new set starts. The pingers do not block on a full result
+// channel after the cancel, thus the wait is short.
 func (c *LinkController) StopPingers() {
 	if c.pingerCancel != nil {
 		c.pingerCancel()
 		c.pingerCancel = nil
+	}
+	if c.pingerDone != nil {
+		<-c.pingerDone
+		c.pingerDone = nil
 	}
 }
 

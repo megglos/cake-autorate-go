@@ -145,8 +145,16 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 		return fmt.Errorf("opening ICMP socket: %w", err)
 	}
 	pctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Stop and join the helper goroutines before return. Thus, no result of
+	// this pinger comes after it returns.
+	var wg sync.WaitGroup
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		<-pctx.Done()
 		conn.Close()
 	}()
@@ -165,7 +173,9 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 	}
 
 	// Receiver
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		buf := make([]byte, 1500)
 		for {
 			n, from, err := conn.ReadFrom(buf)
