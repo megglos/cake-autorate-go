@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -1041,5 +1042,436 @@ func TestHandlePing_LearnCrossDelay_ShortLowLoad(t *testing.T) {
 	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: c.ul.shaperRateKbps})
 	if !c.ul.lowLoadSince.IsZero() {
 		t.Errorf("low-load time not reset at high load")
+	}
+}
+
+// The latency target changes the delay thresholds after each window: down
+// if the p95 is above the target, up if it is below. A decrease without a
+// lower p95 is undone, and the threshold stays the minimum for some time.
+func TestObserveLatency_ChangesThresholds(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 10
+	ds := &c.dl
+	ds.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	// window sends the deltas (ms) of one window, one each 50 ms.
+	window := func(deltaMs float64) {
+		for i := 0; i < 200; i++ {
+			c.observeLatency(DL, "r1", 10000+deltaMs*1000, 10000, ts)
+			ts = ts.Add(50 * time.Millisecond)
+		}
+		c.observeLatency(DL, "r1", 10000+deltaMs*1000, 10000, ts) // end of the window
+	}
+	window(50) // first window: starts the window time
+	if got := ds.scale(); got != latencyTargetStepDown {
+		t.Fatalf("scale after p95 50 ms (target 30) = %.2f, want %.2f", got, latencyTargetStepDown)
+	}
+	window(50) // the decrease did not decrease the p95
+	if got := ds.scale(); got != 1 {
+		t.Fatalf("scale after no gain = %.2f, want 1 (undo)", got)
+	}
+	window(50) // the floor stops more decreases
+	if got := ds.scale(); got != 1 {
+		t.Fatalf("scale at the floor = %.2f, want 1", got)
+	}
+	window(10) // p95 below the target: increase
+	if got := ds.scale(); got != latencyTargetStepUp {
+		t.Fatalf("scale after p95 10 ms = %.2f, want %.2f", got, latencyTargetStepUp)
+	}
+	// The thresholds of the controller use the factor: a delta 5 % above
+	// the configured threshold is below the scaled threshold (× 1.1).
+	before := ds.delayWindowCount
+	c.processDelay(DL, 1.05*c.link.Download.OWDDeltaDelayThrMs*1000, ts)
+	if ds.delayWindowCount > before {
+		t.Errorf("delta 5 %% above the configured threshold counted as bufferbloat, want not (scaled threshold × %.1f)", latencyTargetStepUp)
+	}
+}
+
+// Without high load, the window has too few samples, and the thresholds do
+// not change. Without a target, Core does not collect samples.
+func TestObserveLatency_NeedsHighLoad(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.LatencyTargetWindowS = 10
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 1000; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(50 * time.Millisecond)
+	}
+	if len(c.dl.ltSamples) != 0 || c.dl.scale() != 1 {
+		t.Errorf("without a target: %d samples, scale %.2f", len(c.dl.ltSamples), c.dl.scale())
+	}
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.dl.loadPercent = 0.1
+	for i := 0; i < 1000; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(50 * time.Millisecond)
+	}
+	if c.dl.scale() != 1 {
+		t.Errorf("at low load: scale %.2f, want 1", c.dl.scale())
+	}
+}
+
+// The baseline of the controller increases slowly with a constant delay.
+// Thus, the delta decreases over time also if the delay does not change.
+// The latency target must not take this as a gain of a decrease: with a
+// constant delay above the target, a decrease is undone.
+func TestObserveLatency_BaselineDriftIsNoGain(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Upload.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 50; i++ { // baselines without load
+		c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+		ts = ts.Add(300 * time.Millisecond)
+	}
+	c.ul.loadPercent = 1
+	var scales []float64
+	for w := 0; w < 3; w++ {
+		for i := 0; i <= 100; i++ { // one window (30 s after the first sample): constant upload delay +50 ms
+			c.HandlePing(owdPing("1.1.1.1", ts, 60, 10))
+			ts = ts.Add(300 * time.Millisecond)
+		}
+		scales = append(scales, c.ul.scale())
+	}
+	// Window 1: p95 50 > 30 → decrease. Window 2: the same delay → undo.
+	if scales[0] != latencyTargetStepDown || scales[1] != 1 {
+		t.Errorf("scales after the windows %v, want [%.1f 1 ...] (the decrease must be undone)", scales, latencyTargetStepDown)
+	}
+}
+
+// latency_target_min_thr_ms above the configured delay threshold is the
+// minimum of the effective threshold.
+func TestObserveLatency_MinAboveThreshold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.link.Download.LatencyTargetMinThrMs = 2 * c.link.Download.OWDDeltaDelayThrMs
+	c.observeLatency(DL, "r1", 0, 0, time.Unix(1_800_000_000, 0))
+	if got := c.dl.scale(); got != 2 {
+		t.Errorf("scale %.2f, want 2 (minimum threshold = 2 x threshold)", got)
+	}
+}
+
+// A window with too few samples continues until it has enough samples
+// (for example with one reflector at 1 s).
+func TestObserveLatency_FewPingsContinueWindow(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	// One ping per second: the first window (30 s) has too few samples.
+	// The decrease comes after latencyTargetMinSamples pings.
+	n := latencyTargetMinSamples + 10
+	for i := 0; i < n; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(time.Second)
+	}
+	if got := c.dl.scale(); got != latencyTargetStepDown {
+		t.Errorf("scale %.2f after %d pings at 80 ms, want %.1f", got, n, latencyTargetStepDown)
+	}
+}
+
+// At moderate load (below high_load_thr), the baseline of the controller
+// can contain delay from the load (5G grant delay). The reference of the
+// latency target must not follow it: else the measured p95 is too low and
+// the thresholds increase.
+func TestObserveLatency_ModerateLoadKeepsReference(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	c.dl.loadPercent = 0
+	c.observeLatency(DL, "r1", 10000, 10000, ts)
+	// Moderate load for a long time: the baseline increases to 30 ms.
+	c.dl.loadPercent = 0.5
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 30000, 30000, ts)
+	}
+	// High load: the delay is 60 ms above the reference without load.
+	c.dl.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 70000, 30000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("scale %.2f, want a decrease (p95 60 ms, target 50 ms)", got)
+	}
+}
+
+// A window from an earlier time of high load does not continue after a
+// stop: its old samples are not in the next window.
+func TestObserveLatency_StaleWindowExpires(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	// 15 s of high load with a large delay: enough samples, but the window
+	// is not complete.
+	for i := 0; i < 3*latencyTargetMinSamples/2; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	// The pingers stop for 2 minutes, then high load with a small delay.
+	ts = ts.Add(2 * time.Minute)
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		c.observeLatency(DL, "r1", 20000, 10000, ts)
+		ts = ts.Add(200 * time.Millisecond)
+	}
+	if got := c.dl.scale(); got <= 1 {
+		t.Errorf("scale %.2f, want an increase (p95 10 ms after the stop, target 30 ms)", got)
+	}
+}
+
+// With RTT/2, the delay of one direction is also in the other direction.
+// The latency target of a direction uses only the pings at high load of
+// that direction: upload load does not change the download thresholds.
+func TestHandlePing_LatencyTargetRTTOtherDirection(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 20
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	ping := func(rttMs float64) {
+		c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: time.Duration(rttMs * float64(time.Millisecond)), Timestamp: ts})
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	for i := 0; i < 50; i++ {
+		ping(20)
+	}
+	// 2 minutes of upload load with a large upload queue (RTT +100 ms).
+	c.ul.loadPercent, c.dl.loadPercent = 1, 0
+	for i := 0; i < 1200; i++ {
+		ping(120)
+	}
+	if got := c.dl.scale(); got != 1 {
+		t.Errorf("download scale %.2f, want 1 (no download load)", got)
+	}
+}
+
+// Without one-way delays, the download reference does not follow the
+// baseline while the upload is loaded: the RTT then contains the upload
+// queue.
+func TestObserveLatency_RTTReferenceNeedsTwoLowLoads(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(DL, "r1", 20000, 20000, ts)
+	// Upload load for a long time: the RTT baseline increases to 60 ms.
+	c.ul.loadPercent = 1
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 60000, 60000, ts)
+	}
+	// Then download load too: RTT 100 ms, 80 ms above the reference.
+	c.dl.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 100000, 60000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("download scale %.2f, want a decrease (p95 80 ms, target 50 ms)", got)
+	}
+}
+
+// With one-way delays, the upload reference does not follow the baseline
+// while the download is loaded: download activity adds upload delay (5G
+// cross delay).
+func TestObserveLatency_ULReferenceNeedsLowDownload(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Upload.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	c.lastPingOWD = true
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(UL, "r1", 10000, 10000, ts)
+	// Download load for a long time: the upload baseline increases to 40 ms.
+	c.dl.loadPercent = 1
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(UL, "r1", 40000, 40000, ts)
+	}
+	// Then upload load too: 70 ms above the reference without load.
+	c.ul.loadPercent = 1
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(UL, "r1", 80000, 40000, ts)
+	}
+	if got := c.ul.scale(); got >= 1 {
+		t.Errorf("upload scale %.2f, want a decrease (p95 70 ms, target 50 ms)", got)
+	}
+}
+
+// At a low load fraction but with traffic (achieved rate above
+// connection_active_thr_kbps), the reference does not follow the baseline:
+// on 5G, the grant delay is already there at a low load.
+func TestObserveLatency_ReferenceNeedsIdle(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 50
+	c.cfg.LatencyTargetWindowS = 30
+	c.lastPingOWD = true
+	ts := time.Unix(1_800_000_000, 0)
+	c.observeLatency(DL, "r1", 10000, 10000, ts)
+	// 10 % load with 5 Mbit/s for a long time: the baseline increases to
+	// 40 ms.
+	c.dl.loadPercent, c.dl.achievedKbps = 0.1, 5000
+	for i := 0; i < 100; i++ {
+		ts = ts.Add(time.Second)
+		c.observeLatency(DL, "r1", 40000, 40000, ts)
+	}
+	// High load: 70 ms above the idle reference.
+	c.dl.loadPercent, c.dl.achievedKbps = 1, 50000
+	for i := 0; i < 2*latencyTargetMinSamples; i++ {
+		ts = ts.Add(300 * time.Millisecond)
+		c.observeLatency(DL, "r1", 80000, 40000, ts)
+	}
+	if got := c.dl.scale(); got >= 1 {
+		t.Errorf("scale %.2f, want a decrease (p95 70 ms, target 50 ms)", got)
+	}
+}
+
+// With sparse pings (one reflector at 4 s, 30 s window), a window needs
+// 400 s for 100 samples. It must continue until it has them: a cap on the
+// window time would discard them again and again, and the target would
+// never act.
+func TestObserveLatency_SparsePingsReachTarget(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+5; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(4 * time.Second)
+	}
+	if got := c.dl.scale(); got != latencyTargetStepDown {
+		t.Errorf("scale %.2f after %d pings at 4 s, want %.1f", got, latencyTargetMinSamples+5, latencyTargetStepDown)
+	}
+}
+
+// A ping at low load does not complete a window: also not 20 s after a
+// load burst of 15 s (less than one window time, no gap reset).
+func TestObserveLatency_LowLoadPingDoesNotComplete(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 3*latencyTargetMinSamples/2; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	c.dl.loadPercent = 0
+	c.observeLatency(DL, "r1", 10000, 10000, ts.Add(20*time.Second))
+	if got := c.dl.scale(); got != 1 {
+		t.Errorf("scale %.2f after a low-load ping, want 1 (no change while idle)", got)
+	}
+}
+
+// A threshold change clears the bufferbloat detection window: its entries
+// were classified with the old threshold.
+func TestObserveLatency_ScaleChangeClearsDetectionWindow(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	for i := range c.dl.delayWindow {
+		c.dl.delayWindow[i] = true
+	}
+	c.dl.delayWindowCount = len(c.dl.delayWindow)
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+1; i++ { // p95 5 ms: increase
+		c.observeLatency(DL, "r1", 15000, 10000, ts)
+		ts = ts.Add(300 * time.Millisecond)
+	}
+	if c.dl.scale() == 1 {
+		t.Fatal("no threshold change")
+	}
+	if c.dl.delayWindowCount != 0 || slices.Contains(c.dl.delayWindow, true) {
+		t.Errorf("detection window count %d after a threshold change, want 0", c.dl.delayWindowCount)
+	}
+}
+
+// A short window time (1 s) with few pings (one each 2 s): the gaps do not
+// start new windows, and the window gets enough samples.
+func TestObserveLatency_ShortWindowFewPings(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 1
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < latencyTargetMinSamples+1; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(2 * time.Second)
+	}
+	if got := c.dl.scale(); got != latencyTargetStepDown {
+		t.Errorf("scale %.2f, want %.1f (p95 80 ms, target 30 ms)", got, latencyTargetStepDown)
+	}
+}
+
+// After a stop of the pingers, a ping at low load does not complete the
+// old window.
+func TestObserveLatency_StaleWindowLowLoad(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	c.dl.loadPercent = 1
+	ts := time.Unix(1_800_000_000, 0)
+	for i := 0; i < 3*latencyTargetMinSamples/2; i++ {
+		c.observeLatency(DL, "r1", 90000, 10000, ts)
+		ts = ts.Add(100 * time.Millisecond)
+	}
+	// The pingers stop for 2 minutes, then a ping at low load.
+	c.dl.loadPercent = 0
+	c.observeLatency(DL, "r1", 10000, 10000, ts.Add(2*time.Minute))
+	if got := c.dl.scale(); got != 1 {
+		t.Errorf("scale %.2f, want 1 (the old window must not complete)", got)
+	}
+}
+
+// After an undo, the floor keeps the reference of the latency target.
+// Else, the baseline of the controller increases with the constant delay,
+// the next window shows a low p95, and the thresholds increase although
+// the delay did not change.
+func TestObserveLatency_FloorKeepsReference(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Upload.LatencyTargetP95Ms = 30
+	c.cfg.LatencyTargetWindowS = 30
+	ts := time.Unix(1_800_000_000, 0)
+	reflectors := []string{"r1", "r2", "r3", "r4", "r5", "r6"}
+	ping := func(ulMs float64) {
+		for _, r := range reflectors {
+			c.HandlePing(owdPing(r, ts, ulMs, 10))
+			ts = ts.Add(50 * time.Millisecond)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		ping(10)
+	}
+	c.ul.loadPercent = 1
+	var scales []float64
+	for w := 0; w < 6; w++ { // 6 windows of 30 s with a constant +50 ms
+		for i := 0; i < 100; i++ {
+			ping(60)
+		}
+		scales = append(scales, c.ul.scale())
+	}
+	for i, sc := range scales[1:] {
+		if sc > 1 {
+			t.Errorf("scales %v: increase in window %d, want no increase with a constant delay above the target", scales, i+2)
+			break
+		}
+	}
+}
+
+// ResetReflector also removes the reference of the latency target.
+func TestResetReflector_LatencyTarget(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.link.Download.LatencyTargetP95Ms = 30
+	c.observeLatency(DL, "r1", 50000, 10000, time.Unix(1_800_000_000, 0))
+	c.ResetReflector("r1")
+	if _, ok := c.dl.ltBase["r1"]; ok {
+		t.Error("reference of r1 is still there after ResetReflector")
 	}
 }

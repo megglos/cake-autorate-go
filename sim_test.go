@@ -217,6 +217,12 @@ type simResult struct {
 	// Excess delay (ms) of a sparse flow. The simulator samples it every 10ms
 	// while a bulk transfer is active.
 	latP50, latP95, latP99 float64
+	// p95 of the delay of each direction (ms), while the direction has
+	// demand. It includes the random parts of the path delay (jitter, and
+	// the coupling and grant noise) of the last ping: the latency target
+	// measures them too. Without autorate (no pings) or without demand in
+	// the direction, they are NaN.
+	dlLatP95, ulLatP95 float64
 	// bloatS is the total time with an excess delay of more than 30ms.
 	bloatS float64
 	// Delivered bits / capacity bits, while the direction has demand.
@@ -340,7 +346,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 	nextMon := monIntvl
 	var prevDlOut, prevUlOut float64
 
-	var lat []float64
+	var lat, dlLat, ulLat []float64
+	// Random path delay of the last ping, for dlLat and ulLat.
+	var dlNoiseMs, ulNoiseMs float64
 	var res simResult
 	res.stallEnd = -1
 	wasStall := false
@@ -401,6 +409,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
 				rtt := base + queueMs + jitter + ulNoise
+				dlNoiseMs, ulNoiseMs = jitter/2, jitter/2+ulNoise
 				result := PingResult{
 					Reflector: link.Reflectors[i],
 					RTT:       time.Duration(rtt * float64(time.Millisecond)),
@@ -450,6 +459,12 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 
 		if step%simProbeEveryMs == 0 && (dl.demand(t) || ul.demand(t)) {
 			lat = append(lat, queueMs)
+			if dl.demand(t) {
+				dlLat = append(dlLat, math.Max(dlQueueMs+dlNoiseMs, 0))
+			}
+			if ul.demand(t) {
+				ulLat = append(ulLat, math.Max(ulQueueMs+ulNoiseMs, 0))
+			}
 			if queueMs > simBloatThrMs {
 				res.bloatS += simProbeEveryMs / 1000.0
 			}
@@ -474,6 +489,18 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 
 	sort.Float64s(lat)
 	res.latP50, res.latP95, res.latP99 = percentile(lat, 0.50), percentile(lat, 0.95), percentile(lat, 0.99)
+	sort.Float64s(dlLat)
+	sort.Float64s(ulLat)
+	// NaN without a measurement: without autorate (no pings), or without
+	// demand in the direction (no samples). percentile gives 0 for no
+	// samples.
+	p95OrNaN := func(v []float64) float64 {
+		if core == nil || len(v) == 0 {
+			return math.NaN()
+		}
+		return percentile(v, 0.95)
+	}
+	res.dlLatP95, res.ulLatP95 = p95OrNaN(dlLat), p95OrNaN(ulLat)
 	if dlCap > 0 {
 		res.dlUtil = dlDelivered / dlCap
 	}

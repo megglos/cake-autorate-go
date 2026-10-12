@@ -27,6 +27,8 @@ links:
       owd_delta_delay_thr_ms: 30.0               # OWD delta threshold for bufferbloat detection (ms)
       avg_owd_delta_max_adjust_up_thr_ms: 10.0   # Max avg delta to still increase rate (ms)
       avg_owd_delta_max_adjust_down_thr_ms: 60.0 # Max avg delta for maximum rate decrease (ms)
+      latency_target_p95_ms: 0                   # p95 delay target at high load (ms, 0 = off; see README)
+      latency_target_min_thr_ms: 0               # Minimum delay threshold for the target (ms, 0 = 10)
     upload:
       interface: eth1          # Upload interface
       adjust: true
@@ -120,6 +122,7 @@ high_load_thr: 0.75               # Load threshold considered "high" (0.0-1.0)
 monitor_interval_ms: 200                  # How often to check interface throughput
 bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases after BB
 refractory_on_decrease: false             # true: also only one rate decrease in each refractory period
+latency_target_window_s: 30               # Minimum time between two threshold changes of the latency target (1 to 3600 s); a change also needs 100 pings at high load
 learn_cross_delay: false                  # true: ignore the upload delay from download activity (icmp-timestamp only)
 decay_refractory_period_ms: 1000          # Minimum time between decay adjustments
 

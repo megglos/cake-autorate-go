@@ -327,6 +327,10 @@ func runSimSeeds(i int, p simPolicy, n int) (simResult, float64) {
 		m.latP50 += r.latP50
 		m.latP95 += r.latP95
 		m.latP99 += r.latP99
+		// Without autorate, the per-direction p95 is NaN: the mean is also
+		// NaN.
+		m.dlLatP95 += r.dlLatP95
+		m.ulLatP95 += r.ulLatP95
 		m.bloatS += r.bloatS
 		m.dlUtil += r.dlUtil
 		m.ulUtil += r.ulUtil
@@ -336,10 +340,30 @@ func runSimSeeds(i int, p simPolicy, n int) (simResult, float64) {
 	m.latP50 /= k
 	m.latP95 /= k
 	m.latP99 /= k
+	m.dlLatP95 /= k
+	m.ulLatP95 /= k
 	m.bloatS /= k
 	m.dlUtil /= k
 	m.ulUtil /= k
 	return m, sets / k
+}
+
+// runSimSeeds returns the mean of the per-direction p95 values: a number
+// with autorate, NaN without it.
+func TestRunSimSeeds_DirectionP95(t *testing.T) {
+	i := slices.IndexFunc(simScenarios(), func(sc simScenario) bool { return sc.name == "steady-dl" })
+	r, _ := runSimSeeds(i, policyAutorateOWD, 2)
+	if !(r.dlLatP95 > 0) {
+		t.Errorf("autorate-owd: download p95 %v, want more than 0", r.dlLatP95)
+	}
+	// steady-dl has no upload demand: no upload samples.
+	if !math.IsNaN(r.ulLatP95) {
+		t.Errorf("autorate-owd: upload p95 %v without upload demand, want NaN", r.ulLatP95)
+	}
+	u, _ := runSimSeeds(i, policyUnshaped, 2)
+	if !math.IsNaN(u.dlLatP95) {
+		t.Errorf("unshaped: download p95 %v, want NaN", u.dlLatP95)
+	}
 }
 
 // Variant 0 gives the default seeds, and other variants give other traces.
@@ -719,5 +743,131 @@ func TestSimCalibration_5GRecorded(t *testing.T) {
 	}
 	if ulOnly.ulUtil < 0.45 || ulOnly.ulUtil > 0.75 {
 		t.Errorf("upload only: UL utilization %.0f%%, want 45 to 75%% (link: 56 to 63%%)", 100*ulOnly.ulUtil)
+	}
+}
+
+// The latency target sets the operating point. On a link where the shaper
+// controls the delay, the p95 of the delay goes near the target. With a
+// target above the delay of the default thresholds, the upload gets more
+// throughput (5g-coupled: the default thresholds give approximately 55 ms
+// and 61 %).
+func TestSimOWD_LatencyTarget(t *testing.T) {
+	run := func(name string, tune func(*Config)) simResult {
+		sc := scenarioByName(t, name)
+		sc.duration = 600 * time.Second
+		sc.dlDemand = between(2, 598)
+		if name == "5g-coupled" {
+			sc.ulDemand = between(2, 598)
+		}
+		sc.tune = func(cfg *Config) {
+			cfg.RefractoryOnDecrease = true
+			cfg.LearnCrossDelay = true
+			tune(cfg)
+		}
+		return runSim(sc, policyAutorateOWD)
+	}
+	low := run("steady-dl", func(cfg *Config) { cfg.Links[0].Download.LatencyTargetP95Ms = 20 })
+	t.Logf("steady-dl, download target 20 ms: p95 %.1f ms, utilization %.0f %%", low.dlLatP95, 100*low.dlUtil)
+	if low.dlLatP95 > 25 || low.dlUtil < 0.95 {
+		t.Errorf("steady-dl, target 20 ms: download p95 %.1f ms, utilization %.0f%%; want 25 ms or less and 95%% or more", low.dlLatP95, 100*low.dlUtil)
+	}
+
+	off := run("5g-coupled", func(*Config) {})
+	high := run("5g-coupled", func(cfg *Config) {
+		cfg.Links[0].Upload.LatencyTargetP95Ms = 80
+		cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+	})
+	t.Logf("5g-coupled upload: off p95 %.1f ms, %.0f %%; target 80 ms: p95 %.1f ms, %.0f %%",
+		off.ulLatP95, 100*off.ulUtil, high.ulLatP95, 100*high.ulUtil)
+	if high.ulUtil < off.ulUtil+0.05 || high.ulLatP95 > 95 {
+		t.Errorf("5g-coupled, upload target 80 ms: p95 %.1f ms, utilization %.0f%% (off: %.0f%%); want more throughput and p95 95 ms or less",
+			high.ulLatP95, 100*high.ulUtil, 100*off.ulUtil)
+	}
+}
+
+// The latency target with the default config (refractory_on_decrease
+// off: each ping with bufferbloat decreases the rate). The results are
+// near the results with the option.
+func TestSimOWD_LatencyTargetDefaultRefractory(t *testing.T) {
+	sc := scenarioByName(t, "steady-dl")
+	sc.duration = 600 * time.Second
+	sc.dlDemand = between(2, 598)
+	sc.tune = func(cfg *Config) { cfg.Links[0].Download.LatencyTargetP95Ms = 20 }
+	r := runSim(sc, policyAutorateOWD)
+	t.Logf("steady-dl, default config, download target 20 ms: p95 %.1f ms, utilization %.0f %%", r.dlLatP95, 100*r.dlUtil)
+	if r.dlLatP95 > 25 || r.dlUtil < 0.95 {
+		t.Errorf("download p95 %.1f ms, utilization %.0f%%; want 25 ms or less and 95%% or more", r.dlLatP95, 100*r.dlUtil)
+	}
+
+	run := func(target float64) simResult {
+		sc := scenarioByName(t, "5g-coupled")
+		sc.duration = 600 * time.Second
+		sc.dlDemand, sc.ulDemand = between(2, 598), between(2, 598)
+		sc.tune = func(cfg *Config) {
+			cfg.LearnCrossDelay = true
+			cfg.Links[0].Upload.LatencyTargetP95Ms = target
+			cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+		}
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(0), run(80)
+	t.Logf("5g-coupled, default config: off p95 %.1f ms, %.0f %%; upload target 80 ms: p95 %.1f ms, %.0f %%",
+		off.ulLatP95, 100*off.ulUtil, on.ulLatP95, 100*on.ulUtil)
+	if on.ulUtil < off.ulUtil+0.05 || on.ulLatP95 > 95 {
+		t.Errorf("upload target 80 ms: p95 %.1f ms, utilization %.0f%% (off: %.0f%%); want more throughput and p95 95 ms or less",
+			on.ulLatP95, 100*on.ulUtil, 100*off.ulUtil)
+	}
+}
+
+// With ping_method icmp (the default), the latency target uses the RTT
+// increase. Download load: the target decreases the download delay at the
+// same throughput. Before the fix, the target used RTT/2 and saw only half
+// of the queue.
+func TestSim_LatencyTargetRTT(t *testing.T) {
+	run := func(target float64) simResult {
+		sc := scenarioByName(t, "steady-dl")
+		sc.duration = 600 * time.Second
+		sc.dlDemand = between(2, 598)
+		sc.tune = func(cfg *Config) {
+			cfg.RefractoryOnDecrease = true
+			cfg.Links[0].Download.LatencyTargetP95Ms = target
+		}
+		return runSim(sc, policyAutorate)
+	}
+	off, on := run(0), run(30)
+	t.Logf("steady-dl, RTT: off p95 %.1f ms, %.0f %%; download target 30 ms: p95 %.1f ms, %.0f %%",
+		off.dlLatP95, 100*off.dlUtil, on.dlLatP95, 100*on.dlUtil)
+	if on.dlLatP95 > off.dlLatP95-20 || on.dlUtil < 0.95 {
+		t.Errorf("target 30 ms: download p95 %.1f ms (off %.1f), utilization %.0f%%; want 20 ms less and 95%% or more",
+			on.dlLatP95, off.dlLatP95, 100*on.dlUtil)
+	}
+}
+
+// Under load for a long time, the reference of the latency target must not
+// follow the baseline of the controller: the baseline increases with the
+// delay that no shaper can remove, the measured p95 then is too low, and
+// the thresholds increase above the target. 5g-coupled, 60 minutes of load
+// in the two directions, upload target 70 ms: a reference that follows the
+// loaded baseline gave an upload p95 of 92 ms; a reset of the references
+// after 30 minutes of load gave 83 ms. Now: 72 ms.
+func TestSimOWD_LatencyTargetLongLoad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long simulation")
+	}
+	sc := scenarioByName(t, "5g-coupled")
+	sc.duration = 3600 * time.Second
+	sc.dlDemand, sc.ulDemand = between(2, 3598), between(2, 3598)
+	sc.tune = func(cfg *Config) {
+		cfg.RefractoryOnDecrease = true
+		cfg.LearnCrossDelay = true
+		cfg.Links[0].Upload.LatencyTargetP95Ms = 70
+		cfg.Links[0].Upload.LatencyTargetMinThrMs = 25
+	}
+	r := runSim(sc, policyAutorateOWD)
+	t.Logf("upload p95 %.1f ms, utilization %.0f %%", r.ulLatP95, 100*r.ulUtil)
+	// The p95 of the run must not be above the target and its tolerance
+	// (77 ms).
+	if limit := 70 * (1 + latencyTargetTolerance); r.ulLatP95 > limit {
+		t.Errorf("upload p95 %.1f ms, want %.0f ms or less (target 70 ms)", r.ulLatP95, limit)
 	}
 }
