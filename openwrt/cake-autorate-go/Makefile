@@ -36,7 +36,7 @@ define Package/cake-autorate-go
   CATEGORY:=Network
   TITLE:=Adaptive CAKE shaper rate control (Go)
   URL:=https://github.com/megglos/cake-autorate-go
-  DEPENDS:=$(GO_ARCH_DEPENDS) +kmod-sched-cake +ucode +ucode-mod-fs +ucode-mod-uci
+  DEPENDS:=$(GO_ARCH_DEPENDS) +kmod-sched-cake +tc +ucode +ucode-mod-fs +ucode-mod-uci
 endef
 
 define Package/cake-autorate-go/description

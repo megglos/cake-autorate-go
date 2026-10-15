@@ -35,6 +35,16 @@ jobs:
         working-directory: openwrt/cake-autorate-go
         run: ucode -L "$PWD/files/*.uc" tests/convert_test.uc files
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The program must accept the output of the converter.
+      - name: Check a converted configuration with the program
+        run: |
+          ucode -L "$PWD/openwrt/cake-autorate-go/files/*.uc" openwrt/cake-autorate-go/tests/sample.uc openwrt/cake-autorate-go/files > "$RUNNER_TEMP/sample.yaml"
+          go run . -check-config -strict -config "$RUNNER_TEMP/sample.yaml"
+
   # Build the apk packages with the OpenWrt SDK.
   package:
     runs-on: ubuntu-latest

@@ -53,7 +53,7 @@ check('full config', r, {
 			download: { adjust: true, interface: 'ifb4wan', min_rate_kbps: 1000 },
 			learn_cross_delay: false, name: '5g', ping_method: 'icmp-timestamp',
 			reflectors: [ '8.8.8.8' ],
-			upload: { interface: 'wan', max_rate_kbps: 50000 },
+			upload: { interface: 'wan', max_rate_kbps: 50000, adjust: true },
 		} ],
 	},
 	disabled: false, errors: [],
@@ -99,5 +99,15 @@ check('one global section', r.errors, [ 'global g2: only one global section is p
 
 r = convert({ a: sec('link', 'a', 0, { min_rate: '1', dl_owd_delta_delay_thr_ms: '-2.5' }) }, schema, null);
 check('float and unknown link key', r.errors, [ 'link a: unknown option "min_rate"' ]);
+
+r = convert({
+	global: sec('global', 'global', 0, { ping_interface: 'wwan0', ping_source_addr: '10.0.0.2' }),
+	a: sec('link', 'a', 1, { dl_adjust: '0', ul_adjust: '' }),
+	b: sec('link', 'b', 2, { ping_interface: 'eth1' }),
+}, schema, null);
+check('adjust default and explicit 0', [ r.config.links[0].download.adjust, r.config.links[0].upload.adjust ], [ false, true ]);
+check('global ping keys apply to the links',
+	map(r.config.links, (l) => [ l.ping_interface, l.ping_source_addr ]),
+	[ [ 'wwan0', '10.0.0.2' ], [ 'eth1', '10.0.0.2' ] ]);
 
 exit(failed > 0 ? 1 : 0);

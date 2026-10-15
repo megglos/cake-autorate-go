@@ -184,7 +184,7 @@ The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` (
 | `/etc/init.d/cake-autorate` | the procd service |
 | `/usr/share/cake-autorate/` | the converter from UCI to the configuration file of the program |
 
-The UCI options have the names of the configuration keys (see [Configuration reference](#configuration-reference)). The section `global` has the global keys. Each section `link` is one link. A link has the keys of the download direction with the prefix `dl_` and the keys of the upload direction with the prefix `ul_`. An empty option uses the default value of the program. For example:
+The UCI options have the names of the configuration keys (see [Configuration reference](#configuration-reference)). The section `global` has the global keys. Each section `link` is one link. A link has the keys of the download direction with the prefix `dl_` and the keys of the upload direction with the prefix `ul_`. An empty option uses the default value of the program, with these exceptions: `dl_adjust` and `ul_adjust` are `1` if they are not set, and the options `ping_interface` and `ping_source_addr` of the section `global` apply to each link that does not set them. Each link must set the interfaces and the rates. For example:
 
 ```
 config global 'global'

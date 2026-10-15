@@ -9,6 +9,10 @@
 // have the delay thresholds with these prefixes. They apply to all links.
 //
 // An empty option is not written. Then the program uses its default value.
+// Exceptions, because the program does not apply these values to a link:
+//   - "adjust" of a direction is true if it is not set.
+//   - "ping_interface" and "ping_source_addr" of the global section apply
+//     to each link that does not set them.
 
 'use strict';
 
@@ -141,6 +145,16 @@ export function convert(sections, schema, fixed) {
 		return { config: null, disabled: false, errors };
 	if (disabled || length(links) == 0)
 		return { config: null, disabled: true, errors };
+
+	for (let link in links) {
+		for (let d in values(prefixes)) {
+			link[d] ??= {};
+			link[d].adjust ??= true;
+		}
+		for (let k in [ 'ping_interface', 'ping_source_addr' ])
+			if (out[k] != null)
+				link[k] ??= out[k];
+	}
 
 	for (let k, v in fixed ?? {})
 		out[k] = v;
