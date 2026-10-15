@@ -406,7 +406,7 @@ function linkSection(m) {
 			return true;
 		const used = otherInterfaces(sid);
 		for (const d of [ 'dl', 'ul' ]) {
-			const ifname = live(null, sid, d + '_interface');
+			const ifname = live(this.section, sid, d + '_interface');
 			if (ifname && used[ifname])
 				return _('The link "%s" uses the interface %s').format(used[ifname], ifname);
 		}

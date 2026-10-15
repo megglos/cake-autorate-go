@@ -536,3 +536,26 @@ test('enabling a link in the table checks its interfaces', async ({ page }) => {
 	errors = errors.filter((e) => !e.includes('uses the interface eth1'));
 	resetConfig();
 });
+
+test('enabling a link in its dialog uses the changed interfaces', async ({ page }) => {
+	// The disabled link "old" uses eth1, the upload interface of "wan".
+	vm(`uci set cake-autorate.old=link &&
+		uci set cake-autorate.old.enabled=0 &&
+		uci set cake-autorate.old.dl_interface=ifb4old &&
+		uci set cake-autorate.old.ul_interface=eth1 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await page.locator('.cbi-section-table-row[data-sid="old"] .cbi-button-edit').click();
+	const modal = page.locator('.modal');
+	const ul = modal.locator('[data-name="ul_interface"] .cbi-dropdown');
+	await ul.click();
+	await ul.locator('li[data-value="eth0"][tabindex]').click();
+	await modal.locator('input[data-widget-id="widget.cbid.cake-autorate.old.enabled"]').check();
+	await modal.locator('.cbi-button-positive').click();
+	await expect(modal).toBeHidden();
+	await saveApply(page);
+	await expect.poll(() => vm('uci -q get cake-autorate.old.enabled || true').trim(), { timeout: 30000 })
+		.toBe('1');
+	expect(vm('uci get cake-autorate.old.ul_interface').trim()).toBe('eth0');
+	resetConfig();
+});
