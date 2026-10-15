@@ -1,0 +1,187 @@
+name: OpenWrt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  # Test the UCI converter with ucode, built from source.
+  converter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ucode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake libjson-c-dev
+          git clone --depth 1 https://github.com/jow-/ucode.git "$RUNNER_TEMP/ucode"
+          cmake -S "$RUNNER_TEMP/ucode" -B "$RUNNER_TEMP/ucode/build" \
+            -DFS_SUPPORT=ON -DMATH_SUPPORT=OFF -DNL80211_SUPPORT=OFF -DRESOLV_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF -DSTRUCT_SUPPORT=OFF -DUBUS_SUPPORT=OFF -DUCI_SUPPORT=OFF \
+            -DULOOP_SUPPORT=OFF -DDEBUG_SUPPORT=OFF -DLOG_SUPPORT=OFF -DSOCKET_SUPPORT=OFF \
+            -DZLIB_SUPPORT=OFF -DDIGEST_SUPPORT=OFF
+          make -C "$RUNNER_TEMP/ucode/build" -j"$(nproc)"
+          sudo make -C "$RUNNER_TEMP/ucode/build" install
+          sudo ldconfig
+
+      - name: Test the converter
+        working-directory: openwrt/cake-autorate-go
+        run: ucode -L "$PWD/files/*.uc" tests/convert_test.uc files
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The program must accept the output of the converter.
+      - name: Check a converted configuration with the program
+        run: |
+          ucode -L "$PWD/openwrt/cake-autorate-go/files/*.uc" openwrt/cake-autorate-go/tests/sample.uc openwrt/cake-autorate-go/files > "$RUNNER_TEMP/sample.yaml"
+          go run . -check-config -strict -config "$RUNNER_TEMP/sample.yaml"
+
+  # Build the apk packages with the OpenWrt SDK.
+  package:
+    # Do not build or publish packages with a converter that fails its tests.
+    needs: converter
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64_cortex-a53-openwrt-25.12
+            goarch: arm64
+          - arch: x86_64-openwrt-25.12
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Write the version to the Makefile, because the SDK action does not
+      # pass variables to make. apk versions have no "-" (see "apk
+      # version"). A release tag 1.2.0-rc.1 (or v1.2.0-rc.1) gives 1.2.0_rc1.
+      # Other builds get the Makefile version plus _p and the commit count.
+      - name: Set the version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mk=openwrt/cake-autorate-go/Makefile
+          if [ -n "$TAG" ]; then
+            v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
+          else
+            v="$(sed -n 's/^PKG_VERSION:=//p' "$mk")_p$(git rev-list --count HEAD)"
+          fi
+          if ! echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*(_(alpha|beta|pre|rc|p)[0-9]*)?$'; then
+            echo "::error::version $v (from tag \"$TAG\") is not a valid apk version"
+            exit 1
+          fi
+          desc=$(git describe --tags --always --dirty)
+          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
+            -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
+          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Build the program with the Go toolchain of the runner. Then the SDK
+      # does not build its own Go toolchain (about 10 minutes). The program
+      # is static, thus it does not need the C library of OpenWrt.
+      - name: Build the program
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          desc=$(git describe --tags --always)
+          go build -trimpath -ldflags="-s -w -X main.version=$desc" \
+            -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGES: cake-autorate-go
+          # The prebuilt program needs no other feeds.
+          NO_DEFAULT_FEEDS: 1
+
+      # The apk file names do not have the architecture. Add it, because
+      # the names of the release files must be unique.
+      - name: Name the packages
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir dist
+          for f in bin/packages/*/action/*.apk; do
+            b=$(basename "$f" .apk)
+            cp "$f" "dist/${b}_${ARCH}.apk"
+          done
+          ls -l dist
+
+      - name: Store packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ matrix.arch }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+  # Install the x86_64 package in an OpenWrt VM and test the service:
+  # start, status file, control socket, reload, invalid configuration, stop.
+  vm:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openwrt-x86_64-openwrt-25.12
+          path: apk
+
+      - name: Start the VM and install the package
+        run: |
+          scripts/openwrt-vm.sh start
+          scripts/openwrt-vm.sh install apk/*.apk
+
+      - name: Test the service
+        run: scripts/openwrt-vm-test.sh
+
+      - name: Stop the VM
+        if: always()
+        run: scripts/openwrt-vm.sh stop
+
+  # Attach the packages to the release, only after all tests passed.
+  release:
+    if: github.event_name == 'release'
+    needs: [package, vm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openwrt-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.apk -R "${{ github.repository }}"

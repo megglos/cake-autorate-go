@@ -173,7 +173,62 @@ go build -o cake-autorate-go .
 GOOS=linux GOARCH=arm64 go build -o cake-autorate-go .
 ```
 
-## OpenWrt service installation
+## OpenWrt package
+
+The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` (apk, OpenWrt 25.12 and later). The CI builds it for `aarch64_cortex-a53` (for example GL-MT6000) and `x86_64`. The package installs:
+
+| File | Content |
+|---|---|
+| `/usr/sbin/cake-autorate-go` | the program |
+| `/etc/config/cake-autorate` | the UCI configuration. The service is disabled at the start |
+| `/etc/init.d/cake-autorate` | the procd service |
+| `/usr/share/cake-autorate/` | the converter from UCI to the configuration file of the program |
+
+The UCI options have the names of the configuration keys (see [Configuration reference](#configuration-reference)). The section `global` has the global keys. Each section `link` is one link. A link has the keys of the download direction with the prefix `dl_` and the keys of the upload direction with the prefix `ul_`. An empty option uses the default value of the program, with these exceptions: `dl_adjust` and `ul_adjust` are `1` if they are not set, and the options `ping_interface` and `ping_source_addr` of the section `global` apply to each link that does not set them. Each link must set the interfaces and the rates. For example:
+
+```
+config global 'global'
+	option enabled '1'
+	option ping_method 'icmp-timestamp'
+
+config link 'wan'
+	option dl_interface 'ifb4wan'
+	option dl_min_rate_kbps '5000'
+	option dl_base_rate_kbps '20000'
+	option dl_max_rate_kbps '80000'
+	option ul_interface 'wan'
+	option ul_min_rate_kbps '5000'
+	option ul_base_rate_kbps '20000'
+	option ul_max_rate_kbps '35000'
+```
+
+The name of the section is the name of the link. Set the option `name` to use a different name. Set `enabled '0'` in a link to stop the control of this link.
+
+At each start, the service writes `/var/etc/cake-autorate.yaml` from the UCI configuration and checks it with `-check-config`. The errors and the warnings go to the system log (`logread -e cake-autorate`). The service writes the status file to `/var/run/cake-autorate/status.json` and listens on the control socket `/var/run/cake-autorate/control.sock`.
+
+```bash
+uci set cake-autorate.global.enabled=1
+uci commit cake-autorate
+/etc/init.d/cake-autorate enable
+/etc/init.d/cake-autorate start
+```
+
+Do not use the package and the service of `setup.sh` at the same time: both change the same shapers.
+
+To build the package on your computer with Docker, run `scripts/openwrt-build.sh`. The package goes to `bin/openwrt/`.
+
+To test the package without a router, use an OpenWrt x86-64 VM (QEMU with KVM). The CI does the same test:
+
+```bash
+scripts/openwrt-build.sh x86_64-openwrt-25.12
+scripts/openwrt-vm.sh start
+scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
+scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop
+scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
+scripts/openwrt-vm.sh stop
+```
+
+## OpenWrt service installation with setup.sh
 
 Run [`setup.sh`](setup.sh) on your router. It installs the binary, makes a default config and makes a procd service:
 
