@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -234,4 +235,36 @@ func TestServeControlConn_RejectsLongLine(t *testing.T) {
 	if !strings.HasPrefix(answer, "error: no complete command") || a.paused {
 		t.Errorf("answer %q, paused %v", answer, a.paused)
 	}
+}
+
+func TestListenPrivate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "control.sock")
+	// The umask applies to the full program, thus listenPrivate must not
+	// change it.
+	old := syscall.Umask(0o022)
+	defer syscall.Umask(old)
+	ln, created, err := listenPrivate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if got := syscall.Umask(0o022); got != 0o022 {
+		t.Errorf("umask changed to %#o", got)
+	}
+	if created.Mode()&os.ModeSocket == 0 || created.Mode().Perm() != 0o600 {
+		t.Errorf("socket mode: %v", created.Mode())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "control.sock" {
+		t.Errorf("the temporary directory must be removed, got %v", entries)
+	}
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
 }

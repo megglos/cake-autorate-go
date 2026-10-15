@@ -112,6 +112,42 @@ func removeStaleSocket(path string) error {
 	return os.Remove(path)
 }
 
+// listenPrivate creates a Unix socket at path that only the owner can
+// use. It creates the socket in a new directory with mode 0700, sets the
+// mode of the socket to 0600 and then moves the socket to path. Thus, no
+// other user can connect before the mode is correct. Do not change the
+// umask for this: the umask applies to all goroutines of the program.
+// listenPrivate returns the listener and the file info of the socket.
+func listenPrivate(path string) (net.Listener, os.FileInfo, error) {
+	dir, err := os.MkdirTemp(filepath.Dir(path), ".control-")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(dir)
+	tmp := filepath.Join(dir, "s")
+	ln, err := net.Listen("unix", tmp)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Do not let the listener remove a path: the socket moves, and another
+	// program can replace it by a different file.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		ln.Close()
+		return nil, nil, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		ln.Close()
+		return nil, nil, err
+	}
+	created, err := os.Lstat(path)
+	if err != nil {
+		ln.Close()
+		return nil, nil, err
+	}
+	return ln, created, nil
+}
+
 // RunControlSocket listens on the Unix socket at path until ctx ends. Then
 // it removes the socket, but only if it is still the socket that this
 // function created. Only the owner of the socket can connect.
@@ -122,20 +158,8 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	// Create the socket with mode 0600 from the start. A mode change after
-	// the creation leaves a short time in which other users can connect.
-	old := syscall.Umask(0o177)
-	ln, err := net.Listen("unix", path)
-	syscall.Umask(old)
+	ln, created, err := listenPrivate(path)
 	if err != nil {
-		return err
-	}
-	// Do not let the listener remove the path: another program can have
-	// replaced the socket by a different file.
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
-	created, err := os.Lstat(path)
-	if err != nil {
-		ln.Close()
 		return err
 	}
 	go func() {
