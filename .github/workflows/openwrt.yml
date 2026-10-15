@@ -64,6 +64,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Write the version to the Makefile, because the SDK action does not
+      # pass variables to make. apk versions have no "-" (see "apk
+      # version"). A release tag 1.2.0-rc.1 (or v1.2.0-rc.1) gives 1.2.0_rc1.
+      # Other builds get the Makefile version plus _p and the commit count.
+      - name: Set the version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mk=openwrt/cake-autorate-go/Makefile
+          if [ -n "$TAG" ]; then
+            v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
+          else
+            v="$(sed -n 's/^PKG_VERSION:=//p' "$mk")_p$(git rev-list --count HEAD)"
+          fi
+          if ! echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*(_(alpha|beta|pre|rc|p)[0-9]*)?$'; then
+            echo "::error::version $v (from tag \"$TAG\") is not a valid apk version"
+            exit 1
+          fi
+          desc=$(git describe --tags --always --dirty)
+          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
+            -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
+          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk"
+
       - name: Build
         uses: openwrt/gh-action-sdk@v11
         env:

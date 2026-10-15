@@ -22,6 +22,15 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="cake-autorate-sdk-${ARCH//[^A-Za-z0-9_.-]/_}"
 OUT="$REPO/bin/openwrt/$ARCH"
 
+# A container of another checkout builds the source of that checkout.
+if docker container inspect "$NAME" >/dev/null 2>&1; then
+	src=$(docker container inspect -f '{{range .Mounts}}{{if eq .Destination "/feed"}}{{.Source}}{{end}}{{end}}' "$NAME")
+	if [ "$src" != "$REPO" ]; then
+		echo "error: container $NAME builds $src, not $REPO. Remove it: docker rm -f $NAME" >&2
+		exit 1
+	fi
+fi
+
 if ! docker container inspect "$NAME" >/dev/null 2>&1; then
 	docker run -d --name "$NAME" -v "$REPO:/feed:ro" \
 		"openwrt/sdk:$ARCH" sleep infinity >/dev/null
