@@ -118,7 +118,7 @@ Proposal: before the UI work, add per-link overrides in Go (`links[].overrides` 
 
 ## 5. LuCI pages
 
-Menu: **Services → CAKE Autorate (Go)**, with three tabs (LuCI menu entries):
+Menu: **Network → CAKE Autorate (Go)** (Services until #49), with three tabs (LuCI menu entries):
 
 ### 5.1 Configuration
 
@@ -295,6 +295,8 @@ Each phase is a PR, with the Copilot review cycles.
 | L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
 | L3 | Done (2026-10-15): #45 merged (fdcc28d). 9 Copilot cycles, then stopped: the last findings needed values from a manual UCI edit. CI runs 28 Playwright tests in the VM. |
 | L4 | Done (2026-10-15): #47 merged (9947451). 3 Copilot cycles, last one approval (fixes: socket timeout fields sec/usec, error before close, empty answer, focus on refresh, stale check with the browser monotonic clock, timeouts before connect). The status page (tab Status, first tab), pause/resume per direction through the rpcd ucode plugin `cake-autorate` (link name and direction checked, explicit AF_UNIX socket, 5 s timeouts), write ACL for the methods, Overview include 70_cake-autorate.js. Dependency ucode-mod-socket. VM test 50 checks, 41 Playwright tests. Learned: an rpcd reload ends the sessions; a limited rpcd user needs the `unauthenticated` read group (LuCI calls session.access); `socket.connect(path)` with a missing path tries DNS. |
+| L4b | Done (2026-10-16): #48 merged (fbc89d1). 6 Copilot cycles, last one approval (fixes: link names that are Object properties (history in a Map), keyboard access to the samples, selection after the sample is out of the period, pointer to keyboard transition, pointer and keyboard on different graphs). Two SVG graphs per link (rates, delay delta), period 1/5/15 min, gap after 6 s without a status, cursor with the values for the pointer and the keyboard. 51 Playwright tests. |
+| Menu | 2026-10-16: user decision, menu entry moves to Network → CAKE Autorate (Go) (near SQM QoS). PR #49. |
 
 ### L0 decisions and results
 
