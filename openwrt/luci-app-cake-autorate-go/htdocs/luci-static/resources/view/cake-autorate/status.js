@@ -46,6 +46,9 @@ const GAP_SECONDS = 6;
 const GRAPH_WIDTH = 600;
 const GRAPH_HEIGHT = 150;
 
+// The time between two checks of the root qdiscs.
+const QDISC_SECONDS = 10;
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const COLORS = { dl: '#2a7ab8', ul: '#3a9a3a' };
@@ -67,6 +70,12 @@ const callPause = rpc.declare({
 	object: 'cake-autorate',
 	method: 'pause',
 	params: [ 'link', 'dir' ]
+});
+
+const callQdisc = rpc.declare({
+	object: 'cake-autorate',
+	method: 'qdisc',
+	params: [ 'interface' ]
 });
 
 const callResume = rpc.declare({
@@ -414,11 +423,42 @@ return view.extend({
 		]);
 	},
 
+	// The root qdisc of each interface of the links: the answer of the
+	// method "qdisc" ({kind} or {error}). The page checks the interfaces
+	// on the load and each QDISC_SECONDS.
+	qdiscs: new Map(),
+	qdiscChecked: 0,
+
+	// True if the menu has the page of SQM QoS (luci-app-sqm).
+	hasSqm: false,
+
+	// Gets the root qdisc of each interface in the status. An interface
+	// without an answer (for example, no permission) has no entry.
+	checkQdiscs: function(status) {
+		const ifaces = new Set();
+		for (const ls of (status && Array.isArray(status.links)) ? status.links : [])
+			for (const [ key ] of DIRECTIONS)
+				if (ls[key] && ls[key].interface)
+					ifaces.add(String(ls[key].interface));
+		this.qdiscChecked = performance.now();
+		return Promise.all(Array.from(ifaces, (i) =>
+			L.resolveDefault(callQdisc(i), null).then((res) => [ i, res ])
+		)).then((list) => {
+			this.qdiscs = new Map(list.filter((e) => e[1] && (e[1].kind || e[1].error)));
+		});
+	},
+
 	load: function() {
 		return Promise.all([
 			readStatus(),
-			L.resolveDefault(callAccess('ubus', 'cake-autorate', 'pause'), false)
-		]);
+			L.resolveDefault(callAccess('ubus', 'cake-autorate', 'pause'), false),
+			L.resolveDefault(ui.menu.load(), null)
+		]).then(L.bind(function(data) {
+			const network = data[2] && data[2].children && data[2].children.admin &&
+				data[2].children.admin.children && data[2].children.admin.children.network;
+			this.hasSqm = !!(network && network.children && network.children.sqm);
+			return this.checkQdiscs(data[0].status).then(() => data);
+		}, this));
 	},
 
 	// Runs pause or resume and shows the answer of the program.
@@ -463,6 +503,29 @@ return view.extend({
 				'click': ui.createHandlerFn(this, 'handleControl', verb, link, dir)
 			}, st.paused ? _('Resume') : _('Pause')));
 		return E('span', {}, nodes);
+	},
+
+	// Returns a warning for each direction with rate control whose
+	// interface has no CAKE as root qdisc.
+	renderCakeWarnings: function(ls) {
+		const nodes = [];
+		for (const [ key, dir, title ] of DIRECTIONS) {
+			const st = ls[key] || {};
+			const q = this.qdiscs.get(String(st.interface));
+			if (!st.adjust || !q || q.kind == 'cake')
+				continue;
+			const problem = q.kind
+				? _('%s: the interface %s has no CAKE (root qdisc: %s). The program cannot change the rate.').format(title, st.interface, q.kind)
+				: _('%s: cannot read the qdisc of the interface %s: %s').format(title, st.interface, q.error);
+			nodes.push(E('div', { 'class': 'alert-message warning', 'data-cake-warning': dir }, [
+				E('p', {}, text(problem)),
+				E('p', {}, this.hasSqm
+					? [ _('Set up CAKE on this interface, for example with'), ' ',
+						E('a', { 'href': L.url('admin/network/sqm') }, _('SQM QoS')), '.' ]
+					: _('Set up CAKE on this interface, for example with SQM QoS (package luci-app-sqm).'))
+			]));
+		}
+		return nodes;
 	},
 
 	renderLink: function(ls) {
@@ -526,6 +589,7 @@ return view.extend({
 				text(ls.name), ' ',
 				E('span', { 'class': 'label', 'title': state[1], 'data-state': ls.state }, text(state[0]))
 			]),
+			...this.renderCakeWarnings(ls),
 			E('table', { 'class': 'table' }, rows),
 			this.renderGraphs(ls.name),
 			E('table', { 'class': 'table' }, refl)
@@ -552,6 +616,10 @@ return view.extend({
 
 	refresh: function() {
 		return readStatus().then(L.bind(function(data) {
+			if (performance.now() - this.qdiscChecked >= QDISC_SECONDS * 1000)
+				return this.checkQdiscs(data.status).then(() => data);
+			return data;
+		}, this)).then(L.bind(function(data) {
 			// The refresh makes new buttons and graphs. Keep the keyboard
 			// focus on the button of the same link and direction, or on the
 			// same graph, and keep the cursor.

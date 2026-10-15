@@ -142,6 +142,16 @@ a=$(rpc pause '{"link":"wan"}')
 t=$(( $(date +%s) - t0 ))
 vm 'kill -CONT $(pidof cake-autorate-go)'
 case $a in *'No answer from the service: '*) [ "$t" -le 10 ] && ok "rpc timeout (${t}s)" || fail "rpc timeout took ${t}s" ;; *) fail "rpc timeout (answer: $a)" ;; esac
+a=$(rpc qdisc '{"interface":"eth1"}')
+case $a in *'"kind": "cake"'*) ok "rpc qdisc with CAKE" ;; *) fail "rpc qdisc with CAKE (answer: $a)" ;; esac
+a=$(rpc qdisc '{"interface":"lo"}')
+case $a in *'"kind": "noqueue"'*) ok "rpc qdisc without CAKE" ;; *) fail "rpc qdisc without CAKE (answer: $a)" ;; esac
+a=$(rpc qdisc '{"interface":"nosuch0"}')
+case $a in *'Cannot find device'*) ok "rpc qdisc of a missing interface" ;; *) fail "rpc qdisc of a missing interface (answer: $a)" ;; esac
+# A shell character in the name must not run a command.
+a=$(rpc qdisc '{"interface":"lo;touch /tmp/qdisc-injected"}')
+case $a in *'Invalid interface name'*) ok "rpc qdisc invalid interface name" ;; *) fail "rpc qdisc invalid interface name (answer: $a)" ;; esac
+check "rpc qdisc runs no other command" '[ ! -e /tmp/qdisc-injected ]'
 
 echo "== reload"
 p1=$(pid)
@@ -217,6 +227,7 @@ access ubus cake-autorate pause && ok "ACL: pause" || fail "ACL: pause"
 access ubus cake-autorate resume && ok "ACL: resume" || fail "ACL: resume"
 access file /etc/shadow read && fail "ACL: other files are not readable" || ok "ACL: other files are not readable"
 ACL_USER=cakeread access file /var/run/cake-autorate/status.json read && ok "ACL: read-only user reads the status file" || fail "ACL: read-only user reads the status file"
+ACL_USER=cakeread access ubus cake-autorate qdisc && ok "ACL: read-only user reads the qdisc" || fail "ACL: read-only user reads the qdisc"
 ACL_USER=cakeread access ubus cake-autorate pause && fail "ACL: read-only user cannot pause" || ok "ACL: read-only user cannot pause"
 vm 'uci delete rpcd.cakeacl && uci delete rpcd.cakeread && uci commit rpcd && /etc/init.d/rpcd reload'
 
