@@ -511,7 +511,7 @@ Set `status_file` to a path, for example `/var/run/cake-autorate/status.json`. T
 
 The program writes the file each second. Thus, use a path on a RAM file system, for example `/var/run` on OpenWrt, so that the flash memory does not wear out.
 
-The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction the shaper rate, the measured rate, the load, the last delay delta, the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
+The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
 
 ### Control socket
 
@@ -523,7 +523,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
 | `list` | Answer with the link names. |
 
-Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. A recording contains the pause and resume events, thus a replay gives the same decisions.
+Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

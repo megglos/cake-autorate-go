@@ -26,8 +26,11 @@ const statusInterval = time.Second
 
 // DirStatus is the status of one direction of a link.
 type DirStatus struct {
-	Interface    string  `json:"interface"`
-	Adjust       bool    `json:"adjust"`
+	Interface string `json:"interface"`
+	Adjust    bool   `json:"adjust"`
+	// Paused is true while a user paused the rate control of the
+	// direction through the control socket.
+	Paused       bool    `json:"paused"`
 	ShaperKbps   float64 `json:"shaper_kbps"`
 	AchievedKbps float64 `json:"achieved_kbps"`
 	LoadPercent  float64 `json:"load_percent"`
@@ -82,6 +85,7 @@ func (c *Core) Snapshot() LinkStatus {
 		out := DirStatus{
 			Interface:        dc.Interface,
 			Adjust:           dc.Adjust,
+			Paused:           ds.paused,
 			ShaperKbps:       ds.shaperRateKbps,
 			AchievedKbps:     ds.achievedKbps,
 			LoadPercent:      ds.loadPercent * 100,
