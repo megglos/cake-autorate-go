@@ -18,6 +18,13 @@ const ERROR_FILE = '/var/run/cake-autorate/config-error';
 const IFNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$/;
 const LINK_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
+// The default reflectors for ICMP echo. They do not reply to ICMP
+// timestamp requests (config.go, noTimestampReply).
+const ECHO_REFLECTORS = [
+	'1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4',
+	'9.9.9.9', '149.112.112.112', '208.67.222.222', '208.67.220.220'
+];
+
 const DIRECTIONS = [
 	[ 'dl', _('Download') ],
 	[ 'ul', _('Upload') ]
@@ -77,6 +84,53 @@ function pair(s, low, lowDef, high, highDef, lowMsg, highMsg) {
 	addCheck(s.children.find(o => o.option == high), check(highMsg));
 }
 
+// Returns the list value v as an array.
+function toList(v) {
+	if (v == null || v === '')
+		return [];
+	return Array.isArray(v) ? v : [ v ];
+}
+
+// Returns an error if the ping method is icmp-timestamp and no reflector
+// replies to ICMP timestamp requests. The program does not start then. An
+// empty list uses the default list of the method, thus it is correct.
+function timestampError(method, reflectors, where) {
+	if (method != 'icmp-timestamp' || reflectors.length == 0)
+		return true;
+	if (reflectors.some((r) => !ECHO_REFLECTORS.includes(r)))
+		return true;
+	return _('%s: no reflector replies to ICMP timestamp requests. Add other reflectors, or remove all reflectors to use the default list for icmp-timestamp.').format(where);
+}
+
+// Checks the global ping method with the reflectors of all enabled links.
+// A link without a ping method uses the global one, and a link without
+// reflectors uses the global reflectors.
+function validateGlobalPingMethod(sid, value) {
+	const method = value || 'icmp';
+	const globalRefl = toList(this.section.formvalue(sid, 'reflectors'));
+	let r = true;
+	for (const l of uci.sections('cake-autorate', 'link')) {
+		if (r !== true)
+			break;
+		if (l.enabled == '0' || l.ping_method)
+			continue;
+		const refl = toList(l.reflectors);
+		r = timestampError(method, refl.length ? refl : globalRefl,
+			_('Link "%s"').format(l.name || l['.name']));
+	}
+	return r;
+}
+
+// Checks the ping method of a link with its reflectors.
+function validateLinkPingMethod(sid, value) {
+	const g = uci.sections('cake-autorate', 'global')[0] || {};
+	const method = value || g.ping_method || 'icmp';
+	let refl = toList(this.section.formvalue(sid, 'reflectors'));
+	if (refl.length == 0)
+		refl = toList(g.reflectors);
+	return timestampError(method, refl, _('This link'));
+}
+
 function validateIfname(sid, value) {
 	if (isEmpty(value) || IFNAME_RE.test(value))
 		return true;
@@ -122,8 +176,9 @@ function otherInterfaces(sid) {
 	return used;
 }
 
-function globalSection(m) {
-	const s = m.section(form.NamedSection, 'global', 'global', _('Service'));
+// sid is the name of the global section.
+function globalSection(m, sid) {
+	const s = m.section(form.NamedSection, sid, 'global', _('Service'));
 	s.addremove = false;
 
 	s.tab('general', _('General'));
@@ -146,6 +201,7 @@ function globalSection(m) {
 	o.value('', _('Default (icmp)'));
 	o.value('icmp', _('ICMP echo (icmp)'));
 	o.value('icmp-timestamp', _('ICMP timestamp (icmp-timestamp)'));
+	o.validate = validateGlobalPingMethod;
 
 	number(s, 'general', 'pinger_count', _('Pingers'), 6, 'and(uinteger,min(1))',
 		_('The number of reflectors that the service pings at the same time.'));
@@ -249,7 +305,12 @@ function globalSection(m) {
 
 	flag(s, 'logging', 'log_to_file', _('Log to a file'), true);
 	o = field(s, 'logging', form.Value, 'log_file_path', _('Log file'), '/var/log/cake-autorate.log');
-	o.datatype = 'string';
+	// The program stops at the start if it cannot open the file.
+	o.validate = function(sid, value) {
+		if (isEmpty(value) || /^\/[^\0]*[^\/]$/.test(value))
+			return true;
+		return _('Use an absolute path of a file, for example /var/log/cake-autorate.log');
+	};
 	number(s, 'logging', 'log_file_max_size_kb', _('Maximum log file size (KB)'), 2000, 'and(uinteger,min(1))');
 	flag(s, 'logging', 'debug', _('Debug messages'), false);
 }
@@ -409,6 +470,7 @@ function linkSection(m) {
 	o.value('', _('Global value'));
 	o.value('icmp', _('ICMP echo (icmp)'));
 	o.value('icmp-timestamp', _('ICMP timestamp (icmp-timestamp)'));
+	o.validate = validateLinkPingMethod;
 	o.modalonly = true;
 
 	o = s.taboption('pings', form.Value, 'pinger_count', _('Pingers'));
@@ -463,7 +525,10 @@ return view.extend({
 		const m = new form.Map('cake-autorate', _('CAKE Autorate (Go)'),
 			_('cake-autorate-go changes the rate of CAKE shapers to follow the capacity of a variable link (for example LTE, 5G or Starlink). Empty fields use the default value of the program.'));
 
-		globalSection(m);
+		// The converter accepts a global section with any name, also an
+		// anonymous one. Without a global section, add one.
+		const global = uci.sections('cake-autorate', 'global')[0];
+		globalSection(m, global ? global['.name'] : uci.add('cake-autorate', 'global', 'global'));
 		linkSection(m);
 
 		return m.render().then(function(node) {
