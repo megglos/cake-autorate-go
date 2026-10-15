@@ -448,7 +448,7 @@ The file is JSON. The key `schema` is the version of the format. For each link, 
 
 ### Control socket
 
-Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock`. The program then listens on this Unix socket. Only the owner of the socket can connect. A client sends one line and reads one line as the answer, `ok` or `error: MESSAGE`:
+Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock`. The program then listens on this Unix socket. With the control socket, each link name must have 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `.` and `-`. Only the owner of the socket can connect. A client sends one line and reads one line as the answer, `ok` or `error: MESSAGE`:
 
 | Command | Effect |
 |---|---|

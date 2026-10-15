@@ -652,8 +652,21 @@ func TestValidate_LinkNameForControlSocket(t *testing.T) {
 		t.Errorf("a space is fine without a control socket: %v", err)
 	}
 	cfg.ControlSocket = "/tmp/x.sock"
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "contains a space") {
-		t.Errorf("expected a space error, got: %v", err)
+	for _, name := range []string{"mobile wan", strings.Repeat("a", 65), "wän", "a/b"} {
+		cfg.Links[0].Name = name
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "with control_socket") {
+			t.Errorf("%q: expected a name error, got: %v", name, err)
+		}
+	}
+	for _, name := range []string{"wan5g", strings.Repeat("a", 64), "fiber_1.2-x"} {
+		cfg.Links[0].Name = name
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%q: unexpected error: %v", name, err)
+		}
+	}
+	// The longest command with the longest name fits in the limit.
+	if n := len("resume " + strings.Repeat("a", 64) + " dl\n"); n > maxControlLine {
+		t.Errorf("longest command has %d bytes, limit %d", n, maxControlLine)
 	}
 }
 

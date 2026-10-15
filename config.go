@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -512,6 +511,10 @@ func (c *Config) Warnings() []string {
 // interpolated into sysfs paths or tc arguments.
 var ifnameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 
+// controlNameRe matches the link names that the control socket can address.
+// The longest command with such a name is much shorter than maxControlLine.
+var controlNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
 // validateIfname checks that name is a valid Linux network interface name.
 func validateIfname(name string) error {
 	if !ifnameRe.MatchString(name) {
@@ -535,8 +538,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("link name %q is used more than one time", link.Name)
 		}
 		seen[link.Name] = true
-		if c.ControlSocket != "" && strings.ContainsFunc(link.Name, unicode.IsSpace) {
-			return fmt.Errorf("link name %q contains a space: the control socket cannot address it", link.Name)
+		if c.ControlSocket != "" && !controlNameRe.MatchString(link.Name) {
+			return fmt.Errorf("link name %q: with control_socket, use 1 to 64 characters of [A-Za-z0-9_.-]", link.Name)
 		}
 		for _, dc := range []struct {
 			name string
