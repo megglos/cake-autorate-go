@@ -24,16 +24,18 @@ function command(line) {
 	let s = socket.create(socket.AF_UNIX, socket.SOCK_STREAM);
 	if (!s)
 		return { error: 'Cannot create a socket: ' + socket.error() };
+
+	// Set the timeouts before connect: a connect to a full queue also
+	// waits. The socket module reads the fields "sec" and "usec".
+	const tv = { sec: TIMEOUT, usec: 0 };
+	s.setopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, tv);
+	s.setopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, tv);
+
 	if (!s.connect({ family: socket.AF_UNIX, path: CONTROL_SOCKET })) {
 		const err = socket.error();
 		s.close();
 		return { error: 'The service does not run: ' + err };
 	}
-
-	// The socket module reads the fields "sec" and "usec".
-	const tv = { sec: TIMEOUT, usec: 0 };
-	s.setopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, tv);
-	s.setopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, tv);
 
 	let answer = null;
 	if (s.send(line + '\n') != null)

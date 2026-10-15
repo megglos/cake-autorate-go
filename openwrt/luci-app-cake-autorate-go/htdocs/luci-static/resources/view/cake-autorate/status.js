@@ -15,8 +15,10 @@
 const STATUS_FILE = '/var/run/cake-autorate/status.json';
 const ERROR_FILE = '/var/run/cake-autorate/config-error';
 
-// The program writes the status file each second. An older file shows
-// that the program does not write it.
+// The program writes the status file each second. If the time "updated"
+// in the file does not change for this time, the program does not write it.
+// The page measures this time with the clock of the browser, because the
+// clock of the router can be different.
 const STALE_SECONDS = 10;
 
 const DIRECTIONS = [
@@ -83,6 +85,21 @@ function readStatus() {
 return view.extend({
 	// True if the user can call the rpcd methods (the write ACL).
 	canControl: false,
+
+	// The last value of "updated" and the time (performance.now()) when the
+	// page read it first.
+	lastUpdated: null,
+	lastChange: 0,
+
+	// Returns true if "updated" did not change for STALE_SECONDS.
+	isStale: function(updated) {
+		const now = performance.now();
+		if (updated !== this.lastUpdated) {
+			this.lastUpdated = updated;
+			this.lastChange = now;
+		}
+		return now - this.lastChange > STALE_SECONDS * 1000;
+	},
 
 	load: function() {
 		return Promise.all([
@@ -208,7 +225,7 @@ return view.extend({
 
 		const nodes = [];
 		const updated = Date.parse(s.updated);
-		if (!isNaN(updated) && Date.now() - updated > STALE_SECONDS * 1000)
+		if (this.isStale(s.updated))
 			nodes.push(E('div', { 'class': 'alert-message warning' },
 				text(_('The status is from %s. The program does not write the status file.').format(new Date(updated).toLocaleString()))));
 		nodes.push(E('p', {}, text(_('Version %s, started %s').format(s.version, new Date(s.started).toLocaleString()))));

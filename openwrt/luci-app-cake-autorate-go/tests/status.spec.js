@@ -182,20 +182,39 @@ test('page shows a stopped service and the configuration error', async ({ page }
 	}
 });
 
-test('page warns if the status file is old', async ({ page }) => {
-	await page.goto(PAGE);
-	await expect(page.locator('.cbi-section[data-link="wan"]')).toBeVisible();
-	// A stopped process does not write the status file and does not
-	// remove it.
-	vm('kill -STOP $(pidof cake-autorate-go)');
-	try {
-		await expect(page.getByText('The program does not write the status file.')).toBeVisible({ timeout: 30000 });
-	}
-	finally {
-		vm('kill -CONT $(pidof cake-autorate-go)');
-	}
-	await expect(page.getByText('The program does not write the status file.')).toHaveCount(0, { timeout: 15000 });
-});
+// Moves the clock (Date) of the browser by ms. Thus the clock of the
+// browser and of the router are different.
+async function shiftClock(page, ms) {
+	await page.addInitScript((off) => {
+		const RealDate = Date;
+		globalThis.Date = class extends RealDate {
+			constructor(...a) { super(...(a.length ? a : [ RealDate.now() + off ])); }
+			static now() { return RealDate.now() + off; }
+		};
+	}, ms);
+}
+
+for (const [ name, offset ] of [ [ 'the same', 0 ], [ 'a later', 3600000 ], [ 'an earlier', -3600000 ] ]) {
+	test(`page warns if the status file is old, with ${name} browser clock`, async ({ page }) => {
+		await shiftClock(page, offset);
+		await page.goto(PAGE);
+		const warning = page.getByText('The program does not write the status file.');
+		await expect(page.locator('.cbi-section[data-link="wan"]')).toBeVisible();
+		// No warning while the program writes the file.
+		await page.waitForTimeout(12000);
+		await expect(warning).toHaveCount(0);
+		// A stopped process does not write the status file and does not
+		// remove it.
+		vm('kill -STOP $(pidof cake-autorate-go)');
+		try {
+			await expect(warning).toBeVisible({ timeout: 30000 });
+		}
+		finally {
+			vm('kill -CONT $(pidof cake-autorate-go)');
+		}
+		await expect(warning).toHaveCount(0, { timeout: 15000 });
+	});
+}
 
 test('a user with only read permission sees no buttons', async ({ browser }) => {
 	const page = await browser.newPage();
