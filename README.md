@@ -27,7 +27,7 @@ Go is a good choice for these reasons:
 
 - **Goroutines** replace the Bash background processes one to one.
 - **Cross-compilation** to ARM is easy (`GOARCH=arm64`).
-- **One static binary**: the router needs no other programs.
+- **One static binary**: the router needs no other programs for the usual operation. Only if netlink fails, the program uses `tc` (iproute2).
 - **Channels** replace the FIFOs.
 
 ## Differences from the original
@@ -137,9 +137,9 @@ The Go version also shows the types of decisions (bufferbloat, high load, decay)
 | CPU (2 WAN) | **Go (2.1x)** | 5.2 % vs 11.0 %: netlink, no new processes |
 | Rate adjustments | **Go (1.5–2x)** | More rate adjustments each second |
 | Decisions | **Go (3–7x)** | 5 to 7.7 decisions/s vs 1.1 to 1.5 decisions/s |
-| Processes | **Go** | 1 vs 5 to 12 processes (increases with the interfaces) |
+| Processes | **Go** | 1 vs 6 to 12 processes (increases with the interfaces) |
 | Multi-WAN | **Go** | Goroutines vs a full set of processes for each interface |
-| Installation | **Go** | One static binary, no Bash, awk or fping |
+| Installation | **Go** | One static binary, no Bash, awk or fping (`tc` only if netlink fails) |
 | Maturity | **Bash** | Tested by many users for a long time |
 
 ## Features
@@ -454,7 +454,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `links[].*.min_rate_kbps` | `5000` | Minimum bandwidth (kbit/s) |
 | `links[].*.base_rate_kbps` | `20000` | Usual bandwidth (kbit/s) |
 | `links[].*.max_rate_kbps` | `80000`/`35000` | Maximum bandwidth (DL/UL, kbit/s) |
-| `links[].reflectors` | 8 public DNS servers | ICMP ping targets for the delay measurement |
+| `links[].reflectors` | the default list for the `ping_method` (see [Reflectors](#reflectors) and [Ping method](#ping-method)) | ICMP ping targets for the delay measurement |
 | `links[].ping_interface` | *(none)* | Send the ICMP packets through this interface (multi-WAN) |
 | `links[].ping_source_addr` | *(none)* | Source IP address of the ICMP packets |
 | `pinger_count` | `6` | Number of reflectors that the program pings at the same time |
