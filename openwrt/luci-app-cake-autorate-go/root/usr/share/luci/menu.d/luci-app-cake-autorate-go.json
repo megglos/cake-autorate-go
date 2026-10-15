@@ -1,5 +1,5 @@
 {
-	"admin/services/cake-autorate": {
+	"admin/network/cake-autorate": {
 		"title": "CAKE Autorate (Go)",
 		"order": 60,
 		"action": {
@@ -11,7 +11,7 @@
 		}
 	},
 
-	"admin/services/cake-autorate/status": {
+	"admin/network/cake-autorate/status": {
 		"title": "Status",
 		"order": 10,
 		"action": {
@@ -20,7 +20,7 @@
 		}
 	},
 
-	"admin/services/cake-autorate/config": {
+	"admin/network/cake-autorate/config": {
 		"title": "Configuration",
 		"order": 20,
 		"action": {

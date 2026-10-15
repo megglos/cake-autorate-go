@@ -178,7 +178,7 @@ case $a in *'The service does not run'*) ok "rpc with a stopped service" ;; *) f
 echo "== LuCI app"
 for v in cake-autorate/config cake-autorate/status; do
 	check "web server sends the view $v" "wget -qO- http://127.0.0.1/luci-static/resources/view/$v.js | grep -q view.extend"
-	check "menu has the view $v" "jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e '@[\"admin/services/$v\"].action.path' | grep -qx $v"
+	check "menu has the view $v" "jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e '@[\"admin/network/$v\"].action.path' | grep -qx $v"
 done
 check "web server sends the Overview section" 'wget -qO- http://127.0.0.1/luci-static/resources/view/status/include/70_cake-autorate.js | grep -q baseclass.extend'
 check "rpcd has the plugin" 'ubus list cake-autorate >/dev/null'

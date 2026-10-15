@@ -219,7 +219,7 @@ Do not use the package and the service of `setup.sh` at the same time: both chan
 
 ### LuCI app
 
-The package `luci-app-cake-autorate-go` adds the page **Services → CAKE Autorate (Go)** with two tabs.
+The package `luci-app-cake-autorate-go` adds the page **Network → CAKE Autorate (Go)** with two tabs.
 
 The tab **Status** shows each link: the state (Running, Idle or Stall), and for each direction the shaper rate, the measured rate, the load, the delay delta and its threshold, the number of pings with a high delay and the number of rate changes. It also shows the reflectors with their baseline RTT and missed replies. Two graphs for each link show the shaper rates and the measured rates, and the delay deltas and their thresholds, for the last 1, 5 or 15 minutes. A pointer on a graph shows the values at that time. With the keyboard, select a graph with Tab, then select a sample with the arrow keys, Home and End. The browser keeps the data of the graphs only while the page is open: a reload starts with empty graphs. The page reads the status file each 2 seconds. The button **Pause** sets the shaper of a direction to the base rate and stops the rate changes. **Resume** starts the control again. The pause stops at a restart of the service. Only a user with write permission for the app sees the buttons. The **Overview** page of LuCI shows one row for each link: the state, the shaper rates, the delay deltas and the pauses.
 
