@@ -808,4 +808,15 @@ func TestCalibrateSession_LinkOverrides(t *testing.T) {
 	if cfg.PingerCount != 2 {
 		t.Errorf("pinger_count = %d, want the link value 2", cfg.PingerCount)
 	}
+	res, _, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := writeCalConfig(&out, dir, cfg, res, res.propose(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "\npinger_count: 2\n") {
+		t.Errorf("the config file must have the link value of pinger_count:\n%s", out.String())
+	}
 }
