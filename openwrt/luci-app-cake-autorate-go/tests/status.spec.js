@@ -231,6 +231,283 @@ test('a user with only read permission sees no buttons', async ({ browser }) => 
 	}
 });
 
+// Sends one command to the control socket of the program.
+function control(line) {
+	vm(`ucode -e 'import * as socket from "socket"; let s = socket.connect("/var/run/cake-autorate/control.sock"); s.send("${line}\\n"); s.recv(256);'`);
+}
+
+// Returns the points of a series path as [ [ command, x, y ], ... ].
+async function points(page, kind, series) {
+	const d = await page.locator(`.cbi-section[data-link="wan"] [data-graph="${kind}"] path[data-series="${series}"]`).getAttribute('d');
+	return [ ...(d || '').matchAll(/([ML])(-?[\d.]+) (-?[\d.]+)/g) ].map((m) => [ m[1], +m[2], +m[3] ]);
+}
+
+test('graphs show the rates and the delay delta of a link', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	await expect(link.locator('[data-graph="rate"] svg')).toBeVisible();
+	await expect(link.locator('[data-graph="delay"] svg')).toBeVisible();
+	for (const s of [ 'dl-shaper', 'dl-achieved', 'ul-shaper', 'ul-achieved' ])
+		await expect(link.locator(`[data-graph="rate"] path[data-series="${s}"]`)).toHaveCount(1);
+	for (const s of [ 'dl-delta', 'dl-threshold', 'ul-delta', 'ul-threshold' ])
+		await expect(link.locator(`[data-graph="delay"] path[data-series="${s}"]`)).toHaveCount(1);
+	// The page adds one sample for each refresh.
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+	await expect(link.getByText('Collecting data…')).toHaveCount(0);
+	// The newest sample is at the right side of the graph.
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p[p.length - 1][1]).toBeGreaterThan(590);
+	expect(p[0][1]).toBeLessThan(p[p.length - 1][1]);
+});
+
+test('the y axis of the rate graph fits the rates', async ({ page }) => {
+	// A pause sets the base rates: 20 Mbit/s download, 12 Mbit/s upload.
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+		await expect(rate).toHaveAttribute('data-max', '20');
+		await expect(rate.locator('.graph-max')).toHaveText('20 Mbit/s');
+		// The graph is 150 units high: 20 Mbit/s is at the top (y 0),
+		// 12 Mbit/s at y 60.
+		for (const [ , , y ] of await points(page, 'rate', 'dl-shaper'))
+			expect(y).toBeCloseTo(0, 1);
+		for (const [ , , y ] of await points(page, 'rate', 'ul-shaper'))
+			expect(y).toBeCloseTo(60, 1);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the cursor shows the values of a sample and stays after a refresh', async ({ page }) => {
+	// A pause sets the base rates: 20 Mbit/s download, 12 Mbit/s upload.
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		const tip = rate.locator('.graph-tip');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+		await expect(tip).toBeHidden();
+
+		const box = await rate.locator('svg').boundingBox();
+		await page.mouse.move(box.x + box.width * 0.99, box.y + box.height / 2);
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Download shaper: 20.0 Mbit/s');
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+		await expect(tip).toContainText(/\d+ s ago/);
+		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(1);
+
+		// A refresh makes a new graph with the cursor at the same position.
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+
+		// Only the graph under the pointer shows a cursor.
+		await expect(page.locator('[data-graph="delay"] .graph-tip')).toBeHidden();
+
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
+		await expect(tip).toBeHidden();
+		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(0);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the keyboard selects a sample and the selection stays after a refresh', async ({ page }) => {
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		const plot = rate.locator('svg');
+		const tip = rate.locator('.graph-tip');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(4);
+
+		// The focus selects the newest sample.
+		await plot.focus();
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+		const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+		const newest = await ago();
+
+		// Home selects the oldest sample, ArrowRight the next one.
+		await page.keyboard.press('Home');
+		const oldest = await ago();
+		expect(oldest).toBeGreaterThan(newest);
+		await page.keyboard.press('ArrowRight');
+		const next = await ago();
+		expect(next).toBeLessThan(oldest);
+
+		// A refresh keeps the focus and the selected sample: the sample is
+		// older now, not the newest one.
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(plot).toBeFocused();
+		await expect(tip).toBeVisible();
+		expect(await ago()).toBeGreaterThanOrEqual(next);
+
+		// Without the focus, there is no cursor.
+		await page.locator('#cake-autorate-period').focus();
+		await expect(tip).toBeHidden();
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the arrow keys start from the shown sample after the selected one is too old', async ({ page }) => {
+	// The graph must be full for one minute.
+	test.setTimeout(150000);
+	await page.goto(PAGE);
+	await page.selectOption('#cake-autorate-period', '60');
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	const tip = rate.locator('.graph-tip');
+	const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+	// Wait until the oldest sample is at the left side of the graph.
+	await expect.poll(async () => {
+		const p = await points(page, 'rate', 'dl-shaper');
+		return p.length ? p[0][1] : 600;
+	}, { timeout: 90000, intervals: [ 2000 ] }).toBeLessThan(25);
+
+	await rate.locator('svg').focus();
+	await page.keyboard.press('Home');
+	// Two refreshes: the selected sample is out of the period now. The
+	// cursor shows the oldest sample in the period.
+	for (let i = 0; i < 2; i++) {
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	}
+	const shown = await ago();
+	expect(shown).toBeGreaterThanOrEqual(55);
+	// ArrowRight selects the next sample, not one near the newest.
+	await page.keyboard.press('ArrowRight');
+	const next = await ago();
+	expect(next).toBeLessThan(shown);
+	expect(next).toBeGreaterThanOrEqual(shown - 5);
+});
+
+test('the arrow keys start from the sample under the pointer', async ({ page }) => {
+	await page.goto(PAGE);
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	const plot = rate.locator('svg');
+	const tip = rate.locator('.graph-tip');
+	const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(8);
+
+	// Point to the second oldest sample, then use the keyboard.
+	const box = await plot.boundingBox();
+	const x = (await points(page, 'rate', 'dl-shaper'))[1][1];
+	await page.mouse.move(box.x + x / 600 * box.width, box.y + box.height / 2);
+	await expect(tip).toBeVisible();
+	const shown = await ago();
+	expect(shown).toBeGreaterThanOrEqual(10);
+	await plot.focus();
+	await page.keyboard.press('ArrowRight');
+	const next = await ago();
+	expect(next).toBeLessThan(shown);
+	expect(next).toBeGreaterThanOrEqual(shown - 5);
+});
+
+test('the pointer on one graph does not change the selection of the other graph', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	const rate = link.locator('[data-graph="rate"]');
+	const delay = link.locator('[data-graph="delay"]');
+	const ago = async (g) => +(await g.locator('.graph-tip').textContent()).match(/(\d+) s ago/)[1];
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(8);
+
+	// Select the oldest sample of Rates, then move the pointer over Delay
+	// delta and away.
+	await rate.locator('svg').focus();
+	await page.keyboard.press('Home');
+	const oldest = await ago(rate);
+	const box = await delay.locator('svg').boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
+	await expect(delay.locator('.graph-tip')).toBeHidden();
+	await expect(rate.locator('.graph-tip')).toBeVisible();
+	// The same sample: a refresh can add 2 seconds to its age.
+	const still = await ago(rate);
+	expect(still).toBeGreaterThanOrEqual(oldest);
+	expect(still).toBeLessThanOrEqual(oldest + 4);
+	await page.keyboard.press('ArrowRight');
+	const next = await ago(rate);
+	expect(next).toBeLessThan(still);
+	expect(next).toBeGreaterThanOrEqual(still - 5);
+
+	// With the pointer over Rates, Tab to Delay delta: Delay delta has a
+	// selection, also after the pointer leaves Rates.
+	const rbox = await rate.locator('svg').boundingBox();
+	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height / 2);
+	await page.keyboard.press('Tab');
+	await expect(delay.locator('svg')).toBeFocused();
+	await page.keyboard.press('Home');
+	const delayOldest = await ago(delay);
+	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height + 200);
+	await expect(rate.locator('.graph-tip')).toBeHidden();
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	const delayStill = await ago(delay);
+	expect(delayStill).toBeGreaterThanOrEqual(delayOldest);
+	expect(delayStill).toBeLessThanOrEqual(delayOldest + 4);
+});
+
+test('a link name that is an Object property has graphs', async ({ page }) => {
+	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
+	try {
+		await expect.poll(() => vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].name" 2>/dev/null || true').trim(),
+			{ timeout: 30000 }).toBe('constructor');
+		await page.goto(PAGE);
+		const link = page.locator('.cbi-section[data-link="constructor"]');
+		await expect(link.locator('[data-graph="rate"] svg')).toBeVisible();
+		await expect.poll(async () => {
+			const d = await link.locator('path[data-series="dl-shaper"]').getAttribute('d');
+			return (d || '').split('L').length;
+		}, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the graph period changes the time axis and stays after a refresh', async ({ page }) => {
+	await page.goto(PAGE);
+	const start = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"] .graph-start');
+	await expect(start).toHaveText('-5 min');
+	await page.selectOption('#cake-autorate-period', '60');
+	await expect(start).toHaveText('-1 min');
+	// Wait for a refresh: it makes a new graph.
+	const old = await start.elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	await expect(start).toHaveText('-1 min');
+	await expect(page.locator('#cake-autorate-period')).toHaveValue('60');
+});
+
+test('a graph has a gap while the program does not write the status', async ({ page }) => {
+	await page.goto(PAGE);
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	vm('kill -STOP $(pidof cake-autorate-go)');
+	try {
+		await page.waitForTimeout(10000);
+	}
+	finally {
+		vm('kill -CONT $(pidof cake-autorate-go)');
+	}
+	// A new line starts after the gap.
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).filter((p) => p[0] == 'M').length,
+		{ timeout: 15000 }).toBe(2);
+});
+
 test('Overview shows the link and a pause', async ({ page }) => {
 	await page.goto(OVERVIEW);
 	const row = page.locator('tr[data-link="wan"]');
