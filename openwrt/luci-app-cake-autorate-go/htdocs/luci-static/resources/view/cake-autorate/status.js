@@ -168,9 +168,9 @@ return view.extend({
 	lastSampled: null,
 	lastData: null,
 
-	// The position of the pointer on a graph: the link, the graph and the
-	// x position as a fraction of the width. A refresh shows the cursor
-	// again at the same position.
+	// The cursor on a graph: the link, the graph, and the x position of the
+	// pointer as a fraction of the width ("fx") or the time of the sample
+	// that the keyboard selected ("t"). A refresh shows the cursor again.
 	hover: null,
 
 	// Adds one sample for each link if the program wrote a new status, and
@@ -206,7 +206,10 @@ return view.extend({
 			'viewBox': '0 0 %d %d'.format(GRAPH_WIDTH, GRAPH_HEIGHT),
 			'preserveAspectRatio': 'none',
 			'role': 'img',
-			'aria-label': title,
+			'aria-label': _('%s. Use the arrow keys to read the values of each sample.').format(title),
+			'tabindex': 0,
+			'data-link': name,
+			'data-plot': kind,
 			'style': 'display:block; width:100%; height:%dpx; border:1px solid rgba(128,128,128,.4)'.format(GRAPH_HEIGHT)
 		});
 		for (const f of [ 0.25, 0.5, 0.75 ])
@@ -243,20 +246,26 @@ return view.extend({
 		graph.appendChild(cursor);
 		const tip = E('div', {
 			'class': 'graph-tip',
+			'role': 'status',
+			'aria-live': 'polite',
 			'style': 'position:absolute; top:4px; display:none; padding:2px 6px; font-size:smaller; white-space:nowrap; pointer-events:none; background:var(--background-color-high, #fff); border:1px solid rgba(128,128,128,.6); border-radius:3px'
 		});
 
-		const showCursor = (fx) => {
-			let best = null, bestX = 0;
+		const xOf = (s) => GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
+
+		// Shows the cursor at the sample nearest to the hover position.
+		const showCursor = (hover) => {
+			let best = null, dist = Infinity;
 			for (const s of visible) {
-				const x = GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
-				if (best == null || Math.abs(x - fx * GRAPH_WIDTH) < Math.abs(bestX - fx * GRAPH_WIDTH)) {
+				const d = (hover.t != null) ? Math.abs(s.t - hover.t) : Math.abs(xOf(s) - hover.fx * GRAPH_WIDTH);
+				if (d < dist) {
 					best = s;
-					bestX = x;
+					dist = d;
 				}
 			}
 			if (best == null)
 				return hideCursor();
+			const bestX = xOf(best);
 			cursor.setAttribute('x1', bestX.toFixed(1));
 			cursor.setAttribute('x2', bestX.toFixed(1));
 			cursor.setAttribute('visibility', 'visible');
@@ -278,18 +287,53 @@ return view.extend({
 			tip.style.display = 'none';
 		};
 
-		graph.addEventListener('pointermove', L.bind(function(ev) {
-			const r = graph.getBoundingClientRect();
-			const fx = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1);
-			this.hover = { name: name, kind: kind, fx: fx };
-			showCursor(fx);
-		}, this));
-		graph.addEventListener('pointerleave', L.bind(function() {
+		const setHover = (hover) => {
+			this.hover = Object.assign({ name: name, kind: kind }, hover);
+			showCursor(this.hover);
+		};
+		const clearHover = () => {
 			this.hover = null;
 			hideCursor();
-		}, this));
+		};
+		// The index of the selected sample, or -1.
+		const selected = () => {
+			const h = this.hover;
+			return (h && h.name == name && h.kind == kind && h.t != null) ? visible.findIndex((s) => s.t == h.t) : -1;
+		};
+
+		graph.addEventListener('pointermove', (ev) => {
+			const r = graph.getBoundingClientRect();
+			setHover({ fx: Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) });
+		});
+		graph.addEventListener('pointerleave', () => {
+			if (document.activeElement !== graph)
+				clearHover();
+		});
+		// The keyboard selects a sample: the arrow keys the previous or the
+		// next sample, Home the first and End the newest.
+		graph.addEventListener('focus', () => {
+			const h = this.hover;
+			if (visible.length && !(h && h.name == name && h.kind == kind))
+				setHover({ t: visible[visible.length - 1].t });
+		});
+		graph.addEventListener('blur', clearHover);
+		graph.addEventListener('keydown', (ev) => {
+			if (!visible.length)
+				return;
+			const i = selected(), last = visible.length - 1;
+			let j;
+			switch (ev.key) {
+			case 'ArrowLeft': j = Math.max((i < 0 ? last : i) - 1, 0); break;
+			case 'ArrowRight': j = Math.min((i < 0 ? last : i) + 1, last); break;
+			case 'Home': j = 0; break;
+			case 'End': j = last; break;
+			default: return;
+			}
+			ev.preventDefault();
+			setHover({ t: visible[j].t });
+		});
 		if (this.hover && this.hover.name == name && this.hover.kind == kind)
-			showCursor(this.hover.fx);
+			showCursor(this.hover);
 
 		const legend = series.map((se) => E('span', { 'style': 'margin-right:1em; white-space:nowrap' }, [
 			E('span', { 'style': 'display:inline-block; width:1.5em; vertical-align:middle; border-top:2px %s %s'.format(se.dash ? 'dashed' : 'solid', se.color) }),
@@ -473,19 +517,25 @@ return view.extend({
 
 	refresh: function() {
 		return readStatus().then(L.bind(function(data) {
-			// The refresh makes new buttons. Keep the keyboard focus on the
-			// button of the same link and direction.
+			// The refresh makes new buttons and graphs. Keep the keyboard
+			// focus on the button of the same link and direction, or on the
+			// same graph, and keep the cursor.
 			const focused = document.activeElement;
-			const key = (focused && this.container.contains(focused) && focused.dataset.dir)
-				? [ focused.dataset.link, focused.dataset.dir ] : null;
+			const inside = focused && this.container.contains(focused);
+			const key = (inside && focused.dataset.dir) ? [ focused.dataset.link, 'dir', focused.dataset.dir ]
+				: (inside && focused.dataset.plot) ? [ focused.dataset.link, 'plot', focused.dataset.plot ] : null;
+			const hover = this.hover;
 			this.addSamples(data.status);
 			this.lastData = data;
 			this.container.replaceChildren(this.renderStatus(data));
+			// The remove of a focused graph can send "blur", which clears the
+			// cursor.
+			this.hover = hover;
 			if (key) {
-				const button = Array.prototype.find.call(this.container.querySelectorAll('button[data-dir]'),
-					(b) => b.dataset.link == key[0] && b.dataset.dir == key[1]);
-				if (button)
-					button.focus();
+				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-' + key[1] + ']'),
+					(e) => e.dataset.link == key[0] && e.dataset[key[1]] == key[2]);
+				if (target)
+					target.focus();
 			}
 		}, this));
 	},

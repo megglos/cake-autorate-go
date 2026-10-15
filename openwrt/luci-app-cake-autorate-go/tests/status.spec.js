@@ -321,6 +321,49 @@ test('the cursor shows the values of a sample and stays after a refresh', async 
 	}
 });
 
+test('the keyboard selects a sample and the selection stays after a refresh', async ({ page }) => {
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		const plot = rate.locator('svg');
+		const tip = rate.locator('.graph-tip');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(4);
+
+		// The focus selects the newest sample.
+		await plot.focus();
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+		const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+		const newest = await ago();
+
+		// Home selects the oldest sample, ArrowRight the next one.
+		await page.keyboard.press('Home');
+		const oldest = await ago();
+		expect(oldest).toBeGreaterThan(newest);
+		await page.keyboard.press('ArrowRight');
+		const next = await ago();
+		expect(next).toBeLessThan(oldest);
+
+		// A refresh keeps the focus and the selected sample: the sample is
+		// older now, not the newest one.
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(plot).toBeFocused();
+		await expect(tip).toBeVisible();
+		expect(await ago()).toBeGreaterThanOrEqual(next);
+
+		// Without the focus, there is no cursor.
+		await page.locator('#cake-autorate-period').focus();
+		await expect(tip).toBeHidden();
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {
