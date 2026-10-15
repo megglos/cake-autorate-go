@@ -290,7 +290,8 @@ Each phase is a PR, with the Copilot review cycles.
 | Phase | Status |
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
-| L1+L2 | Ready for merge (2026-10-15): #44 has the package and the VM test (user wanted one PR for CI feedback). 7 Copilot cycles, then stopped: the last findings were nits in the test helpers. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. |
+| L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
+| L3 | In progress (2026-10-15). |
 
 ### L0 decisions and results
 
@@ -316,7 +317,7 @@ Each phase is a PR, with the Copilot review cycles.
 - Core gaps found (for a later core PR, not the package): a YAML link that omits `adjust` gets false; global `ping_interface`/`ping_source_addr` do not apply to `links`.
 - Versions: CI writes the apk version to the Makefile. Release tag `1.2.0-rc.1` gives `1.2.0_rc1`; other builds `PKG_VERSION_p<commit count>`. Binary version = `git describe`. Release files get the arch in the name.
 - CI: the `converter` job also runs `-check-config -strict` on a converted sample (tests/sample.uc). The `package` job needs `converter`.
-- Not done: `procd_add_interface_trigger` for the WAN interfaces (the netlink retry handles a late interface), migration from `setup.sh` YAML, PKG_MAINTAINER (user to decide).
+- Not done: `procd_add_interface_trigger` for the WAN interfaces (the netlink retry handles a late interface), migration from `setup.sh` YAML, PKG_MAINTAINER (stays empty, user decision 2026-10-15).
 
 ### L2 decisions and results (in #44)
 
