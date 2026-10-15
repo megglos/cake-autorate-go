@@ -7,7 +7,8 @@
 # Usage: scripts/openwrt-build.sh [ARCH] [PACKAGES]
 #   ARCH      SDK image tag, default aarch64_cortex-a53-openwrt-25.12
 #             (GL-MT6000). For x86 use x86_64-openwrt-25.12.
-#   PACKAGES  packages to build, default cake-autorate-go
+#   PACKAGES  packages to build, default "cake-autorate-go
+#             luci-app-cake-autorate-go"
 #
 # The packages go to bin/openwrt/ARCH/. The script keeps a container with
 # the name cake-autorate-sdk-ARCH. Thus the second build does not download
@@ -17,7 +18,7 @@
 set -euo pipefail
 
 ARCH="${1:-aarch64_cortex-a53-openwrt-25.12}"
-PACKAGES="${2:-cake-autorate-go}"
+PACKAGES="${2:-cake-autorate-go luci-app-cake-autorate-go}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="cake-autorate-sdk-${ARCH//[^A-Za-z0-9_.-]/_}"
 OUT="$REPO/bin/openwrt/$ARCH"

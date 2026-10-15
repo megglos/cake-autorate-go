@@ -175,7 +175,7 @@ GOOS=linux GOARCH=arm64 go build -o cake-autorate-go .
 
 ## OpenWrt package
 
-The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` (apk, OpenWrt 25.12 and later). The CI builds it for `aarch64_cortex-a53` (for example GL-MT6000) and `x86_64`. The package installs:
+The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` and the LuCI app `luci-app-cake-autorate-go` (apk, OpenWrt 25.12 and later). The CI builds them for `aarch64_cortex-a53` (for example GL-MT6000) and `x86_64`. The package installs:
 
 | File | Content |
 |---|---|
@@ -204,7 +204,7 @@ config link 'wan'
 
 The name of the section is the name of the link. Set the option `name` to use a different name. Set `enabled '0'` in a link to stop the control of this link.
 
-At each start, the service writes `/var/etc/cake-autorate.yaml` from the UCI configuration and checks it with `-check-config`. The errors and the warnings go to the system log (`logread -e cake-autorate`). The service writes the status file to `/var/run/cake-autorate/status.json` and listens on the control socket `/var/run/cake-autorate/control.sock`.
+At each start, the service writes `/var/etc/cake-autorate.yaml` from the UCI configuration and checks it with `-check-config`. The errors and the warnings go to the system log (`logread -e cake-autorate`). If the configuration is not valid, the errors also go to `/var/run/cake-autorate/config-error`. The service writes the status file to `/var/run/cake-autorate/status.json` and listens on the control socket `/var/run/cake-autorate/control.sock`.
 
 ```bash
 uci set cake-autorate.global.enabled=1
@@ -215,7 +215,18 @@ uci commit cake-autorate
 
 Do not use the package and the service of `setup.sh` at the same time: both change the same shapers.
 
-To build the package on your computer with Docker, run `scripts/openwrt-build.sh`. The package goes to `bin/openwrt/`.
+### LuCI app
+
+The package `luci-app-cake-autorate-go` adds the page **Services → CAKE Autorate (Go)**. It has:
+
+- The section **Service**: the global settings in the tabs General, Idle and stall, Delay thresholds, Advanced and Logging.
+- The section **Links**: a table with one row for each link. Use **Add link** to add a link, and the edit button to change the interfaces, the rates, the delay thresholds and the ping settings of a link. The **Enabled** box in the row turns the control of the link on or off.
+
+An empty field uses the default value of the program. The field shows this value in grey. The page checks the values before the save: for example the rates (minimum ≤ base ≤ maximum), the interface names, and that two links do not use the same interface. After **Save & Apply**, the service starts again with the new configuration. If the configuration is not valid, the page shows the errors of the service.
+
+The shapers must have CAKE: set them up with SQM (`luci-app-sqm`) or `tc`, then select the same interfaces in the link.
+
+To build the packages on your computer with Docker, run `scripts/openwrt-build.sh`. The packages go to `bin/openwrt/`.
 
 To test the package without a router, use an OpenWrt x86-64 VM (QEMU with KVM). The CI does the same test:
 
@@ -223,7 +234,8 @@ To test the package without a router, use an OpenWrt x86-64 VM (QEMU with KVM). 
 scripts/openwrt-build.sh x86_64-openwrt-25.12
 scripts/openwrt-vm.sh start
 scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
-scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop
+scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
+(cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI page in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
 scripts/openwrt-vm.sh stop
 ```

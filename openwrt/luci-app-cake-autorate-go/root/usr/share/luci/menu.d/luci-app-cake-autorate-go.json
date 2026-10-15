@@ -1,0 +1,22 @@
+{
+	"admin/services/cake-autorate": {
+		"title": "CAKE Autorate (Go)",
+		"order": 60,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-cake-autorate-go" ],
+			"uci": { "cake-autorate": true }
+		}
+	},
+
+	"admin/services/cake-autorate/config": {
+		"title": "Configuration",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "cake-autorate/config"
+		}
+	}
+}

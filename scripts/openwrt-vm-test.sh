@@ -1,14 +1,15 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# Tests the package cake-autorate-go in the OpenWrt VM of
-# scripts/openwrt-vm.sh: start, status file, control socket, reload, invalid
-# configuration, disable and stop.
+# Tests the packages cake-autorate-go and luci-app-cake-autorate-go in the
+# OpenWrt VM of scripts/openwrt-vm.sh: start, status file, control socket,
+# reload, invalid configuration, disable, stop, and the files of the LuCI
+# app.
 #
 # Usage: scripts/openwrt-vm-test.sh
-# Start the VM and install the package first:
+# Start the VM and install the packages first:
 #   scripts/openwrt-vm.sh start
-#   scripts/openwrt-vm.sh install cake-autorate-go-*.apk
+#   scripts/openwrt-vm.sh install cake-autorate-go-*.apk luci-app-cake-autorate-go-*.apk
 #
 # The test changes the configuration in the VM. The exit code is 1 if a
 # test fails.
@@ -126,11 +127,14 @@ wait_for "changed config restarts the process" "p=\$(pidof cake-autorate-go) && 
 echo "== invalid configuration"
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=fast && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "converter error is in the log" 'logread -e cake-autorate | grep -q "dl_min_rate_kbps: \"fast\" is not an integer"'
+check "converter error is in the error file" 'grep -q "dl_min_rate_kbps: \"fast\" is not an integer" /var/run/cake-autorate/config-error'
 wait_for "program does not run" '! pidof cake-autorate-go >/dev/null'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=90000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "check-config error is in the log" 'logread -e cake-autorate | grep -q "configuration check failed"'
+check "check-config error is in the error file" 'grep -q "base_rate_kbps must be >= min_rate_kbps" /var/run/cake-autorate/config-error'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=5000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
+check "valid configuration removes the error file" '[ ! -e /var/run/cake-autorate/config-error ]'
 
 echo "== disable and stop"
 vm 'uci set cake-autorate.wan.enabled=0 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
@@ -140,6 +144,34 @@ vm 'uci set cake-autorate.wan.enabled=1 && uci commit cake-autorate && /etc/init
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
 vm '/etc/init.d/cake-autorate stop'
 wait_for "stop removes the status file and the socket" '! pidof cake-autorate-go >/dev/null && [ ! -e /var/run/cake-autorate/status.json ] && [ ! -e /var/run/cake-autorate/control.sock ]'
+
+echo "== LuCI app"
+check "web server sends the view" 'wget -qO- http://127.0.0.1/luci-static/resources/view/cake-autorate/config.js | grep -q "view.extend"'
+check "menu file is valid JSON" 'jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e "@[\"admin/services/cake-autorate/config\"].action.path" | grep -q "^cake-autorate/config$"'
+# root has all permissions. The user "cakeacl" has only the ACL groups of
+# the app and of luci-base, thus the checks show missing permissions.
+vm 'uci -q delete rpcd.cakeacl
+	uci set rpcd.cakeacl=login
+	uci set rpcd.cakeacl.username=cakeacl
+	uci set rpcd.cakeacl.password="\$p\$root"
+	uci add_list rpcd.cakeacl.read=luci-base
+	uci add_list rpcd.cakeacl.read=luci-app-cake-autorate-go
+	uci add_list rpcd.cakeacl.write=luci-app-cake-autorate-go
+	uci commit rpcd
+	/etc/init.d/rpcd reload' || fail "add the rpcd user cakeacl"
+sleep 2
+# access SCOPE OBJECT FUNCTION: checks a permission of the user cakeacl.
+access() {
+	vm "sid=\$(ubus call session login '{\"username\":\"cakeacl\",\"password\":\"\"}' | jsonfilter -e @.ubus_rpc_session) &&
+		ubus call session access '{\"ubus_rpc_session\":\"'\$sid'\",\"scope\":\"$1\",\"object\":\"$2\",\"function\":\"$3\"}' | grep -q '\"access\": true'"
+}
+# rpcd loads the ACL file only if it is valid.
+access access-group luci-app-cake-autorate-go write && ok "ACL: app group" || fail "ACL: app group"
+access uci cake-autorate write && ok "ACL: write the UCI configuration" || fail "ACL: write the UCI configuration"
+access ubus file read && ok "ACL: ubus file read" || fail "ACL: ubus file read"
+access file /var/run/cake-autorate/config-error read && ok "ACL: read the error file" || fail "ACL: read the error file"
+access file /etc/shadow read && fail "ACL: other files are not readable" || ok "ACL: other files are not readable"
+vm 'uci delete rpcd.cakeacl && uci commit rpcd && /etc/init.d/rpcd reload'
 
 if [ "$FAILED" -ne 0 ]; then
 	echo "== log"
