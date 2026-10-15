@@ -153,3 +153,6 @@ log_to_file: true
 log_file_path: /var/log/cake-autorate.log
 log_file_max_size_kb: 2000
 debug: false
+
+# Status of all links as JSON, written each second. Empty: no status file.
+# status_file: /var/run/cake-autorate/status.json

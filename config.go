@@ -150,6 +150,10 @@ type Config struct {
 	LogFileMaxSizeKB int    `yaml:"log_file_max_size_kb"`
 	Debug            bool   `yaml:"debug"`
 
+	// StatusFile is the path of the status file. The program writes the
+	// status of all links to it each second. Empty: no status file.
+	StatusFile string `yaml:"status_file"`
+
 	// unknownKeys are the keys in the config file that the program does not
 	// know (for example, a typing error). LoadConfig sets them.
 	unknownKeys []string
@@ -517,10 +521,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one link must be configured")
 	}
 
+	seen := make(map[string]bool)
 	for _, link := range c.Links {
 		if link.Name == "" {
 			return fmt.Errorf("each link must have a name")
 		}
+		if seen[link.Name] {
+			return fmt.Errorf("link name %q is used more than one time", link.Name)
+		}
+		seen[link.Name] = true
 		for _, dc := range []struct {
 			name string
 			dir  DirectionConfig

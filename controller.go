@@ -29,6 +29,9 @@ type LinkController struct {
 	logger    *Logger
 	core      *RecordingCore
 
+	// board receives the status of the link. It can be nil.
+	board *StatusBoard
+
 	// Channels
 	pingCh chan PingResult
 	rateCh chan RateStats
@@ -88,6 +91,15 @@ func (c *LinkController) Run(ctx context.Context) error {
 	healthTicker := time.NewTicker(time.Duration(c.cfg.ReflectorResponseDeadlineS * float64(time.Second)))
 	defer healthTicker.Stop()
 
+	// The status ticker has no channel when there is no status board.
+	var statusC <-chan time.Time
+	if c.board != nil {
+		statusTicker := time.NewTicker(statusInterval)
+		defer statusTicker.Stop()
+		statusC = statusTicker.C
+		c.publishStatus()
+	}
+
 	c.logger.Infof("[%s] controller started in %s state", c.name, c.core.Core().State())
 	c.logger.Infof("[%s] dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps",
 		c.name,
@@ -107,6 +119,9 @@ func (c *LinkController) Run(ctx context.Context) error {
 		case result := <-c.pingCh:
 			c.core.HandlePing(result)
 
+		case <-statusC:
+			c.publishStatus()
+
 		case <-healthTicker.C:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
@@ -117,6 +132,17 @@ func (c *LinkController) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// publishStatus sends the status of the link to the status board. Only the
+// goroutine of Run calls it, thus it can read the Core.
+func (c *LinkController) publishStatus() {
+	st := c.core.Core().Snapshot()
+	baselines := c.core.Core().ReflectorBaselinesUs()
+	for _, r := range c.pingerMgr.Snapshot() {
+		st.Reflectors = append(st.Reflectors, ReflectorDelayStatus{ReflectorStatus: r, BaselineMs: roundMs(baselines[r.Address])})
+	}
+	c.board.Set(st)
 }
 
 // restartPingers starts the pingers again to use the new active set of

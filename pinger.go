@@ -360,3 +360,35 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 	}
 	return promoted
 }
+
+// ReflectorStatus is the health of a reflector, for the status file.
+type ReflectorStatus struct {
+	Address string `json:"address"`
+	Active  bool   `json:"active"`
+	// Missed is the number of missed replies in the detection window.
+	Missed int `json:"missed"`
+}
+
+// Snapshot returns the health of all reflectors in the order of the pool.
+// The reflectors of the selected set come first. Active is true while the
+// pinger of the reflector runs.
+func (pm *PingerManager) Snapshot() []ReflectorStatus {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	out := make([]ReflectorStatus, 0, len(pm.reflectors))
+	for _, r := range pm.reflectors {
+		st := ReflectorStatus{Address: r}
+		if state := pm.states[r]; state != nil {
+			state.mu.Lock()
+			st.Active = state.Active
+			for _, m := range state.MissedWindow {
+				if m {
+					st.Missed++
+				}
+			}
+			state.mu.Unlock()
+		}
+		out = append(out, st)
+	}
+	return out
+}

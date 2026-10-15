@@ -643,3 +643,13 @@ func TestWarnings_LinkTimestampReflectors(t *testing.T) {
 		t.Errorf("expected a timestamp warning, got: %v", w)
 	}
 }
+
+func TestValidate_DuplicateLinkName(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links = append(cfg.Links, cfg.Links[0])
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "more than one time") {
+		t.Errorf("expected a duplicate name error, got: %v", err)
+	}
+}
