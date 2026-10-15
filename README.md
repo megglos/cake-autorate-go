@@ -35,7 +35,7 @@ Go is a good choice for these reasons:
 These functions are only in cake-autorate-go:
 
 - **One process for all links.** The original starts one instance with its own processes for each link.
-- **ICMP timestamps in the program.** `icmp-timestamp` needs no external pinger. The original needs tsping, irtt or fping 5.2 or later for one-way delays.
+- **ICMP timestamps in the program.** `icmp-timestamp` needs no external pinger. The original needs tsping, irtt or fping 5.3 or later for one-way delays.
 - **Netlink** sets the CAKE bandwidth. The original starts `tc` for each change.
 - **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease` (see [5G links](#5g-links)). Their default is off. Thus, the default behavior stays near the original.
 - **`calibrate`** makes a proposed config from a test session on your link.
