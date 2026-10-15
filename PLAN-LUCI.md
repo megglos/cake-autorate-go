@@ -290,7 +290,7 @@ Each phase is a PR, with the Copilot review cycles.
 | Phase | Status |
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
-| L1 | In review (2026-10-15): #44 package `cake-autorate-go`. Local SDK build for arm64 is good. Not yet run on OpenWrt. |
+| L1 | Ready for merge (2026-10-15): #44, 4 Copilot cycles, 0 open findings. CI builds the apk for arm64 and x86_64. Not yet run on OpenWrt (L2). |
 
 ### L0 decisions and results
 
@@ -312,4 +312,8 @@ Each phase is a PR, with the Copilot review cycles.
 - Fixed keys set by the package: `status_file` `/var/run/cake-autorate/status.json`, `control_socket` `/var/run/cake-autorate/control.sock`.
 - Local build: `scripts/openwrt-build.sh [ARCH]` keeps an SDK container `cake-autorate-sdk-ARCH`. Local Docker needs the docker group (or an ACL on /var/run/docker.sock).
 - Local ucode for tests: built by hand from jow-/ucode with `-D_GNU_SOURCE`, `fs` as a module (.so). CI builds ucode with cmake.
+- Review fixes: depends on `tc` (shaper fallback); converter output goes to logread; `procd_set_param file` (reload restarts on change); `adjust` default true for a link direction (Go sets false for a link that omits it); global `ping_interface`/`ping_source_addr` copied to links (Go applies them only to the legacy config); UCI read error = exit 1, not "disabled".
+- Core gaps found (for a later core PR, not the package): a YAML link that omits `adjust` gets false; global `ping_interface`/`ping_source_addr` do not apply to `links`.
+- Versions: CI writes the apk version to the Makefile. Release tag `1.2.0-rc.1` gives `1.2.0_rc1`; other builds `PKG_VERSION_p<commit count>`. Binary version = `git describe`. Release files get the arch in the name.
+- CI: the `converter` job also runs `-check-config -strict` on a converted sample (tests/sample.uc). The `package` job needs `converter`.
 - Not done: `procd_add_interface_trigger` for the WAN interfaces (the netlink retry handles a late interface), migration from `setup.sh` YAML, PKG_MAINTAINER (user to decide).
