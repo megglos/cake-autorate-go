@@ -231,6 +231,86 @@ test('a user with only read permission sees no buttons', async ({ browser }) => 
 	}
 });
 
+// Sends one command to the control socket of the program.
+function control(line) {
+	vm(`ucode -e 'import * as socket from "socket"; let s = socket.connect("/var/run/cake-autorate/control.sock"); s.send("${line}\\n"); s.recv(256);'`);
+}
+
+// Returns the points of a series path as [ [ command, x, y ], ... ].
+async function points(page, kind, series) {
+	const d = await page.locator(`.cbi-section[data-link="wan"] [data-graph="${kind}"] path[data-series="${series}"]`).getAttribute('d');
+	return [ ...(d || '').matchAll(/([ML])(-?[\d.]+) (-?[\d.]+)/g) ].map((m) => [ m[1], +m[2], +m[3] ]);
+}
+
+test('graphs show the rates and the delay delta of a link', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	await expect(link.locator('[data-graph="rate"] svg')).toBeVisible();
+	await expect(link.locator('[data-graph="delay"] svg')).toBeVisible();
+	for (const s of [ 'dl-shaper', 'dl-achieved', 'ul-shaper', 'ul-achieved' ])
+		await expect(link.locator(`[data-graph="rate"] path[data-series="${s}"]`)).toHaveCount(1);
+	for (const s of [ 'dl-delta', 'dl-threshold', 'ul-delta', 'ul-threshold' ])
+		await expect(link.locator(`[data-graph="delay"] path[data-series="${s}"]`)).toHaveCount(1);
+	// The page adds one sample for each refresh.
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+	await expect(link.getByText('Collecting data…')).toHaveCount(0);
+	// The newest sample is at the right side of the graph.
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p[p.length - 1][1]).toBeGreaterThan(590);
+	expect(p[0][1]).toBeLessThan(p[p.length - 1][1]);
+});
+
+test('the y axis of the rate graph fits the rates', async ({ page }) => {
+	// A pause sets the base rates: 20 Mbit/s download, 12 Mbit/s upload.
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+		await expect(rate).toHaveAttribute('data-max', '20');
+		await expect(rate.locator('.graph-max')).toHaveText('20 Mbit/s');
+		// The graph is 150 units high: 20 Mbit/s is at the top (y 0),
+		// 12 Mbit/s at y 60.
+		for (const [ , , y ] of await points(page, 'rate', 'dl-shaper'))
+			expect(y).toBeCloseTo(0, 1);
+		for (const [ , , y ] of await points(page, 'rate', 'ul-shaper'))
+			expect(y).toBeCloseTo(60, 1);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the graph period changes the time axis and stays after a refresh', async ({ page }) => {
+	await page.goto(PAGE);
+	const start = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"] .graph-start');
+	await expect(start).toHaveText('-5 min');
+	await page.selectOption('#cake-autorate-period', '60');
+	await expect(start).toHaveText('-1 min');
+	// Wait for a refresh: it makes a new graph.
+	const old = await start.elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	await expect(start).toHaveText('-1 min');
+	await expect(page.locator('#cake-autorate-period')).toHaveValue('60');
+});
+
+test('a graph has a gap while the program does not write the status', async ({ page }) => {
+	await page.goto(PAGE);
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	vm('kill -STOP $(pidof cake-autorate-go)');
+	try {
+		await page.waitForTimeout(10000);
+	}
+	finally {
+		vm('kill -CONT $(pidof cake-autorate-go)');
+	}
+	// A new line starts after the gap.
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).filter((p) => p[0] == 'M').length,
+		{ timeout: 15000 }).toBe(2);
+});
+
 test('Overview shows the link and a pause', async ({ page }) => {
 	await page.goto(OVERVIEW);
 	const row = page.locator('tr[data-link="wan"]');
