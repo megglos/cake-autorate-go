@@ -442,6 +442,8 @@ debug: false                  # Write more log messages (or use the --debug flag
 
 Set `status_file` to a path, for example `/var/run/cake-autorate/status.json`. The program then writes the status of all links to this file each second. A tool, for example a web interface, can read it. The program writes a temporary file and renames it, thus a reader never sees a partial file. The program removes the file when it stops.
 
+The program writes the file each second. Thus, use a path on a RAM file system, for example `/var/run` on OpenWrt, so that the flash memory does not wear out.
+
 The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction the shaper rate, the measured rate, the load, the last delay delta, the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
 
 ### 5G links
