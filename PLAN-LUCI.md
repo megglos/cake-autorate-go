@@ -289,4 +289,13 @@ Each phase is a PR, with the Copilot review cycles.
 
 | Phase | Status |
 |---|---|
-| L0 | Not started |
+| L0 | Done in four PRs, in review (2026-10-15): #40 per-link overrides, #41 `-check-config` (merged), #42 `status_file`, #43 `control_socket` (pause/resume). |
+
+### L0 decisions and results
+
+- Overrides: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay` are pointer fields in the link. `Config.ForLink` gives the effective config. The calibration also uses it.
+- `-check-config` and `-strict`: exit code 1 for an invalid file. With `-strict`, a warning also gives exit code 1.
+- Status file: JSON, `schema` 1, one write each second, atomic (random temp name + rename), removed at stop. Path set by the package: `/var/run/cake-autorate/status.json` (RAM). The `paused` field is not yet in the status: add it after #42 and #43 are merged.
+- Control socket: Unix socket mode 0600, commands `pause LINK [dl|ul]`, `resume LINK [dl|ul]`, `list`. A pause sets the base rate. The recording has a `pause` event.
+- Validation: a link name must be unique. With `control_socket`, it must have no space.
+- Follow-up for L0: add `paused` to the status file (small PR after #42 and #43).
