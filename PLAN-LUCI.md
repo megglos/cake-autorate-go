@@ -264,7 +264,7 @@ Tests:
 
 | Phase | Content | Depends on | Size |
 |---|---|---|---|
-| L0 | 2026-10-15: #40 per-link overrides (merged), #41 `-check-config` (merged), #42 `status_file` (merged), #43 `control_socket` (6 Copilot cycles done, one open finding after the rebase: process-wide umask, see below). |
+| L0 | 2026-10-15: #40 per-link overrides, #41 `-check-config`, #42 `status_file`, #43 `control_socket`. All merged. |
 | L1 | Package `cake-autorate-go`: Makefile, init script, UCI default, ucode converter + tests, CI build (amd64, arm64) | L0 | M |
 | L2 | VM script, install and run in the VM | L1 | S |
 | L3 | LuCI config page: global section + link grid with modal, validation, apply | L1 | M |
@@ -289,7 +289,8 @@ Each phase is a PR, with the Copilot review cycles.
 
 | Phase | Status |
 |---|---|
-| L0 | Done in four PRs, in review (2026-10-15): #40 per-link overrides, #41 `-check-config` (merged), #42 `status_file`, #43 `control_socket` (pause/resume). |
+| L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
+| L1 | In review (2026-10-15): #44 package `cake-autorate-go`. Local SDK build for arm64 is good. Not yet run on OpenWrt. |
 
 ### L0 decisions and results
 
@@ -297,7 +298,18 @@ Each phase is a PR, with the Copilot review cycles.
 - `-check-config` and `-strict`: exit code 1 for an invalid file. With `-strict`, a warning also gives exit code 1.
 - Status file: JSON, `schema` 1, one write each second, atomic (random temp name + rename), removed at stop. Path set by the package: `/var/run/cake-autorate/status.json` (RAM). The `paused` field is not yet in the status: add it after #42 and #43 are merged.
 - Control socket: Unix socket mode 0600, commands `pause LINK [dl|ul]`, `resume LINK [dl|ul]`, `list`. A pause sets the base rate. The recording has a `pause` event.
-- Validation: a link name must be unique. With `control_socket`, it must have no space.
+- Validation: a link name must be unique. With `control_socket`, it must have 1 to 64 characters of `[A-Za-z0-9_.-]`, and the socket path not more than 90 bytes.
+- Socket creation: in a temporary directory with mode 0700, then chmod 0600 and rename to the path. No umask change (the umask applies to all goroutines).
 - Follow-up for L0: add `paused` to the status file (small PR after #43).
 - Open on #43 (finding after the rebase onto #42): `syscall.Umask` changes the mask of the whole process. The status writer can create its directory in that time with mode 0600. Fix: split the socket setup from the accept loop, and open the socket in `main` before the status writer and the controllers start.
 - Conflicts: resolve with a rebase onto main (user preference 2026-10-15).
+
+### L1 decisions and results
+
+- Source in `openwrt/cake-autorate-go/`. The Makefile copies the Go source from the repository root (no download). Build with `golang-package.mk` of the SDK packages feed (Go 1.26 in 25.12).
+- Converter output is JSON (JSON is YAML). `schema.json` has the type of each option: `global`, `global_direction` (thresholds with `dl_`/`ul_`), `link`, `direction`. Exit code 3 = disabled, then the init script does not start the service.
+- The section name is the link name, if `name` is not set. An anonymous link section must set `name`.
+- Fixed keys set by the package: `status_file` `/var/run/cake-autorate/status.json`, `control_socket` `/var/run/cake-autorate/control.sock`.
+- Local build: `scripts/openwrt-build.sh [ARCH]` keeps an SDK container `cake-autorate-sdk-ARCH`. Local Docker needs the docker group (or an ACL on /var/run/docker.sock).
+- Local ucode for tests: built by hand from jow-/ucode with `-D_GNU_SOURCE`, `fs` as a module (.so). CI builds ucode with cmake.
+- Not done: `procd_add_interface_trigger` for the WAN interfaces (the netlink retry handles a late interface), migration from `setup.sh` YAML, PKG_MAINTAINER (user to decide).
