@@ -325,3 +325,4 @@ Each phase is a PR, with the Copilot review cycles.
 - Finding: `reload_config` sends `config.change` only for files from its last run. After a package install, run `reload_config` once (the test does it). LuCI apply uses ubus, thus not affected.
 - CI: job `vm` after `package`; job `release` (release events only) after `package` and `vm` attaches the apk files.
 - KVM works on GitHub runners with the udev rule.
+- CI time: from 17-25 min to about 5 min. The CI builds a static program with setup-go into `prebuilt/`; the Makefile then skips golang (SDK bootstrap was ~10 min) and uses `EXTRA_DEPENDS` with `(>=0)` (apk needs a constraint) so the SDK does not compile tc/iproute2/libbpf/elfutils (~6 min). `NO_DEFAULT_FEEDS: 1`. Remaining time is mostly the SDK download (mirror speed varies). Without `prebuilt/` (local script), the full SDK Go build is used.
