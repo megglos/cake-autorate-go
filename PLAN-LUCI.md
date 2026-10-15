@@ -264,7 +264,7 @@ Tests:
 
 | Phase | Content | Depends on | Size |
 |---|---|---|---|
-| L0 | Go: `status_file`, `-check-config`, control socket with pause/resume for each link and direction; per-link overrides (if not done earlier) | — | M |
+| L0 | 2026-10-15: #40 per-link overrides (merged), #41 `-check-config` (merged), #42 `status_file` (merged), #43 `control_socket` (6 Copilot cycles done, one open finding after the rebase: process-wide umask, see below). |
 | L1 | Package `cake-autorate-go`: Makefile, init script, UCI default, ucode converter + tests, CI build (amd64, arm64) | L0 | M |
 | L2 | VM script, install and run in the VM | L1 | S |
 | L3 | LuCI config page: global section + link grid with modal, validation, apply | L1 | M |
@@ -298,4 +298,6 @@ Each phase is a PR, with the Copilot review cycles.
 - Status file: JSON, `schema` 1, one write each second, atomic (random temp name + rename), removed at stop. Path set by the package: `/var/run/cake-autorate/status.json` (RAM). The `paused` field is not yet in the status: add it after #42 and #43 are merged.
 - Control socket: Unix socket mode 0600, commands `pause LINK [dl|ul]`, `resume LINK [dl|ul]`, `list`. A pause sets the base rate. The recording has a `pause` event.
 - Validation: a link name must be unique. With `control_socket`, it must have no space.
-- Follow-up for L0: add `paused` to the status file (small PR after #42 and #43).
+- Follow-up for L0: add `paused` to the status file (small PR after #43).
+- Open on #43 (finding after the rebase onto #42): `syscall.Umask` changes the mask of the whole process. The status writer can create its directory in that time with mode 0600. Fix: split the socket setup from the accept loop, and open the socket in `main` before the status writer and the controllers start.
+- Conflicts: resolve with a rebase onto main (user preference 2026-10-15).
