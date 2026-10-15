@@ -45,6 +45,22 @@ func TestCoreSnapshot(t *testing.T) {
 	}
 }
 
+func TestSnapshotShowsPause(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	core := NewCore(&cfg.Links[0], cfg, 1500, 1500, nopActuator{}, NewDiscardLogger())
+	core.Start(time.Now())
+	core.SetPaused(UL, true)
+	st := core.Snapshot()
+	if st.Download.Paused || !st.Upload.Paused {
+		t.Errorf("only the upload must show a pause: %+v %+v", st.Download, st.Upload)
+	}
+	core.SetPaused(UL, false)
+	if core.Snapshot().Upload.Paused {
+		t.Error("the upload must not show a pause after a resume")
+	}
+}
+
 func TestStatusBoardFile(t *testing.T) {
 	now := time.Now()
 	b := NewStatusBoard("v1", now, []string{"a", "b"})
