@@ -291,7 +291,7 @@ Each phase is a PR, with the Copilot review cycles.
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
 | L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
-| L3 | In progress (2026-10-15). |
+| L3 | In review (2026-10-15): #45. |
 
 ### L0 decisions and results
 
@@ -327,3 +327,12 @@ Each phase is a PR, with the Copilot review cycles.
 - CI: job `vm` after `package`; job `release` (release events only) after `package` and `vm` attaches the apk files.
 - KVM works on GitHub runners with the udev rule.
 - CI time: from 17-25 min to about 5 min. The CI builds a static program with setup-go into `prebuilt/`; the Makefile then skips golang (SDK bootstrap was ~10 min) and uses `EXTRA_DEPENDS` with `(>=0)` (apk needs a constraint) so the SDK does not compile tc/iproute2/libbpf/elfutils (~6 min). `NO_DEFAULT_FEEDS: 1`. Remaining time is mostly the SDK download (mirror speed varies). Without `prebuilt/` (local script), the full SDK Go build is used.
+
+### L3 decisions and results (in #45)
+
+- One view `view/cake-autorate/config.js`: `NamedSection global` (tabs General, Idle and stall, Delay thresholds, Advanced, Logging) and `GridSection link` (modal tabs Interfaces, Rates, Delay thresholds, Pings). The per-link overrides are in the tab Pings.
+- No `luci.mk`: the SDK build needs no LuCI feed. `luci-base (>=0)` only in `EXTRA_DEPENDS`. No translations yet.
+- Placeholders show the program defaults (hard-coded in the view, from `-defaults`). Flags that are on by default write "0"/"1" (`rmempty = !def`).
+- Errors after apply: the init script writes `/var/run/cake-autorate/config-error` (converter or check-config output), a valid start removes it. The page polls it every 5 s (ACL: file read).
+- Browser test: Playwright with Chromium in the scratchpad against the VM (login root, empty password). Not in CI (download of Chromium was slow and hung at the extraction).
+- The denied `uci get luci` call in the browser log is from the login page (session 0), not from the app.
