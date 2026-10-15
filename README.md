@@ -446,6 +446,22 @@ The program writes the file each second. Thus, use a path on a RAM file system, 
 
 The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction the shaper rate, the measured rate, the load, the last delay delta, the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
 
+### Control socket
+
+Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock`. The program then listens on this Unix socket. Only the owner of the socket can connect. A client sends one line and reads one line as the answer, `ok` or `error: MESSAGE`:
+
+| Command | Effect |
+|---|---|
+| `pause LINK [dl\|ul]` | Set the shaper to the base rate and stop the rate changes. Without a direction, the command applies to both directions. |
+| `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
+| `list` | Answer with the link names. |
+
+A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. A recording contains the pause and resume events, thus a replay gives the same decisions.
+
+```bash
+echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock
+```
+
 ### 5G links
 
 On 5G, the radio adds upload delay that no shaper can remove:
@@ -511,6 +527,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `log_file_max_size_kb` | `2000` | Maximum size of the log file (KB) |
 | `debug` | `false` | Write more log messages |
 | `status_file` | (empty) | Path of the status file. The program writes the status of all links to it each second. Empty: no status file |
+| `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume` and `list`. Empty: no control socket |
 
 ## Usage
 
