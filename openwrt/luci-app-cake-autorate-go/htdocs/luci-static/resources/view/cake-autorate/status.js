@@ -159,12 +159,19 @@ return view.extend({
 		return now - this.lastChange > STALE_SECONDS * 1000;
 	},
 
-	// The samples of the graphs for each link name, the period of the graphs
-	// in seconds, the last "updated" with samples, and the last data.
-	history: {},
+	// The samples of the graphs for each link name, the period of the
+	// graphs in seconds, the last "updated" with samples, and the last data.
+	// "history" is a Map: a link name can be the name of an Object
+	// property, for example "constructor".
+	history: new Map(),
 	period: 300,
 	lastSampled: null,
 	lastData: null,
+
+	// The position of the pointer on a graph: the link, the graph and the
+	// x position as a fraction of the width. A refresh shows the cursor
+	// again at the same position.
+	hover: null,
 
 	// Adds one sample for each link if the program wrote a new status, and
 	// removes the old samples and the links that are not in the status.
@@ -173,11 +180,11 @@ return view.extend({
 			return;
 		this.lastSampled = status.updated;
 		const now = performance.now();
-		const history = {};
+		const history = new Map();
 		for (const ls of status.links) {
-			const samples = (this.history[ls.name] || []).filter((s) => now - s.t <= HISTORY_SECONDS * 1000);
+			const samples = (this.history.get(ls.name) || []).filter((s) => now - s.t <= HISTORY_SECONDS * 1000);
 			samples.push(sample(ls, now));
-			history[ls.name] = samples;
+			history.set(ls.name, samples);
 		}
 		this.history = history;
 	},
@@ -185,7 +192,7 @@ return view.extend({
 	// Returns a graph of the series. Each series has a key, a color, a dash
 	// pattern and a function that gets the value from a sample. "floor" is
 	// the smallest maximum of the y axis.
-	renderGraph: function(kind, title, unit, samples, series, floor) {
+	renderGraph: function(name, kind, title, unit, samples, series, floor) {
 		const now = performance.now();
 		const span = this.period * 1000;
 		const visible = samples.filter((s) => now - s.t <= span);
@@ -226,6 +233,64 @@ return view.extend({
 			}));
 		}
 
+		// The cursor: a vertical line at the sample nearest to the pointer,
+		// and a box with the values of this sample.
+		const cursor = svg('line', {
+			'y1': 0, 'y2': GRAPH_HEIGHT,
+			'stroke': 'currentColor', 'stroke-opacity': 0.6,
+			'vector-effect': 'non-scaling-stroke', 'visibility': 'hidden'
+		});
+		graph.appendChild(cursor);
+		const tip = E('div', {
+			'class': 'graph-tip',
+			'style': 'position:absolute; top:4px; display:none; padding:2px 6px; font-size:smaller; white-space:nowrap; pointer-events:none; background:var(--background-color-high, #fff); border:1px solid rgba(128,128,128,.6); border-radius:3px'
+		});
+
+		const showCursor = (fx) => {
+			let best = null, bestX = 0;
+			for (const s of visible) {
+				const x = GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
+				if (best == null || Math.abs(x - fx * GRAPH_WIDTH) < Math.abs(bestX - fx * GRAPH_WIDTH)) {
+					best = s;
+					bestX = x;
+				}
+			}
+			if (best == null)
+				return hideCursor();
+			cursor.setAttribute('x1', bestX.toFixed(1));
+			cursor.setAttribute('x2', bestX.toFixed(1));
+			cursor.setAttribute('visibility', 'visible');
+			const lines = [ E('div', {}, text(_('%d s ago').format(Math.round((now - best.t) / 1000)))) ];
+			for (const se of series)
+				lines.push(E('div', {}, [
+					E('span', { 'style': 'color:%s'.format(se.color) }, '■'), ' ',
+					text('%s: %.1f %s'.format(se.title, se.value(best), unit))
+				]));
+			tip.replaceChildren(...lines);
+			tip.style.display = '';
+			// Show the box on the side of the cursor with more space.
+			const left = bestX / GRAPH_WIDTH < 0.5;
+			tip.style.left = left ? 'calc(%.2f%% + 8px)'.format(bestX / GRAPH_WIDTH * 100) : '';
+			tip.style.right = left ? '' : 'calc(%.2f%% + 8px)'.format(100 - bestX / GRAPH_WIDTH * 100);
+		};
+		const hideCursor = () => {
+			cursor.setAttribute('visibility', 'hidden');
+			tip.style.display = 'none';
+		};
+
+		graph.addEventListener('pointermove', L.bind(function(ev) {
+			const r = graph.getBoundingClientRect();
+			const fx = Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1);
+			this.hover = { name: name, kind: kind, fx: fx };
+			showCursor(fx);
+		}, this));
+		graph.addEventListener('pointerleave', L.bind(function() {
+			this.hover = null;
+			hideCursor();
+		}, this));
+		if (this.hover && this.hover.name == name && this.hover.kind == kind)
+			showCursor(this.hover.fx);
+
 		const legend = series.map((se) => E('span', { 'style': 'margin-right:1em; white-space:nowrap' }, [
 			E('span', { 'style': 'display:inline-block; width:1.5em; vertical-align:middle; border-top:2px %s %s'.format(se.dash ? 'dashed' : 'solid', se.color) }),
 			' ', se.title
@@ -237,6 +302,7 @@ return view.extend({
 			E('div', { 'style': 'font-size:smaller' }, legend),
 			E('div', { 'style': 'position:relative' }, [
 				graph,
+				tip,
 				E('span', { 'class': 'graph-max', 'style': label + '; top:2px' }, text('%s %s'.format(max, unit))),
 				E('span', { 'style': label + '; bottom:2px' }, text('0')),
 				(visible.length < 2)
@@ -251,16 +317,16 @@ return view.extend({
 	},
 
 	renderGraphs: function(name) {
-		const samples = this.history[name] || [];
+		const samples = this.history.get(name) || [];
 		const v = (dir, field) => (s) => s[dir][field];
 		return E('div', { 'class': 'cake-autorate-graphs', 'style': 'display:flex; flex-wrap:wrap; gap:1em; margin:1em 0' }, [
-			this.renderGraph('rate', _('Rates'), 'Mbit/s', samples, [
+			this.renderGraph(name, 'rate', _('Rates'), 'Mbit/s', samples, [
 				{ key: 'dl-shaper', title: _('Download shaper'), color: COLORS.dl, dash: '4 3', value: v('dl', 'shaper') },
 				{ key: 'dl-achieved', title: _('Download achieved'), color: COLORS.dl, value: v('dl', 'achieved') },
 				{ key: 'ul-shaper', title: _('Upload shaper'), color: COLORS.ul, dash: '4 3', value: v('ul', 'shaper') },
 				{ key: 'ul-achieved', title: _('Upload achieved'), color: COLORS.ul, value: v('ul', 'achieved') }
 			], 1),
-			this.renderGraph('delay', _('Delay delta'), 'ms', samples, [
+			this.renderGraph(name, 'delay', _('Delay delta'), 'ms', samples, [
 				{ key: 'dl-delta', title: _('Download delta'), color: COLORS.dl, value: v('dl', 'delta') },
 				{ key: 'dl-threshold', title: _('Download threshold'), color: COLORS.dl, dash: '1 3', value: v('dl', 'threshold') },
 				{ key: 'ul-delta', title: _('Upload delta'), color: COLORS.ul, value: v('ul', 'delta') },

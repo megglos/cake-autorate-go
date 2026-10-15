@@ -283,6 +283,63 @@ test('the y axis of the rate graph fits the rates', async ({ page }) => {
 	}
 });
 
+test('the cursor shows the values of a sample and stays after a refresh', async ({ page }) => {
+	// A pause sets the base rates: 20 Mbit/s download, 12 Mbit/s upload.
+	control('pause wan');
+	try {
+		await expect.poll(() => pausedInFile('upload'), { timeout: 10000 }).toBe('true');
+		await page.goto(PAGE);
+		const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+		const tip = rate.locator('.graph-tip');
+		await expect.poll(async () => (await points(page, 'rate', 'ul-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+		await expect(tip).toBeHidden();
+
+		const box = await rate.locator('svg').boundingBox();
+		await page.mouse.move(box.x + box.width * 0.99, box.y + box.height / 2);
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Download shaper: 20.0 Mbit/s');
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+		await expect(tip).toContainText(/\d+ s ago/);
+		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(1);
+
+		// A refresh makes a new graph with the cursor at the same position.
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(tip).toBeVisible();
+		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
+
+		// Only the graph under the pointer shows a cursor.
+		await expect(page.locator('[data-graph="delay"] .graph-tip')).toBeHidden();
+
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
+		await expect(tip).toBeHidden();
+		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(0);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('a link name that is an Object property has graphs', async ({ page }) => {
+	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
+	try {
+		await expect.poll(() => vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].name" 2>/dev/null || true').trim(),
+			{ timeout: 30000 }).toBe('constructor');
+		await page.goto(PAGE);
+		const link = page.locator('.cbi-section[data-link="constructor"]');
+		await expect(link.locator('[data-graph="rate"] svg')).toBeVisible();
+		await expect.poll(async () => {
+			const d = await link.locator('path[data-series="dl-shaper"]').getAttribute('d');
+			return (d || '').split('L').length;
+		}, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
 test('the graph period changes the time axis and stays after a refresh', async ({ page }) => {
 	await page.goto(PAGE);
 	const start = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"] .graph-start');
