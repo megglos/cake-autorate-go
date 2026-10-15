@@ -361,3 +361,75 @@ test('placeholders show the defaults of the program', async ({ page }) => {
 	}
 	expect(checked).toBeGreaterThan(20);
 });
+
+test('ping check: a link with its own icmp-timestamp uses changed global reflectors', async ({ page }) => {
+	vm(`uci set cake-autorate.wan.ping_method=icmp-timestamp &&
+		uci delete cake-autorate.wan.reflectors &&
+		uci add_list cake-autorate.global.reflectors=94.140.14.14 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	const method = input(page, 'global', 'ping_method');
+	await expect(method).not.toHaveClass(INVALID);
+	// Replace the global reflector with one that does not reply to
+	// timestamps. The link dialog stays closed.
+	const list = page.locator('[id="cbid.cake-autorate.global.reflectors"]');
+	const add = list.locator('input[type=text]').last();
+	await add.fill('8.8.8.8');
+	await add.press('Enter');
+	// The "×" of an item is on its right side, outside of the text.
+	const item = list.locator('.item', { hasText: '94.140.14.14' });
+	const box = await item.boundingBox();
+	await item.click({ position: { x: box.width - 6, y: box.height / 2 } });
+	await expect(list.locator('.item', { hasText: '94.140.14.14' })).toHaveCount(0);
+	await expect(method).toHaveClass(INVALID);
+	resetConfig();
+});
+
+test('ping check: pending changes of the global method and the link are used', async ({ page }) => {
+	// Global icmp-timestamp with reflectors that reply. The link wan has
+	// its own method icmp and only 8.8.8.8.
+	vm(`uci set cake-autorate.global.ping_method=icmp-timestamp &&
+		uci add_list cake-autorate.global.reflectors=94.140.14.14 &&
+		uci set cake-autorate.wan.ping_method=icmp &&
+		uci delete cake-autorate.wan.reflectors &&
+		uci add_list cake-autorate.wan.reflectors=8.8.8.8 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await input(page, 'global', 'ping_method').selectOption('icmp');
+	await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+	await openTab(page.locator('.modal'), 'pings');
+	await input(page, 'wan', 'ping_method').selectOption('');
+	await expect(input(page, 'wan', 'ping_method')).not.toHaveClass(INVALID);
+	await input(page, 'wan', 'ping_method').selectOption('icmp-timestamp');
+	await expect(input(page, 'wan', 'ping_method')).toHaveClass(INVALID);
+	resetConfig();
+});
+
+test('ping check: a disabled link is not checked', async ({ page }) => {
+	vm(`uci add_list cake-autorate.global.reflectors=94.140.14.14 &&
+		uci delete cake-autorate.wan.reflectors &&
+		uci add_list cake-autorate.wan.reflectors=8.8.8.8 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	const method = input(page, 'global', 'ping_method');
+	await method.selectOption('icmp-timestamp');
+	await expect(method).toHaveClass(INVALID);
+	await page.locator('input[data-widget-id="widget.cbid.cake-autorate.wan.enabled"]').uncheck();
+	await expect(method).not.toHaveClass(INVALID);
+	resetConfig();
+});
+
+test('rate error only on the empty field', async ({ page }) => {
+	vm(`uci set cake-autorate.wan.dl_min_rate_kbps=5000 &&
+		uci set cake-autorate.wan.dl_base_rate_kbps=7500 &&
+		uci set cake-autorate.wan.dl_max_rate_kbps=10000 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+	await openTab(page.locator('.modal'), 'rates');
+	await setValue(page, 'wan', 'dl_base_rate_kbps', '');
+	await expect(input(page, 'wan', 'dl_base_rate_kbps')).toHaveClass(INVALID);
+	await expect(input(page, 'wan', 'dl_min_rate_kbps')).not.toHaveClass(INVALID);
+	await expect(input(page, 'wan', 'dl_max_rate_kbps')).not.toHaveClass(INVALID);
+	resetConfig();
+});

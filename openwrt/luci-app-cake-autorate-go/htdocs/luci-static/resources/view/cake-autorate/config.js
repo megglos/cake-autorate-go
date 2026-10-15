@@ -102,33 +102,49 @@ function timestampError(method, reflectors, where) {
 	return _('%s: no reflector replies to ICMP timestamp requests. Add other reflectors, or remove all reflectors to use the default list for icmp-timestamp.').format(where);
 }
 
-// Checks the global ping method with the reflectors of all enabled links.
-// A link without a ping method uses the global one, and a link without
-// reflectors uses the global reflectors.
-function validateGlobalPingMethod(sid, value) {
-	const method = value || 'icmp';
-	const globalRefl = toList(this.section.formvalue(sid, 'reflectors'));
-	let r = true;
-	for (const l of uci.sections('cake-autorate', 'link')) {
-		if (r !== true)
-			break;
-		if (l.enabled == '0' || l.ping_method)
-			continue;
-		const refl = toList(l.reflectors);
-		r = timestampError(method, refl.length ? refl : globalRefl,
-			_('Link "%s"').format(l.name || l['.name']));
-	}
-	return r;
+// The global section and the link section of the page. The ping checks
+// read the values of the form from them.
+const page = { global: null, globalSid: null, links: null };
+
+// Returns the value of the option name of section sid: the value in the
+// form if the form shows the field, else the value in UCI. An empty field
+// in the form stays empty.
+function live(section, sid, name) {
+	const v = section ? section.formvalue(sid, name) : null;
+	return v != null ? v : uci.get('cake-autorate', sid, name);
 }
 
-// Checks the ping method of a link with its reflectors.
+// Checks the effective ping method of each enabled link with its effective
+// reflectors. section and sid are the section and the ID of the field
+// under check: a link dialog has its own form. If only is set, checks only
+// that link.
+function pingMethodError(section, sid, only) {
+	const gsec = section && sid == page.globalSid ? section : page.global;
+	const gmethod = live(gsec, page.globalSid, 'ping_method') || 'icmp';
+	const grefl = toList(live(gsec, page.globalSid, 'reflectors'));
+	for (const l of uci.sections('cake-autorate', 'link')) {
+		const lsid = l['.name'];
+		if (only && lsid != only)
+			continue;
+		const lsec = lsid == sid ? section : page.links;
+		if (live(lsec, lsid, 'enabled') == '0')
+			continue;
+		const method = live(lsec, lsid, 'ping_method') || gmethod;
+		const refl = toList(live(lsec, lsid, 'reflectors'));
+		const r = timestampError(method, refl.length ? refl : grefl,
+			_('Link "%s"').format(live(lsec, lsid, 'name') || lsid));
+		if (r !== true)
+			return r;
+	}
+	return true;
+}
+
+function validateGlobalPingMethod(sid, value) {
+	return pingMethodError(this.section, sid, null);
+}
+
 function validateLinkPingMethod(sid, value) {
-	const g = uci.sections('cake-autorate', 'global')[0] || {};
-	const method = value || g.ping_method || 'icmp';
-	let refl = toList(this.section.formvalue(sid, 'reflectors'));
-	if (refl.length == 0)
-		refl = toList(g.reflectors);
-	return timestampError(method, refl, _('This link'));
+	return pingMethodError(this.section, sid, sid);
 }
 
 function validateIfname(sid, value) {
@@ -179,6 +195,8 @@ function otherInterfaces(sid) {
 // sid is the name of the global section.
 function globalSection(m, sid) {
 	const s = m.section(form.NamedSection, sid, 'global', _('Service'));
+	page.global = s;
+	page.globalSid = sid;
 	s.addremove = false;
 
 	s.tab('general', _('General'));
@@ -324,9 +342,10 @@ function validateRate(d, key) {
 			return _('Enter a rate');
 		if (+value <= 0)
 			return _('Must be more than 0');
-		const min = formNumber(this.section, sid, d + '_min_rate_kbps', 5000);
-		const base = formNumber(this.section, sid, d + '_base_rate_kbps', 20000);
-		const max = formNumber(this.section, sid, d + '_max_rate_kbps', d == 'dl' ? 80000 : 35000);
+		// An empty partner field has its own error. Do not compare with it.
+		const min = formNumber(this.section, sid, d + '_min_rate_kbps', NaN);
+		const base = formNumber(this.section, sid, d + '_base_rate_kbps', NaN);
+		const max = formNumber(this.section, sid, d + '_max_rate_kbps', NaN);
 		if (key != 'max_rate_kbps' && base < min)
 			return key == 'min_rate_kbps'
 				? _('Must not be more than the base rate')
@@ -347,6 +366,7 @@ function mbit(kbps) {
 function linkSection(m) {
 	const s = m.section(form.GridSection, 'link', _('Links'),
 		_('A link is one WAN connection with its download and upload shaper. The shapers must have CAKE (for example from SQM).'));
+	page.links = s;
 	s.addremove = true;
 	s.anonymous = false;
 	s.sortable = true;
