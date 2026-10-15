@@ -284,8 +284,8 @@ Each phase is a PR, with the Copilot review cycles.
 4. Calibration stops the **whole service** in the first version.
 5. Own CAKE setup: **later**. First version keeps sqm-scripts and shows a check.
 6. Package format: **apk only** (OpenWrt 25.12). Add ipk later on request.
-8. Graphs (2026-10-15): data only in the browser (no core change), before L5.
 7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11). Menu entry: Services → CAKE Autorate (Go).
+8. Graphs (2026-10-15): data only in the browser (no core change), before L5.
 
 ## 13. Status
 
