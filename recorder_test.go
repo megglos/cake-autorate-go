@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -358,5 +359,39 @@ func TestRecordingCore_RecordsPause(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"type":"pause"`) || !strings.Contains(string(data), `"paused":true`) {
 		t.Errorf("recording has no pause event:\n%s", data)
+	}
+}
+
+// A pause, a resume and a repeated resume (the retry after a failed rate
+// change) give the same shaper decisions in a replay.
+func TestRecording_ReplayPauseAndRetry(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Adjust = true
+	path := filepath.Join(t.TempDir(), "rec.jsonl")
+	start := time.Now()
+	rec, err := newRecorderAt(path, 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, rec, testLogger(t))
+	rc.Start(start)
+	at := func(s int) time.Time { return start.Add(time.Duration(s) * time.Second) }
+	rc.HandleRate(RateStats{Timestamp: at(1), DlRateKbps: 50000, UlRateKbps: 20000})
+	rc.SetPaused(DL, true, at(2))
+	rc.SetPaused(DL, false, at(3))
+	rc.SetPaused(DL, false, at(4)) // retry
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorded, replayed := replayRecording(t, path)
+	var shaper []recDecision
+	for _, d := range recorded {
+		if strings.HasPrefix(d.what, "shaper") {
+			shaper = append(shaper, d)
+		}
+	}
+	if len(shaper) == 0 || !slices.Equal(shaper, replayed) {
+		t.Errorf("recorded %v, replay gave %v", shaper, replayed)
 	}
 }

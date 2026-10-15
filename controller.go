@@ -133,8 +133,8 @@ func (c *LinkController) Run(ctx context.Context) error {
 				c.rateErr = nil
 				c.core.SetPaused(dir, cmd.paused, now)
 				if c.rateErr != nil {
-					// A new command for this direction sets the base rate again.
-					c.core.Core().MarkBaseUnsure(dir)
+					// The user can send the command again: it sets the
+					// base rate again.
 					cmd.err = c.rateErr
 				}
 			}

@@ -456,7 +456,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
 | `list` | Answer with the link names. |
 
-A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. A recording contains the pause and resume events, thus a replay gives the same decisions.
+Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. A recording contains the pause and resume events, thus a replay gives the same decisions.
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

@@ -67,7 +67,6 @@ type dirState struct {
 	rateChanges       int       // number of rate changes since the start
 	lastRequestedKbps int       // last rate that Core sent to the actuator
 	paused            bool      // true: Core does not change the shaper rate
-	baseUnsure        bool      // the last base rate of a pause or resume did not reach the shaper
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -142,24 +141,17 @@ func (c *Core) Start(now time.Time) {
 // rate. While a direction is paused, Core still processes pings and
 // throughput samples, but it does not change the shaper rate. After a
 // resume, the normal control starts from the base rate.
+//
+// Each call sets the base rate, also when the direction is already in the
+// requested state. Thus, the user can send the command again after a failed
+// rate change, and Core keeps no state that the recording does not contain.
 func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
-	// A resume of a running direction changes nothing. A second pause sets
-	// the base rate again: the first attempt can have failed.
-	if ds.paused == paused && !paused && !ds.baseUnsure {
-		return
-	}
 	ds.paused = false
-	ds.baseUnsure = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
 	c.applyRate(dir)
 	ds.paused = paused
 }
-
-// MarkBaseUnsure tells Core that the base rate of the last SetPaused did not
-// reach the shaper. The next SetPaused for the direction sets the base rate
-// again, also a resume.
-func (c *Core) MarkBaseUnsure(dir Direction) { c.getDirState(dir).baseUnsure = true }
 
 // Paused reports whether the rate control of a direction is paused.
 func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }

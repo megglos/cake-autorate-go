@@ -1126,7 +1126,7 @@ func TestSetPaused_StopsRateChangesAndUsesBaseRate(t *testing.T) {
 	}
 }
 
-func TestSetPaused_SecondPauseSetsBaseRateAgain(t *testing.T) {
+func TestSetPaused_RepeatSetsBaseRateAgain(t *testing.T) {
 	cfg := testConfig()
 	cfg.Links[0].Download.Adjust = true
 	act := &fakeActuator{}
@@ -1138,29 +1138,13 @@ func TestSetPaused_SecondPauseSetsBaseRateAgain(t *testing.T) {
 	if len(act.rates[DL]) != n+1 || !c.Paused(DL) {
 		t.Errorf("a second pause must send the base rate again: %v", act.rates[DL])
 	}
-	m := len(act.rates[UL])
-	c.SetPaused(UL, false)
-	if len(act.rates[UL]) != m {
-		t.Error("a resume of a running direction must change nothing")
-	}
-}
-
-func TestSetPaused_ResumeRetriesAfterFailedBaseRate(t *testing.T) {
-	cfg := testConfig()
-	cfg.Links[0].Download.Adjust = true
-	act := &fakeActuator{}
-	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
-	c.Start(time.Now())
-	c.SetPaused(DL, true)
+	// A resume also sets the base rate each time. Thus, a resume after a
+	// failed rate change is a retry.
 	c.SetPaused(DL, false)
-	c.MarkBaseUnsure(DL) // the controller saw an error from the shaper
-	n := len(act.rates[DL])
+	m := len(act.rates[DL])
+	c.ul.shaperRateKbps = float64(cfg.Links[0].Upload.MaxRateKbps)
 	c.SetPaused(DL, false)
-	if len(act.rates[DL]) != n+1 {
-		t.Errorf("a resume after a failed base rate must send the base rate again: %v", act.rates[DL])
-	}
-	c.SetPaused(DL, false)
-	if len(act.rates[DL]) != n+1 {
-		t.Error("after a success, a resume must change nothing")
+	if len(act.rates[DL]) != m+1 || c.Paused(DL) {
+		t.Errorf("a second resume must send the base rate again: %v", act.rates[DL])
 	}
 }
