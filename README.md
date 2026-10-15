@@ -149,6 +149,12 @@ See [config.example.yaml](config.example.yaml) for a fully annotated example.
 
 The program shows a warning for each key in the file that it does not know (for example, a typing error), with the line number and, if a known key is similar, that key. An unknown key has no effect.
 
+To check a config file without a start of the program, use `-check-config`. The program prints the warnings and exits. The exit code is 1 if the file is not valid. Add `-strict` to get exit code 1 also when there are warnings:
+
+```bash
+./cake-autorate-go -config /etc/cake-autorate/config.yaml -check-config -strict
+```
+
 ### Quick Start (Single WAN)
 
 At minimum, set the interfaces and rate limits for your connection:
