@@ -275,12 +275,18 @@ Tests:
 
 Each phase is a PR, with the Copilot review cycles.
 
-## 12. Open questions
+## 12. Decisions (user answers 2026-10-15)
 
-1. Per-link overrides of global keys (section 4): needed? Which keys?
-2. UCI → YAML in ucode or shell? (Proposal: ucode.)
-3. Status interval 1 s enough for the UI? (Proposal: yes; darkmoon uses 200 ms.)
-4. Calibration: stop the whole service or only one link? (Proposal: first version stops the service.)
-5. Own CAKE setup (section 9): now or later? (Proposal: later.)
-6. opkg packages for OpenWrt < 25.12: needed? (The GL-MT6000 runs which version?)
-7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11: aligned with the Go fork). Menu entry: Services → CAKE Autorate (Go).
+1. Per-link overrides: **yes**, in phase L0, as a separate PR. Keys: ping_method, learn_cross_delay, pinger_count, ping_interval_ms. An empty link value uses the global value.
+2. UCI to YAML in **ucode** (proposal accepted by default).
+3. Status interval **1 s** (proposal accepted by default).
+4. Calibration stops the **whole service** in the first version.
+5. Own CAKE setup: **later**. First version keeps sqm-scripts and shows a check.
+6. Package format: **apk only** (OpenWrt 25.12). Add ipk later on request.
+7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11). Menu entry: Services → CAKE Autorate (Go).
+
+## 13. Status
+
+| Phase | Status |
+|---|---|
+| L0 | Not started |
