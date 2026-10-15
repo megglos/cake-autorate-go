@@ -297,12 +297,12 @@ function globalSection(m, sid) {
 	o = number(s, 'advanced', 'shaper_rate_max_adjust_down_bufferbloat', _('Maximum decrease on bufferbloat'), 0.75, 'ufloat',
 		_('A smaller factor is a larger decrease.'));
 	o.validate = rangeOpenClosed(0, 1);
-	o = number(s, 'advanced', 'shaper_rate_min_adjust_up_load_high', _('Minimum increase on high load'), 1, 'min(1)');
-	o = number(s, 'advanced', 'shaper_rate_max_adjust_up_load_high', _('Maximum increase on high load'), 1.04, 'min(1)');
+	o = number(s, 'advanced', 'shaper_rate_min_adjust_up_load_high', _('Minimum increase on high load'), 1, 'and(ufloat,min(1))');
+	o = number(s, 'advanced', 'shaper_rate_max_adjust_up_load_high', _('Maximum increase on high load'), 1.04, 'and(ufloat,min(1))');
 	o = number(s, 'advanced', 'shaper_rate_adjust_down_load_low', _('Decrease on low load'), 0.99, 'ufloat');
 	o.validate = rangeOpenClosed(0, 1);
-	number(s, 'advanced', 'shaper_rate_adjust_up_load_low', _('Increase on low load'), 1.01, 'min(1)');
-	number(s, 'advanced', 'high_load_thr', _('High load threshold'), 0.75, 'range(0,1)',
+	number(s, 'advanced', 'shaper_rate_adjust_up_load_low', _('Increase on low load'), 1.01, 'and(ufloat,min(1))');
+	number(s, 'advanced', 'high_load_thr', _('High load threshold'), 0.75, 'and(ufloat,range(0,1))',
 		_('The part of the shaper rate (0 to 1) above which the load is high.'));
 
 	number(s, 'advanced', 'monitor_interval_ms', _('Load monitor interval (ms)'), 200, 'and(uinteger,min(1))');
@@ -374,6 +374,14 @@ function linkSection(m) {
 	const s = m.section(form.GridSection, 'link', _('Links'),
 		_('A link is one WAN connection with its download and upload shaper. The shapers must have CAKE (for example from SQM).'));
 	page.links = s;
+	// The dialog save loads the page form again from UCI. Write the
+	// pending values of the page to UCI first, else they are lost. An
+	// invalid value of the page stays in the form only.
+	s.handleModalSave = function(modalMap, ev) {
+		const self = this, args = arguments;
+		return m.parse().catch(() => {}).then(() =>
+			form.GridSection.prototype.handleModalSave.apply(self, args));
+	};
 	s.addremove = true;
 	s.anonymous = false;
 	s.sortable = true;
@@ -391,6 +399,19 @@ function linkSection(m) {
 	o.default = '1';
 	o.rmempty = false;
 	o.editable = true;
+	// The table can enable a link without the dialog. Check its
+	// interfaces here too.
+	o.validate = function(sid, value) {
+		if (value == '0')
+			return true;
+		const used = otherInterfaces(sid);
+		for (const d of [ 'dl', 'ul' ]) {
+			const ifname = live(null, sid, d + '_interface');
+			if (ifname && used[ifname])
+				return _('The link "%s" uses the interface %s').format(used[ifname], ifname);
+		}
+		return true;
+	};
 
 	o = s.taboption('interfaces', form.Value, 'name', _('Name'),
 		_('The name in the log and the status. Empty: the section name.'));
@@ -557,8 +578,11 @@ return view.extend({
 
 		// The converter accepts a global section with any name, also an
 		// anonymous one. Without a global section, add one.
+		// If a section of another type has the name "global", add an
+		// anonymous section.
 		const global = uci.sections('cake-autorate', 'global')[0];
-		globalSection(m, global ? global['.name'] : uci.add('cake-autorate', 'global', 'global'));
+		globalSection(m, global ? global['.name']
+			: uci.add('cake-autorate', 'global', uci.get('cake-autorate', 'global') ? null : 'global'));
 		linkSection(m);
 
 		return m.render().then(function(node) {

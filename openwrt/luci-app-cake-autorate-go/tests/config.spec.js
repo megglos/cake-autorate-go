@@ -484,3 +484,55 @@ test('bounded decimal fields reject exponents, like the converter', async ({ pag
 		await setValue(page, 'global', name, '');
 	}
 });
+
+test('saving a link dialog keeps pending service edits', async ({ page }) => {
+	await setValue(page, 'global', 'pinger_count', '5');
+	await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+	await page.locator('.modal .cbi-button-positive').click();
+	await expect(page.locator('.modal')).toBeHidden();
+	await expect(input(page, 'global', 'pinger_count')).toHaveValue('5');
+	await saveApply(page);
+	await expect.poll(() => vm('uci -q get cake-autorate.global.pinger_count || true').trim(), { timeout: 30000 })
+		.toBe('5');
+	resetConfig();
+});
+
+test('a link section with the name "global" does not hide the service settings', async ({ page }) => {
+	vm(`uci delete cake-autorate.global &&
+		uci set cake-autorate.global=link &&
+		uci set cake-autorate.global.enabled=0 &&
+		uci set cake-autorate.global.dl_interface=ifb4g &&
+		uci set cake-autorate.global.ul_interface=eth0 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await expect(page.locator('.cbi-section-table-row[data-sid="global"]')).toContainText('ifb4g');
+	const count = page.locator('[id^="widget.cbid.cake-autorate."][id$=".pinger_count"]').first();
+	await count.fill('5');
+	await count.press('Tab');
+	await saveApply(page);
+	await expect.poll(() => vm("uci show cake-autorate | grep -c '=global$' || true").trim(), { timeout: 30000 })
+		.toBe('1');
+	expect(vm('uci get cake-autorate.@global[0].pinger_count').trim()).toBe('5');
+	expect(vm('uci get cake-autorate.global.dl_interface').trim()).toBe('ifb4g');
+	resetConfig();
+});
+
+test('enabling a link in the table checks its interfaces', async ({ page }) => {
+	// The disabled link "old" uses eth1, the upload interface of "wan".
+	vm(`uci set cake-autorate.old=link &&
+		uci set cake-autorate.old.enabled=0 &&
+		uci set cake-autorate.old.dl_interface=ifb4old &&
+		uci set cake-autorate.old.ul_interface=eth1 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	const box = page.locator('input[data-widget-id="widget.cbid.cake-autorate.old.enabled"]');
+	await box.check();
+	// A checkbox has no error mark. The save shows the error.
+	await page.locator('.cbi-page-actions .cbi-button-save').click();
+	// Both links use eth1 now. One of them shows the error.
+	await expect(page.locator('.modal')).toContainText(/The link "(wan|old)" uses the interface eth1/);
+	expect(vm('uci get cake-autorate.old.enabled').trim()).toBe('0');
+	// LuCI sends the save error also to the page as an exception.
+	errors = errors.filter((e) => !e.includes('uses the interface eth1'));
+	resetConfig();
+});
