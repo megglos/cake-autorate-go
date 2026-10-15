@@ -1,0 +1,72 @@
+name: OpenWrt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  # Test the UCI converter with ucode, built from source.
+  converter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ucode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake libjson-c-dev
+          git clone --depth 1 https://github.com/jow-/ucode.git "$RUNNER_TEMP/ucode"
+          cmake -S "$RUNNER_TEMP/ucode" -B "$RUNNER_TEMP/ucode/build" \
+            -DFS_SUPPORT=ON -DMATH_SUPPORT=OFF -DNL80211_SUPPORT=OFF -DRESOLV_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF -DSTRUCT_SUPPORT=OFF -DUBUS_SUPPORT=OFF -DUCI_SUPPORT=OFF \
+            -DULOOP_SUPPORT=OFF -DDEBUG_SUPPORT=OFF -DLOG_SUPPORT=OFF -DSOCKET_SUPPORT=OFF \
+            -DZLIB_SUPPORT=OFF -DDIGEST_SUPPORT=OFF
+          make -C "$RUNNER_TEMP/ucode/build" -j"$(nproc)"
+          sudo make -C "$RUNNER_TEMP/ucode/build" install
+          sudo ldconfig
+
+      - name: Test the converter
+        working-directory: openwrt/cake-autorate-go
+        run: ucode -L "$PWD/files/*.uc" tests/convert_test.uc files
+
+  # Build the apk packages with the OpenWrt SDK.
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      # To attach the packages to a release.
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64_cortex-a53-openwrt-25.12
+          - x86_64-openwrt-25.12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ matrix.arch }}
+          PACKAGES: cake-autorate-go
+
+      - name: Store packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ matrix.arch }}
+          path: bin/packages/*/action/*.apk
+          if-no-files-found: error
+
+      - name: Attach packages to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" bin/packages/*/action/*.apk

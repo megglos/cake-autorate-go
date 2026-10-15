@@ -1,6 +1,7 @@
-cake-autorate
-cake-autorate-*
-cake-autorate-go
-cake-autorotate-go
+/cake-autorate
+/cake-autorate-*
+/cake-autorate-go
+/cake-autorotate-go
 *.exe
 recordings/
+/bin/
