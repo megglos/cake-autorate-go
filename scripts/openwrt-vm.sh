@@ -10,8 +10,8 @@
 #   scripts/openwrt-vm.sh install APK... copy the packages to the VM and install
 #                                        them (apk gets the dependencies)
 #   scripts/openwrt-vm.sh stop           power off the VM
-#   scripts/openwrt-vm.sh reset          stop and remove the disk (the next
-#                                        start uses a new image)
+#   scripts/openwrt-vm.sh reset          stop and remove the disk and the
+#                                        image (the next start downloads it)
 #
 # Network:
 #   eth0 (lan, 192.168.1.1): QEMU user network. The host connects through
@@ -79,7 +79,10 @@ prepare_disk() {
 		curl -fsSL -o "$DIR/sha256sums" "$URL/sha256sums"
 		(cd "$DIR" && grep " \*$IMAGE.gz\$" sha256sums | sha256sum -c -)
 		# gunzip exits with 2 on the trailing data of the image (a warning).
-		gunzip -c "$DIR/$IMAGE.gz" > "$DIR/$IMAGE" || [ $? -eq 2 ]
+		# Extract to a temporary file, thus a stopped extraction does not
+		# leave an incomplete image.
+		gunzip -c "$DIR/$IMAGE.gz" >"$DIR/$IMAGE.tmp" || [ $? -eq 2 ]
+		mv "$DIR/$IMAGE.tmp" "$DIR/$IMAGE"
 		rm -f "$DIR/$IMAGE.gz"
 	fi
 	if [ ! -f "$DISK" ]; then
@@ -119,7 +122,10 @@ cmd_start() {
 }
 
 cmd_install() {
-	[ $# -gt 0 ] || { echo "usage: $0 install APK..." >&2; exit 1; }
+	if [ $# -eq 0 ]; then
+		echo "usage: $0 install APK..." >&2
+		exit 1
+	fi
 	local remote=()
 	for f in "$@"; do
 		ssh_vm "cat > /tmp/$(basename "$f")" < "$f"
@@ -153,7 +159,7 @@ install)
 stop) cmd_stop ;;
 reset)
 	cmd_stop
-	rm -f "$DISK"
+	rm -f "$DISK" "$DIR/$IMAGE" "$DIR/$IMAGE.tmp" "$DIR/$IMAGE.gz"
 	;;
 *)
 	sed -n '4,15p' "$0" | sed 's/^# \{0,1\}//'

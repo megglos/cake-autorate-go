@@ -50,9 +50,6 @@ jobs:
     # Do not build or publish packages with a converter that fails its tests.
     needs: converter
     runs-on: ubuntu-latest
-    permissions:
-      # To attach the packages to a release.
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -113,12 +110,6 @@ jobs:
           path: dist/*.apk
           if-no-files-found: error
 
-      - name: Attach packages to the release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.apk
-
   # Install the x86_64 package in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
   vm:
@@ -154,3 +145,22 @@ jobs:
       - name: Stop the VM
         if: always()
         run: scripts/openwrt-vm.sh stop
+
+  # Attach the packages to the release, only after all tests passed.
+  release:
+    if: github.event_name == 'release'
+    needs: [package, vm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: openwrt-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.apk -R "${{ github.repository }}"
