@@ -220,6 +220,21 @@ links:
 
 For multi-WAN routers (e.g., with mwan3), set `ping_interface` on each link so ICMP packets are routed through the correct WAN using `SO_BINDTODEVICE`. You can optionally set `ping_source_addr` to bind to a specific source IP.
 
+### Link overrides
+
+A link can override four top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms` and `learn_cross_delay`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. If a link sets `ping_method` and no reflectors, and the config sets no top-level reflectors, the link uses the default list for its own ping method.
+
+```yaml
+ping_method: icmp
+links:
+  - name: fiber
+    # ...
+  - name: g5
+    ping_method: icmp-timestamp
+    learn_cross_delay: true
+    # ...
+```
+
 ### Reflectors
 
 Reflectors are remote hosts used for latency measurement via ICMP ping. You can set reflectors in two places:

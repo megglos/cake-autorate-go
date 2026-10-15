@@ -49,6 +49,14 @@ type LinkConfig struct {
 	Reflectors        []string        `yaml:"reflectors"`
 	PingSourceAddr    string          `yaml:"ping_source_addr"`
 	PingInterfaceName string          `yaml:"ping_interface"`
+
+	// The next four keys override the top-level key of the same name for
+	// this link. A key that the link does not set (nil) uses the top-level
+	// value. Use ForLink to get the values that apply to a link.
+	PingerCount     *int    `yaml:"pinger_count"`
+	PingIntervalMs  *int    `yaml:"ping_interval_ms"`
+	PingMethod      *string `yaml:"ping_method"`
+	LearnCrossDelay *bool   `yaml:"learn_cross_delay"`
 }
 
 // DirConfig returns the DirectionConfig for the given direction.
@@ -145,6 +153,29 @@ type Config struct {
 	// unknownKeys are the keys in the config file that the program does not
 	// know (for example, a typing error). LoadConfig sets them.
 	unknownKeys []string
+	// reflectorsDefault is true if the config sets no top-level reflectors
+	// and LoadConfig used the default list for the top-level ping_method.
+	reflectorsDefault bool
+}
+
+// ForLink returns a copy of the config in which the link overrides of
+// pinger_count, ping_interval_ms, ping_method and learn_cross_delay
+// apply. The controller of a link uses this copy.
+func (c *Config) ForLink(l *LinkConfig) *Config {
+	cp := *c
+	if l.PingerCount != nil {
+		cp.PingerCount = *l.PingerCount
+	}
+	if l.PingIntervalMs != nil {
+		cp.PingIntervalMs = *l.PingIntervalMs
+	}
+	if l.PingMethod != nil {
+		cp.PingMethod = *l.PingMethod
+	}
+	if l.LearnCrossDelay != nil {
+		cp.LearnCrossDelay = *l.LearnCrossDelay
+	}
+	return &cp
 }
 
 // Ping methods.
@@ -289,6 +320,7 @@ func LoadConfig(path string) (*Config, error) {
 
 	if len(cfg.Reflectors) == 0 {
 		cfg.Reflectors = defaultReflectors(cfg.PingMethod)
+		cfg.reflectorsDefault = true
 	}
 
 	// Migrate legacy single-link config to links list
@@ -310,6 +342,10 @@ func (c *Config) migrateLinks() {
 		for i := range c.Links {
 			if len(c.Links[i].Reflectors) == 0 {
 				c.Links[i].Reflectors = c.Reflectors
+				// The default list depends on the ping method of the link.
+				if c.reflectorsDefault && c.Links[i].PingMethod != nil {
+					c.Links[i].Reflectors = defaultReflectors(*c.Links[i].PingMethod)
+				}
 			}
 			// The YAML parser creates each link from zero values. Thus, a
 			// threshold that the link does not set is 0. Use the top-level
@@ -444,8 +480,8 @@ func editDistance(a, b string) int {
 // Warnings returns the problems in the config that do not stop the program.
 func (c *Config) Warnings() []string {
 	w := slices.Clone(c.unknownKeys)
-	if c.PingMethod == PingMethodTimestamp {
-		for _, link := range c.Links {
+	for _, link := range c.Links {
+		if c.ForLink(&link).PingMethod == PingMethodTimestamp {
 			var bad []string
 			for _, r := range link.Reflectors {
 				if noTimestampReply(r) {
@@ -522,7 +558,17 @@ func (c *Config) Validate() error {
 		if len(link.Reflectors) == 0 {
 			return fmt.Errorf("link %q: at least one reflector must be configured", link.Name)
 		}
-		if c.PingMethod == PingMethodTimestamp && !slices.ContainsFunc(link.Reflectors, func(r string) bool { return !noTimestampReply(r) }) {
+		lc := c.ForLink(&link)
+		if lc.PingerCount <= 0 {
+			return fmt.Errorf("link %q: pinger_count must be positive", link.Name)
+		}
+		if lc.PingIntervalMs <= 0 {
+			return fmt.Errorf("link %q: ping_interval_ms must be positive", link.Name)
+		}
+		if lc.PingMethod != PingMethodEcho && lc.PingMethod != PingMethodTimestamp {
+			return fmt.Errorf("link %q: ping_method must be %q or %q", link.Name, PingMethodEcho, PingMethodTimestamp)
+		}
+		if lc.PingMethod == PingMethodTimestamp && !slices.ContainsFunc(link.Reflectors, func(r string) bool { return !noTimestampReply(r) }) {
 			return fmt.Errorf("link %q: no reflector replies to ICMP timestamp requests. "+
 				"Remove the reflectors from the config to use the default list for icmp-timestamp", link.Name)
 		}

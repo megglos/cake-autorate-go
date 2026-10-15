@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -564,5 +565,81 @@ links:
 	}
 	if w := cfg.Warnings(); len(w) != 0 {
 		t.Errorf("config.example.yaml gives warnings: %v", w)
+	}
+}
+
+const linkOverrideYAML = `
+ping_method: icmp
+pinger_count: 6
+ping_interval_ms: 300
+learn_cross_delay: false
+links:
+  - name: fiber
+    download: {interface: ifb-a, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+    upload: {interface: eth-a, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+  - name: g5
+    ping_method: icmp-timestamp
+    pinger_count: 4
+    ping_interval_ms: 100
+    learn_cross_delay: true
+    download: {interface: ifb-b, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+    upload: {interface: eth-b, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}
+`
+
+func TestLoadConfig_LinkOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(linkOverrideYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := cfg.Warnings(); len(w) != 0 {
+		t.Errorf("unexpected warnings: %v", w)
+	}
+	fiber, g5 := cfg.ForLink(&cfg.Links[0]), cfg.ForLink(&cfg.Links[1])
+	if fiber.PingMethod != PingMethodEcho || fiber.PingerCount != 6 || fiber.PingIntervalMs != 300 || fiber.LearnCrossDelay {
+		t.Errorf("link without overrides must use the top-level values: %+v", fiber)
+	}
+	if g5.PingMethod != PingMethodTimestamp || g5.PingerCount != 4 || g5.PingIntervalMs != 100 || !g5.LearnCrossDelay {
+		t.Errorf("link overrides do not apply: %+v", g5)
+	}
+	if cfg.PingerCount != 6 || cfg.PingMethod != PingMethodEcho {
+		t.Error("ForLink must not change the top-level config")
+	}
+	// The default reflectors follow the ping method of each link.
+	if !slices.Equal(cfg.Links[0].Reflectors, defaultReflectors(PingMethodEcho)) {
+		t.Errorf("fiber reflectors: %v", cfg.Links[0].Reflectors)
+	}
+	if !slices.Equal(cfg.Links[1].Reflectors, defaultReflectors(PingMethodTimestamp)) {
+		t.Errorf("g5 reflectors: %v", cfg.Links[1].Reflectors)
+	}
+}
+
+func TestValidate_LinkOverrides(t *testing.T) {
+	zero, method := 0, "tcp"
+	for name, set := range map[string]func(*LinkConfig){
+		"pinger_count":     func(l *LinkConfig) { l.PingerCount = &zero },
+		"ping_interval_ms": func(l *LinkConfig) { l.PingIntervalMs = &zero },
+		"ping_method":      func(l *LinkConfig) { l.PingMethod = &method },
+	} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		set(&cfg.Links[0])
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: expected an error, got: %v", name, err)
+		}
+	}
+}
+
+func TestWarnings_LinkTimestampReflectors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	method := PingMethodTimestamp
+	cfg.Links[0].PingMethod = &method
+	if w := cfg.Warnings(); len(w) != 1 || !strings.Contains(w[0], "timestamp") {
+		t.Errorf("expected a timestamp warning, got: %v", w)
 	}
 }
