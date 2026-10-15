@@ -170,7 +170,8 @@ return view.extend({
 
 	// The cursor on a graph: the link, the graph, and the x position of the
 	// pointer as a fraction of the width ("fx") or the time of the sample
-	// that the keyboard selected ("t"). A refresh shows the cursor again.
+	// that the keyboard selected ("t"), and the time of the shown sample
+	// ("shown"). A refresh shows the cursor again.
 	hover: null,
 
 	// Adds one sample for each link if the program wrote a new status, and
@@ -265,9 +266,10 @@ return view.extend({
 			}
 			if (best == null)
 				return hideCursor();
-			// A keyboard selection follows the shown sample: the selected
-			// sample can be out of the period now. Thus the arrow keys
-			// start from the shown sample.
+			// The arrow keys start from the shown sample: the sample under
+			// the pointer, or the oldest sample in the period if the
+			// selected sample is out of the period now.
+			hover.shown = best.t;
 			if (hover.t != null)
 				hover.t = best.t;
 			const bestX = xOf(best);
@@ -300,10 +302,10 @@ return view.extend({
 			this.hover = null;
 			hideCursor();
 		};
-		// The index of the selected sample, or -1.
+		// The index of the shown sample, or -1.
 		const selected = () => {
 			const h = this.hover;
-			return (h && h.name == name && h.kind == kind && h.t != null) ? visible.findIndex((s) => s.t == h.t) : -1;
+			return (h && h.name == name && h.kind == kind) ? visible.findIndex((s) => s.t == h.shown) : -1;
 		};
 
 		graph.addEventListener('pointermove', (ev) => {

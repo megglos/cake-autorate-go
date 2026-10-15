@@ -395,6 +395,28 @@ test('the arrow keys start from the shown sample after the selected one is too o
 	expect(next).toBeGreaterThanOrEqual(shown - 5);
 });
 
+test('the arrow keys start from the sample under the pointer', async ({ page }) => {
+	await page.goto(PAGE);
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	const plot = rate.locator('svg');
+	const tip = rate.locator('.graph-tip');
+	const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(8);
+
+	// Point to the second oldest sample, then use the keyboard.
+	const box = await plot.boundingBox();
+	const x = (await points(page, 'rate', 'dl-shaper'))[1][1];
+	await page.mouse.move(box.x + x / 600 * box.width, box.y + box.height / 2);
+	await expect(tip).toBeVisible();
+	const shown = await ago();
+	expect(shown).toBeGreaterThanOrEqual(10);
+	await plot.focus();
+	await page.keyboard.press('ArrowRight');
+	const next = await ago();
+	expect(next).toBeLessThan(shown);
+	expect(next).toBeGreaterThanOrEqual(shown - 5);
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {
