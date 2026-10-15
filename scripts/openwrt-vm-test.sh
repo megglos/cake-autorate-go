@@ -148,9 +148,30 @@ wait_for "stop removes the status file and the socket" '! pidof cake-autorate-go
 echo "== LuCI app"
 check "web server sends the view" 'wget -qO- http://127.0.0.1/luci-static/resources/view/cake-autorate/config.js | grep -q "view.extend"'
 check "menu file is valid JSON" 'jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e "@[\"admin/services/cake-autorate/config\"].action.path" | grep -q "^cake-autorate/config$"'
+# root has all permissions. The user "cakeacl" has only the ACL groups of
+# the app and of luci-base, thus the checks show missing permissions.
+vm 'uci -q delete rpcd.cakeacl
+	uci set rpcd.cakeacl=login
+	uci set rpcd.cakeacl.username=cakeacl
+	uci set rpcd.cakeacl.password="\$p\$root"
+	uci add_list rpcd.cakeacl.read=luci-base
+	uci add_list rpcd.cakeacl.read=luci-app-cake-autorate-go
+	uci add_list rpcd.cakeacl.write=luci-app-cake-autorate-go
+	uci commit rpcd
+	/etc/init.d/rpcd reload' || fail "add the rpcd user cakeacl"
+sleep 2
+# access SCOPE OBJECT FUNCTION: checks a permission of the user cakeacl.
+access() {
+	vm "sid=\$(ubus call session login '{\"username\":\"cakeacl\",\"password\":\"\"}' | jsonfilter -e @.ubus_rpc_session) &&
+		ubus call session access '{\"ubus_rpc_session\":\"'\$sid'\",\"scope\":\"$1\",\"object\":\"$2\",\"function\":\"$3\"}' | grep -q '\"access\": true'"
+}
 # rpcd loads the ACL file only if it is valid.
-check "rpcd knows the ACL group" 'sid=$(ubus call session login "{\"username\":\"root\",\"password\":\"\"}" | jsonfilter -e "@.ubus_rpc_session") &&
-	ubus call session access "{\"ubus_rpc_session\":\"$sid\",\"scope\":\"access-group\",\"object\":\"luci-app-cake-autorate-go\",\"function\":\"write\"}" | grep -q "\"access\": true"'
+access access-group luci-app-cake-autorate-go write && ok "ACL: app group" || fail "ACL: app group"
+access uci cake-autorate write && ok "ACL: write the UCI configuration" || fail "ACL: write the UCI configuration"
+access ubus file read && ok "ACL: ubus file read" || fail "ACL: ubus file read"
+access file /var/run/cake-autorate/config-error read && ok "ACL: read the error file" || fail "ACL: read the error file"
+access file /etc/shadow read && fail "ACL: other files are not readable" || ok "ACL: other files are not readable"
+vm 'uci delete rpcd.cakeacl && uci commit rpcd && /etc/init.d/rpcd reload'
 
 if [ "$FAILED" -ne 0 ]; then
 	echo "== log"

@@ -235,6 +235,7 @@ scripts/openwrt-build.sh x86_64-openwrt-25.12
 scripts/openwrt-vm.sh start
 scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
 scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
+(cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI page in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
 scripts/openwrt-vm.sh stop
 ```

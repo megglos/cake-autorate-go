@@ -110,7 +110,8 @@ function number(s, tab, name, title, def, datatype, description) {
 
 // Returns the names of the interfaces that the other link sections use.
 function otherInterfaces(sid) {
-	const used = {};
+	// No prototype: names such as "constructor" are valid interface names.
+	const used = Object.create(null);
 	for (const s of uci.sections('cake-autorate', 'link')) {
 		if (s['.name'] == sid)
 			continue;
@@ -135,7 +136,9 @@ function globalSection(m) {
 
 	o = s.taboption('general', form.Flag, 'enabled', _('Enabled'),
 		_('Start the service. The service also needs at least one enabled link.'));
-	o.default = '0';
+	// The converter starts the service if the option is not set. The
+	// package configuration sets '0'.
+	o.default = '1';
 	o.rmempty = false;
 
 	o = field(s, 'general', form.ListValue, 'ping_method', _('Ping method'), null,
@@ -459,9 +462,9 @@ return view.extend({
 		linkSection(m);
 
 		return m.render().then(function(node) {
+			// The box is not in the form: LuCI makes the form again after
+			// a save and would remove the box.
 			const box = E('div', {}, renderError(data[0]));
-			const descr = node.querySelector('.cbi-map-descr');
-			node.insertBefore(box, descr ? descr.nextSibling : node.firstChild);
 			// The service starts after "Save & Apply". Show its errors
 			// when they come.
 			poll.add(function() {
@@ -469,7 +472,7 @@ return view.extend({
 					box.replaceChildren(renderError(text));
 				});
 			}, 5);
-			return node;
+			return E('div', {}, [ box, node ]);
 		});
 	}
 });

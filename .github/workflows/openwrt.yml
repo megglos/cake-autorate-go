@@ -142,8 +142,9 @@ jobs:
           path: dist/*.apk
           if-no-files-found: error
 
-  # Install the x86_64 package in an OpenWrt VM and test the service:
+  # Install the x86_64 packages in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
+  # Then test the LuCI page in a browser (Playwright).
   vm:
     needs: package
     runs-on: ubuntu-latest
@@ -173,6 +174,30 @@ jobs:
 
       - name: Test the service
         run: scripts/openwrt-vm-test.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
+
+      - name: Install the browser for the LuCI tests
+        working-directory: openwrt/luci-app-cake-autorate-go/tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Test the LuCI app in a browser
+        working-directory: openwrt/luci-app-cake-autorate-go/tests
+        run: npx playwright test
+
+      - name: Store the browser test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-test-results
+          path: openwrt/luci-app-cake-autorate-go/tests/test-results
+          if-no-files-found: ignore
 
       - name: Stop the VM
         if: always()

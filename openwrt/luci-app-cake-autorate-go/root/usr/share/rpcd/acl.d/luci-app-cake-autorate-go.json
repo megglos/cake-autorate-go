@@ -5,6 +5,9 @@
 			"file": {
 				"/var/run/cake-autorate/config-error": [ "read" ]
 			},
+			"ubus": {
+				"file": [ "read" ]
+			},
 			"uci": [ "cake-autorate" ]
 		},
 		"write": {

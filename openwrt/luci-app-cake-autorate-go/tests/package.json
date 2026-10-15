@@ -1,0 +1,11 @@
+{
+  "name": "luci-app-cake-autorate-go-tests",
+  "private": true,
+  "description": "Browser tests of the LuCI app in the OpenWrt VM of scripts/openwrt-vm.sh",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
