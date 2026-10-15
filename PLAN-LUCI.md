@@ -11,7 +11,7 @@ On the branch `plans`, like PLAN.md. This is roadmap step 9 in PLAN.md. It runs 
 5. Enable and disable autorate for each link, and for each direction of a link, from the UI (user request 2026-10-11).
 6. Keep the YAML config as the single format of the program. The tests, the simulator and the recordings do not change.
 
-Out of scope (for now): a graph with history, Starlink-specific UI before step 5 is done, other platforms than OpenWrt.
+Out of scope (for now): a history that the router keeps (the graphs keep their data only in the browser), Starlink-specific UI before step 5 is done, other platforms than OpenWrt.
 
 ## 2. Reference: darkmoon
 
@@ -185,7 +185,7 @@ Page with one card for each link (poll every 2 s through `fs.read` of the status
 | Reflectors: address, last RTT, baseline, misbehaving count | Pinger / Core |
 | Rate changes in the last minute | Counter |
 
-Optional: a small sparkline of the last 60 s (shaper rate and delta), from a ring buffer in the status JSON. No external chart library: LuCI has none; use SVG.
+Graphs (phase L4b, user decision 2026-10-15): for each link, one graph of the rates (shaper and achieved, DL and UL) and one graph of the delay delta (DL, UL, threshold). The page keeps the samples in the browser while it is open (a ring buffer, maximum 15 min). A reload of the page starts with an empty graph. The core does not change. No external chart library: LuCI has none; use SVG.
 
 Overview widget `status/include/70_cake-autorate.js`: one row for each link (state, DL/UL shaper, DL/UL delta), like darkmoon.
 
@@ -269,6 +269,7 @@ Tests:
 | L2 | VM script, install and run in the VM | L1 | S |
 | L3 | LuCI config page: global section + link grid with modal, validation, apply | L1 | M |
 | L4 | LuCI status page (with pause/resume for each link) + Overview widget | L0, L3 | S–M |
+| L4b | Graphs on the status page: rates and delay delta for each link, data only in the browser, SVG | L4 | S |
 | L5 | Calibration: ucode rpc plugin, dialog, progress, result, apply | step 6b, L3 | M |
 | L6 | Optional: CAKE setup by the package, CAKE tab | L3 | M |
 | L7 | Docs (README section, screenshots), release workflow | all | S |
@@ -283,6 +284,7 @@ Each phase is a PR, with the Copilot review cycles.
 4. Calibration stops the **whole service** in the first version.
 5. Own CAKE setup: **later**. First version keeps sqm-scripts and shows a check.
 6. Package format: **apk only** (OpenWrt 25.12). Add ipk later on request.
+8. Graphs (2026-10-15): data only in the browser (no core change), before L5.
 7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11). Menu entry: Services → CAKE Autorate (Go).
 
 ## 13. Status
