@@ -150,6 +150,10 @@ type Config struct {
 	LogFileMaxSizeKB int    `yaml:"log_file_max_size_kb"`
 	Debug            bool   `yaml:"debug"`
 
+	// StatusFile is the path of the status file. The program writes the
+	// status of all links to it each second. Empty: no status file.
+	StatusFile string `yaml:"status_file"`
+
 	// unknownKeys are the keys in the config file that the program does not
 	// know (for example, a typing error). LoadConfig sets them.
 	unknownKeys []string

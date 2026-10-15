@@ -63,6 +63,8 @@ type dirState struct {
 	lastDecayTime    time.Time
 	crossDelayUs     float64   // learned delay from activity in the other direction
 	lowLoadSince     time.Time // start of the low load for the cross delay, or zero
+	lastDeltaUs      float64   // delay delta of the last ping reply
+	rateChanges      int       // number of rate changes since the start
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -138,6 +140,16 @@ func (c *Core) State() State { return c.state }
 // ShaperRateKbps returns the current shaper rate for a direction.
 func (c *Core) ShaperRateKbps(dir Direction) float64 {
 	return c.getDirState(dir).shaperRateKbps
+}
+
+// ReflectorBaselinesUs returns the baseline RTT of each reflector with a
+// reply.
+func (c *Core) ReflectorBaselinesUs() map[string]float64 {
+	out := make(map[string]float64, len(c.reflectors))
+	for r, rd := range c.reflectors {
+		out[r] = rd.baselineUs
+	}
+	return out
 }
 
 // ResetReflector removes the delay data for a reflector. Use it when a spare
@@ -356,6 +368,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	thresholdUs := dc.OWDDeltaDelayThrMs*1000.0 + compensationUs
 
 	// Record the result in the sliding window. Keep the count in O(1).
+	ds.lastDeltaUs = deltaUs
 	exceeded := deltaUs > thresholdUs
 	old := ds.delayWindow[ds.delayWindowIdx]
 	ds.delayWindow[ds.delayWindowIdx] = exceeded
@@ -523,6 +536,7 @@ func (c *Core) applyRate(dir Direction) {
 	if !c.link.DirConfig(dir).Adjust {
 		return
 	}
+	c.getDirState(dir).rateChanges++
 	c.act.SetRate(dir, int(math.Round(c.getDirState(dir).shaperRateKbps)))
 }
 

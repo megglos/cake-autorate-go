@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"time"
 	"syscall"
 )
 
@@ -120,11 +121,27 @@ func main() {
 	shaper := NewShaper(logger)
 	defer shaper.Close()
 
-	// Launch a LinkController per configured link
+	// Optional status file, for tools that show the state of the links
+	var board *StatusBoard
 	var wg sync.WaitGroup
+	if cfg.StatusFile != "" {
+		names := make([]string, len(cfg.Links))
+		for i, l := range cfg.Links {
+			names[i] = l.Name
+		}
+		board = NewStatusBoard(version, time.Now(), names)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			RunStatusWriter(ctx, board, cfg.StatusFile, logger)
+		}()
+	}
+
+	// Launch a LinkController per configured link
 	for i := range cfg.Links {
 		link := &cfg.Links[i]
 		lc := NewLinkController(link, cfg.ForLink(link), shaper, recorder, logger)
+		lc.board = board
 
 		wg.Add(1)
 		go func(ctrl *LinkController, linkName string) {
@@ -229,4 +246,5 @@ func printDefaults() {
 	fmt.Printf("log_file_path: %s\n", cfg.LogFilePath)
 	fmt.Printf("log_file_max_size_kb: %d\n", cfg.LogFileMaxSizeKB)
 	fmt.Printf("debug: %t\n", cfg.Debug)
+	fmt.Printf("# status_file: /var/run/cake-autorate/status.json  # status of all links, written each second\n")
 }
