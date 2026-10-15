@@ -50,7 +50,13 @@ define Package/cake-autorate-go
   CATEGORY:=Network
   TITLE:=Adaptive CAKE shaper rate control (Go)
   URL:=https://github.com/megglos/cake-autorate-go
+ifeq ($(PREBUILT),)
   DEPENDS:=$(GO_ARCH_DEPENDS) +kmod-sched-cake +tc +ucode +ucode-mod-fs +ucode-mod-uci
+else
+  # The same dependencies, but only in the package. With DEPENDS, the SDK
+  # also compiles all of them (for tc: iproute2 with libbpf and elfutils).
+  EXTRA_DEPENDS:=kmod-sched-cake (>=0), tc (>=0), ucode (>=0), ucode-mod-fs (>=0), ucode-mod-uci (>=0)
+endif
 endef
 
 define Package/cake-autorate-go/description
