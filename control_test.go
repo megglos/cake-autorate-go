@@ -268,3 +268,19 @@ func TestListenPrivate(t *testing.T) {
 	}
 	conn.Close()
 }
+
+func TestListenPrivate_LongPath(t *testing.T) {
+	dir := t.TempDir()
+	// Make a socket path of maxControlSocketPath bytes in dir. The longest
+	// temporary path is the parent directory, "/.c", 10 digits and "/s".
+	n := maxControlSocketPath - len(dir) - 1
+	if n < 2 {
+		t.Skipf("the test directory %s is too long", dir)
+	}
+	path := filepath.Join(dir, strings.Repeat("s", n))
+	ln, _, err := listenPrivate(path)
+	if err != nil {
+		t.Fatalf("path of %d bytes: %v", len(path), err)
+	}
+	ln.Close()
+}

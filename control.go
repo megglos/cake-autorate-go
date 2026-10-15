@@ -117,9 +117,11 @@ func removeStaleSocket(path string) error {
 // mode of the socket to 0600 and then moves the socket to path. Thus, no
 // other user can connect before the mode is correct. Do not change the
 // umask for this: the umask applies to all goroutines of the program.
-// listenPrivate returns the listener and the file info of the socket.
+// The name of the directory is short, because Linux limits the length of a
+// socket path (see maxControlSocketPath). listenPrivate returns the
+// listener and the file info of the socket.
 func listenPrivate(path string) (net.Listener, os.FileInfo, error) {
-	dir, err := os.MkdirTemp(filepath.Dir(path), ".control-")
+	dir, err := os.MkdirTemp(filepath.Dir(path), ".c")
 	if err != nil {
 		return nil, nil, err
 	}

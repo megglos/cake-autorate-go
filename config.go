@@ -515,6 +515,14 @@ var ifnameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 // The longest command with such a name is much shorter than maxControlLine.
 var controlNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
+// maxControlSocketPath is the maximum length of control_socket in bytes.
+// Linux accepts a Unix socket path of not more than 107 bytes. The program
+// creates the socket first in a temporary directory next to the path (see
+// listenPrivate). That path can be 15 bytes longer than the parent
+// directory plus the socket name. This limit keeps all such paths short
+// enough.
+const maxControlSocketPath = 90
+
 // validateIfname checks that name is a valid Linux network interface name.
 func validateIfname(name string) error {
 	if !ifnameRe.MatchString(name) {
@@ -527,6 +535,10 @@ func validateIfname(name string) error {
 func (c *Config) Validate() error {
 	if len(c.Links) == 0 {
 		return fmt.Errorf("at least one link must be configured")
+	}
+
+	if len(c.ControlSocket) > maxControlSocketPath {
+		return fmt.Errorf("control_socket %q is longer than %d bytes", c.ControlSocket, maxControlSocketPath)
 	}
 
 	seen := make(map[string]bool)

@@ -448,7 +448,7 @@ The file is JSON. The key `schema` is the version of the format. For each link, 
 
 ### Control socket
 
-Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock`. The program then listens on this Unix socket. With the control socket, each link name must have 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `.` and `-`. Only the owner of the socket can connect. A client sends one line and reads one line as the answer, `ok` or `error: MESSAGE`:
+Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock`. The program then listens on this Unix socket. The path can have not more than 90 bytes. With the control socket, each link name must have 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `_`, `.` and `-`. Only the owner of the socket can connect. A client sends one line and reads one line as the answer, `ok` or `error: MESSAGE`:
 
 | Command | Effect |
 |---|---|
@@ -527,7 +527,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `log_file_max_size_kb` | `2000` | Maximum size of the log file (KB) |
 | `debug` | `false` | Write more log messages |
 | `status_file` | (empty) | Path of the status file. The program writes the status of all links to it each second. Empty: no status file |
-| `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume` and `list`. Empty: no control socket |
+| `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume` and `list`. Not more than 90 bytes. Empty: no control socket |
 
 ## Usage
 

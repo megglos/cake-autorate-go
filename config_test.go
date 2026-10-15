@@ -679,3 +679,16 @@ func TestValidate_DuplicateLinkName(t *testing.T) {
 		t.Errorf("expected a duplicate name error, got: %v", err)
 	}
 }
+
+func TestValidate_ControlSocketPathLength(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.ControlSocket = "/" + strings.Repeat("a", maxControlSocketPath-1)
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a path of %d bytes is valid: %v", maxControlSocketPath, err)
+	}
+	cfg.ControlSocket += "a"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "longer than") {
+		t.Errorf("expected a length error, got: %v", err)
+	}
+}
