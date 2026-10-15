@@ -369,17 +369,18 @@ type ReflectorStatus struct {
 	Missed int `json:"missed"`
 }
 
-// Snapshot returns the health of all reflectors. The active reflectors come
-// first.
+// Snapshot returns the health of all reflectors in the order of the pool.
+// The reflectors of the selected set come first. Active is true while the
+// pinger of the reflector runs.
 func (pm *PingerManager) Snapshot() []ReflectorStatus {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	active := min(pm.cfg.PingerCount, len(pm.reflectors))
 	out := make([]ReflectorStatus, 0, len(pm.reflectors))
-	for i, r := range pm.reflectors {
-		st := ReflectorStatus{Address: r, Active: i < active}
+	for _, r := range pm.reflectors {
+		st := ReflectorStatus{Address: r}
 		if state := pm.states[r]; state != nil {
 			state.mu.Lock()
+			st.Active = state.Active
 			for _, m := range state.MissedWindow {
 				if m {
 					st.Missed++

@@ -79,12 +79,29 @@ func TestRunStatusWriter(t *testing.T) {
 	if err := json.Unmarshal(data, &f); err != nil || len(f.Links) != 1 {
 		t.Fatalf("status file not valid: %v %q", err, data)
 	}
-	if _, err := os.Stat(path + ".tmp"); err == nil {
-		t.Error("temporary file must not stay")
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
+		t.Errorf("temporary files must not stay: %v", left)
 	}
 	cancel()
 	<-done
 	if _, err := os.Stat(path); err == nil {
 		t.Error("status file must be removed at stop")
+	}
+}
+
+func TestRateChangesCountOnlyChanges(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	core := NewCore(&cfg.Links[0], cfg, 1500, 1500, nopActuator{}, NewDiscardLogger())
+	core.Start(time.Now())
+	core.applyRate(DL)
+	core.applyRate(DL)
+	if n := core.Snapshot().Download.RateChanges; n != 1 {
+		t.Errorf("rate changes: %d, want 1", n)
+	}
+	core.dl.shaperRateKbps--
+	core.applyRate(DL)
+	if n := core.Snapshot().Download.RateChanges; n != 2 {
+		t.Errorf("rate changes: %d, want 2", n)
 	}
 }

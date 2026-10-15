@@ -521,10 +521,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one link must be configured")
 	}
 
+	seen := make(map[string]bool)
 	for _, link := range c.Links {
 		if link.Name == "" {
 			return fmt.Errorf("each link must have a name")
 		}
+		if seen[link.Name] {
+			return fmt.Errorf("link name %q is used more than one time", link.Name)
+		}
+		seen[link.Name] = true
 		for _, dc := range []struct {
 			name string
 			dir  DirectionConfig

@@ -50,21 +50,22 @@ type Actuator interface {
 
 // dirState is the runtime state for one direction.
 type dirState struct {
-	shaperRateKbps   float64
-	achievedKbps     float64 // last measured throughput
-	loadPercent      float64
-	mtuBytes         int
-	delayWindow      []bool // true: the delay was more than the threshold
-	delayWindowIdx   int
-	delayWindowCount int // number of true entries (no O(n) scan)
-	bbDetected       bool
-	lastBBDeltaUs    float64 // delta at the last decrease
-	lastBBTime       time.Time
-	lastDecayTime    time.Time
-	crossDelayUs     float64   // learned delay from activity in the other direction
-	lowLoadSince     time.Time // start of the low load for the cross delay, or zero
-	lastDeltaUs      float64   // delay delta of the last ping reply
-	rateChanges      int       // number of rate changes since the start
+	shaperRateKbps    float64
+	achievedKbps      float64 // last measured throughput
+	loadPercent       float64
+	mtuBytes          int
+	delayWindow       []bool // true: the delay was more than the threshold
+	delayWindowIdx    int
+	delayWindowCount  int // number of true entries (no O(n) scan)
+	bbDetected        bool
+	lastBBDeltaUs     float64 // delta at the last decrease
+	lastBBTime        time.Time
+	lastDecayTime     time.Time
+	crossDelayUs      float64   // learned delay from activity in the other direction
+	lowLoadSince      time.Time // start of the low load for the cross delay, or zero
+	lastDeltaUs       float64   // delay delta of the last ping reply
+	rateChanges       int       // number of rate changes since the start
+	lastRequestedKbps int       // last rate that Core sent to the actuator
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -536,8 +537,14 @@ func (c *Core) applyRate(dir Direction) {
 	if !c.link.DirConfig(dir).Adjust {
 		return
 	}
-	c.getDirState(dir).rateChanges++
-	c.act.SetRate(dir, int(math.Round(c.getDirState(dir).shaperRateKbps)))
+	ds := c.getDirState(dir)
+	rate := int(math.Round(ds.shaperRateKbps))
+	if rate != ds.lastRequestedKbps {
+		ds.lastRequestedKbps = rate
+		ds.rateChanges++
+	}
+	// Always send the rate: after a stall, the system can have changed it.
+	c.act.SetRate(dir, rate)
 }
 
 func (c *Core) getDirState(dir Direction) *dirState {
