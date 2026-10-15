@@ -1,9 +1,10 @@
 {
 	"luci-app-cake-autorate-go": {
-		"description": "Grant access to the configuration of cake-autorate-go",
+		"description": "Grant access to the configuration and the status of cake-autorate-go",
 		"read": {
 			"file": {
-				"/var/run/cake-autorate/config-error": [ "read" ]
+				"/var/run/cake-autorate/config-error": [ "read" ],
+				"/var/run/cake-autorate/status.json": [ "read" ]
 			},
 			"ubus": {
 				"file": [ "read" ]
@@ -11,6 +12,9 @@
 			"uci": [ "cake-autorate" ]
 		},
 		"write": {
+			"ubus": {
+				"cake-autorate": [ "pause", "resume" ]
+			},
 			"uci": [ "cake-autorate" ]
 		}
 	}

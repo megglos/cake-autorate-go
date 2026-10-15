@@ -3,8 +3,8 @@
 #
 # Tests the packages cake-autorate-go and luci-app-cake-autorate-go in the
 # OpenWrt VM of scripts/openwrt-vm.sh: start, status file, control socket,
-# reload, invalid configuration, disable, stop, and the files of the LuCI
-# app.
+# reload, invalid configuration, disable, stop, and the files, the rpcd
+# plugin and the ACL of the LuCI app.
 #
 # Usage: scripts/openwrt-vm-test.sh
 # Start the VM and install the packages first:
@@ -69,7 +69,8 @@ control() {
 
 echo "== preparation"
 # The test uses CAKE on eth1 (upload) and br-lan (download, the traffic to
-# the LAN). The socket module is only for the control socket test.
+# the LAN). The LuCI app installs the socket module. Install it also for
+# a test of cake-autorate-go without the LuCI app.
 vm 'apk add ucode-mod-socket >/dev/null' || fail "install ucode-mod-socket"
 vm '/etc/init.d/sqm stop 2>/dev/null
 	tc qdisc replace dev eth1 root cake bandwidth 20mbit &&
@@ -115,6 +116,25 @@ a=$(control "resume wan")
 a=$(control "pause nolink")
 case $a in "error: unknown link"*) ok "unknown link" ;; *) fail "unknown link (answer: $a)" ;; esac
 
+echo "== rpcd plugin"
+# rpc METHOD ARGS: calls the method of the rpcd plugin of the LuCI app.
+rpc() {
+	vm "ubus call cake-autorate $1 '$2'"
+}
+a=$(rpc pause '{"link":"wan","dir":"ul"}')
+case $a in *'"result": "ok"'*) ok "rpc pause" ;; *) fail "rpc pause (answer: $a)" ;; esac
+wait_for "status file shows the pause" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].upload.paused" | grep -qx true'
+check "status file shows no pause of the other direction" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].download.paused" | grep -qx false'
+a=$(rpc resume '{"link":"wan"}')
+case $a in *'"result": "ok"'*) ok "rpc resume" ;; *) fail "rpc resume (answer: $a)" ;; esac
+a=$(rpc pause '{"link":"nolink"}')
+case $a in *'unknown link'*) ok "rpc unknown link" ;; *) fail "rpc unknown link (answer: $a)" ;; esac
+# A line break in the name must not add a second command.
+a=$(rpc pause '{"link":"wan\nresume wan"}')
+case $a in *'Invalid link name'*) ok "rpc invalid link name" ;; *) fail "rpc invalid link name (answer: $a)" ;; esac
+a=$(rpc pause '{"link":"wan","dir":"both"}')
+case $a in *'Invalid direction'*) ok "rpc invalid direction" ;; *) fail "rpc invalid direction (answer: $a)" ;; esac
+
 echo "== reload"
 p1=$(pid)
 vm '/etc/init.d/cake-autorate reload'
@@ -144,12 +164,19 @@ vm 'uci set cake-autorate.wan.enabled=1 && uci commit cake-autorate && /etc/init
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
 vm '/etc/init.d/cake-autorate stop'
 wait_for "stop removes the status file and the socket" '! pidof cake-autorate-go >/dev/null && [ ! -e /var/run/cake-autorate/status.json ] && [ ! -e /var/run/cake-autorate/control.sock ]'
+a=$(rpc pause '{"link":"wan"}')
+case $a in *'The service does not run'*) ok "rpc with a stopped service" ;; *) fail "rpc with a stopped service (answer: $a)" ;; esac
 
 echo "== LuCI app"
-check "web server sends the view" 'wget -qO- http://127.0.0.1/luci-static/resources/view/cake-autorate/config.js | grep -q "view.extend"'
-check "menu file is valid JSON" 'jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e "@[\"admin/services/cake-autorate/config\"].action.path" | grep -q "^cake-autorate/config$"'
+for v in cake-autorate/config cake-autorate/status; do
+	check "web server sends the view $v" "wget -qO- http://127.0.0.1/luci-static/resources/view/$v.js | grep -q view.extend"
+	check "menu has the view $v" "jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e '@[\"admin/services/$v\"].action.path' | grep -qx $v"
+done
+check "web server sends the Overview section" 'wget -qO- http://127.0.0.1/luci-static/resources/view/status/include/70_cake-autorate.js | grep -q baseclass.extend'
+check "rpcd has the plugin" 'ubus list cake-autorate >/dev/null'
 # root has all permissions. The user "cakeacl" has only the ACL groups of
-# the app and of luci-base, thus the checks show missing permissions.
+# the app and of luci-base, thus the checks show missing permissions. The
+# user "cakeread" has only the read permissions.
 vm 'uci -q delete rpcd.cakeacl
 	uci set rpcd.cakeacl=login
 	uci set rpcd.cakeacl.username=cakeacl
@@ -157,12 +184,19 @@ vm 'uci -q delete rpcd.cakeacl
 	uci add_list rpcd.cakeacl.read=luci-base
 	uci add_list rpcd.cakeacl.read=luci-app-cake-autorate-go
 	uci add_list rpcd.cakeacl.write=luci-app-cake-autorate-go
+	uci -q delete rpcd.cakeread
+	uci set rpcd.cakeread=login
+	uci set rpcd.cakeread.username=cakeread
+	uci set rpcd.cakeread.password="\$p\$root"
+	uci add_list rpcd.cakeread.read=luci-base
+	uci add_list rpcd.cakeread.read=luci-app-cake-autorate-go
 	uci commit rpcd
-	/etc/init.d/rpcd reload' || fail "add the rpcd user cakeacl"
+	/etc/init.d/rpcd reload' || fail "add the rpcd users"
 sleep 2
-# access SCOPE OBJECT FUNCTION: checks a permission of the user cakeacl.
+# access SCOPE OBJECT FUNCTION: checks a permission of the user cakeacl
+# (or of the user in ACL_USER).
 access() {
-	vm "sid=\$(ubus call session login '{\"username\":\"cakeacl\",\"password\":\"\"}' | jsonfilter -e @.ubus_rpc_session) &&
+	vm "sid=\$(ubus call session login '{\"username\":\"${ACL_USER:-cakeacl}\",\"password\":\"\"}' | jsonfilter -e @.ubus_rpc_session) &&
 		ubus call session access '{\"ubus_rpc_session\":\"'\$sid'\",\"scope\":\"$1\",\"object\":\"$2\",\"function\":\"$3\"}' | grep -q '\"access\": true'"
 }
 # rpcd loads the ACL file only if it is valid.
@@ -170,8 +204,13 @@ access access-group luci-app-cake-autorate-go write && ok "ACL: app group" || fa
 access uci cake-autorate write && ok "ACL: write the UCI configuration" || fail "ACL: write the UCI configuration"
 access ubus file read && ok "ACL: ubus file read" || fail "ACL: ubus file read"
 access file /var/run/cake-autorate/config-error read && ok "ACL: read the error file" || fail "ACL: read the error file"
+access file /var/run/cake-autorate/status.json read && ok "ACL: read the status file" || fail "ACL: read the status file"
+access ubus cake-autorate pause && ok "ACL: pause" || fail "ACL: pause"
+access ubus cake-autorate resume && ok "ACL: resume" || fail "ACL: resume"
 access file /etc/shadow read && fail "ACL: other files are not readable" || ok "ACL: other files are not readable"
-vm 'uci delete rpcd.cakeacl && uci commit rpcd && /etc/init.d/rpcd reload'
+ACL_USER=cakeread access file /var/run/cake-autorate/status.json read && ok "ACL: read-only user reads the status file" || fail "ACL: read-only user reads the status file"
+ACL_USER=cakeread access ubus cake-autorate pause && fail "ACL: read-only user cannot pause" || ok "ACL: read-only user cannot pause"
+vm 'uci delete rpcd.cakeacl && uci delete rpcd.cakeread && uci commit rpcd && /etc/init.d/rpcd reload'
 
 if [ "$FAILED" -ne 0 ]; then
 	echo "== log"

@@ -184,6 +184,8 @@ The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` a
 | `/etc/init.d/cake-autorate` | the procd service |
 | `/usr/share/cake-autorate/` | the converter from UCI to the configuration file of the program |
 
+The LuCI app also installs an rpcd plugin, `/usr/share/rpcd/ucode/cake-autorate.uc`. It gives the ubus methods `cake-autorate pause` and `cake-autorate resume` (arguments `link` and optional `dir`, `dl` or `ul`) and sends them to the control socket.
+
 The UCI options have the names of the configuration keys (see [Configuration reference](#configuration-reference)). The section `global` has the global keys. Each section `link` is one link. A link has the keys of the download direction with the prefix `dl_` and the keys of the upload direction with the prefix `ul_`. An empty option uses the default value of the program, with these exceptions: `dl_adjust` and `ul_adjust` are `1` if they are not set, and the options `ping_interface` and `ping_source_addr` of the section `global` apply to each link that does not set them. Each link must set the interfaces and the rates. For example:
 
 ```
@@ -217,7 +219,11 @@ Do not use the package and the service of `setup.sh` at the same time: both chan
 
 ### LuCI app
 
-The package `luci-app-cake-autorate-go` adds the page **Services → CAKE Autorate (Go)**. It has:
+The package `luci-app-cake-autorate-go` adds the page **Services → CAKE Autorate (Go)** with two tabs.
+
+The tab **Status** shows each link: the state (Running, Idle or Stall), and for each direction the shaper rate, the measured rate, the load, the delay delta and its threshold, the number of pings with a high delay and the number of rate changes. It also shows the reflectors with their baseline RTT and missed replies. The page reads the status file each 2 seconds. The button **Pause** sets the shaper of a direction to the base rate and stops the rate changes. **Resume** starts the control again. The pause stops at a restart of the service. Only a user with write permission for the app sees the buttons. The **Overview** page of LuCI shows one row for each link: the state, the shaper rates, the delay deltas and the pauses.
+
+The tab **Configuration** has:
 
 - The section **Service**: the global settings in the tabs General, Idle and stall, Delay thresholds, Advanced and Logging.
 - The section **Links**: a table with one row for each link. Use **Add link** to add a link, and the edit button to change the interfaces, the rates, the delay thresholds and the ping settings of a link. The **Enabled** box in the row turns the control of the link on or off.
@@ -235,7 +241,7 @@ scripts/openwrt-build.sh x86_64-openwrt-25.12
 scripts/openwrt-vm.sh start
 scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
 scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
-(cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI page in a browser
+(cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI pages in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
 scripts/openwrt-vm.sh stop
 ```
