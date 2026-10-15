@@ -265,6 +265,11 @@ return view.extend({
 			}
 			if (best == null)
 				return hideCursor();
+			// A keyboard selection follows the shown sample: the selected
+			// sample can be out of the period now. Thus the arrow keys
+			// start from the shown sample.
+			if (hover.t != null)
+				hover.t = best.t;
 			const bestX = xOf(best);
 			cursor.setAttribute('x1', bestX.toFixed(1));
 			cursor.setAttribute('x2', bestX.toFixed(1));

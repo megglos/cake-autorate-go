@@ -364,6 +364,37 @@ test('the keyboard selects a sample and the selection stays after a refresh', as
 	}
 });
 
+test('the arrow keys start from the shown sample after the selected one is too old', async ({ page }) => {
+	// The graph must be full for one minute.
+	test.setTimeout(150000);
+	await page.goto(PAGE);
+	await page.selectOption('#cake-autorate-period', '60');
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	const tip = rate.locator('.graph-tip');
+	const ago = async () => +(await tip.textContent()).match(/(\d+) s ago/)[1];
+	// Wait until the oldest sample is at the left side of the graph.
+	await expect.poll(async () => {
+		const p = await points(page, 'rate', 'dl-shaper');
+		return p.length ? p[0][1] : 600;
+	}, { timeout: 90000, intervals: [ 2000 ] }).toBeLessThan(25);
+
+	await rate.locator('svg').focus();
+	await page.keyboard.press('Home');
+	// Two refreshes: the selected sample is out of the period now. The
+	// cursor shows the oldest sample in the period.
+	for (let i = 0; i < 2; i++) {
+		const old = await tip.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	}
+	const shown = await ago();
+	expect(shown).toBeGreaterThanOrEqual(55);
+	// ArrowRight selects the next sample, not one near the newest.
+	await page.keyboard.press('ArrowRight');
+	const next = await ago();
+	expect(next).toBeLessThan(shown);
+	expect(next).toBeGreaterThanOrEqual(shown - 5);
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {
