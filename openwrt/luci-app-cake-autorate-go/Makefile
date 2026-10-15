@@ -21,13 +21,16 @@ define Package/luci-app-cake-autorate-go
   URL:=https://github.com/megglos/cake-autorate-go
   PKGARCH:=all
   DEPENDS:=+cake-autorate-go
-  # Only in the package, because the SDK does not have the LuCI feed.
-  EXTRA_DEPENDS:=luci-base (>=0)
+  # Only in the package, because the SDK does not have the LuCI feed. The
+  # rpcd plugin uses ucode-mod-socket for the control socket.
+  EXTRA_DEPENDS:=luci-base (>=0), ucode-mod-socket (>=0)
 endef
 
 define Package/luci-app-cake-autorate-go/description
   Web pages to configure cake-autorate-go: the global settings and the
-  links (interfaces, rates, delay thresholds and reflectors).
+  links (interfaces, rates, delay thresholds and reflectors). A status
+  page shows the state and the rates of each link and can pause the rate
+  control. The Overview page shows one row for each link.
 endef
 
 define Build/Compile
@@ -40,6 +43,16 @@ define Package/luci-app-cake-autorate-go/install
 endef
 
 define Package/luci-app-cake-autorate-go/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] || {
+	rm -f /tmp/luci-indexcache* /tmp/luci-modulecache/*
+	/etc/init.d/rpcd reload 2>/dev/null
+}
+exit 0
+endef
+
+# rpcd loads the ACL again, thus the users lose the permissions of the app.
+define Package/luci-app-cake-autorate-go/postrm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	rm -f /tmp/luci-indexcache* /tmp/luci-modulecache/*

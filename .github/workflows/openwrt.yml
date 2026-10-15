@@ -47,9 +47,7 @@ jobs:
 
       - name: Check the syntax of the LuCI views
         run: |
-          for f in openwrt/luci-app-cake-autorate-go/htdocs/luci-static/resources/view/*/*.js; do
-            node --check "$f"
-          done
+          find openwrt/luci-app-cake-autorate-go/htdocs -name '*.js' -print0 | xargs -0 -n1 node --check
           for f in openwrt/luci-app-cake-autorate-go/root/usr/share/*/*/*.json; do
             jq empty "$f"
           done
