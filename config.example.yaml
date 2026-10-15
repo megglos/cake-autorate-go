@@ -156,3 +156,7 @@ debug: false
 
 # Status of all links as JSON, written each second. Empty: no status file.
 # status_file: /var/run/cake-autorate/status.json
+
+# Unix socket for the commands pause, resume and list (see the README).
+# Empty: no control socket.
+# control_socket: /var/run/cake-autorate/control.sock

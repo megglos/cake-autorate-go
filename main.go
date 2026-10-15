@@ -22,8 +22,8 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"time"
 	"syscall"
+	"time"
 )
 
 var version = "dev"
@@ -121,14 +121,15 @@ func main() {
 	shaper := NewShaper(logger)
 	defer shaper.Close()
 
+	names := make([]string, len(cfg.Links))
+	for i, l := range cfg.Links {
+		names[i] = l.Name
+	}
+
 	// Optional status file, for tools that show the state of the links
 	var board *StatusBoard
 	var wg sync.WaitGroup
 	if cfg.StatusFile != "" {
-		names := make([]string, len(cfg.Links))
-		for i, l := range cfg.Links {
-			names[i] = l.Name
-		}
 		board = NewStatusBoard(version, time.Now(), names)
 		wg.Add(1)
 		go func() {
@@ -138,10 +139,12 @@ func main() {
 	}
 
 	// Launch a LinkController per configured link
+	controls := make(map[string]LinkControl)
 	for i := range cfg.Links {
 		link := &cfg.Links[i]
 		lc := NewLinkController(link, cfg.ForLink(link), shaper, recorder, logger)
 		lc.board = board
+		controls[link.Name] = lc
 
 		wg.Add(1)
 		go func(ctrl *LinkController, linkName string) {
@@ -150,6 +153,16 @@ func main() {
 				logger.Errorf("[%s] controller error: %v", linkName, err)
 			}
 		}(lc, link.Name)
+	}
+
+	if cfg.ControlSocket != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := RunControlSocket(ctx, cfg.ControlSocket, names, controls, logger); err != nil {
+				logger.Errorf("control socket: %v", err)
+			}
+		}()
 	}
 
 	wg.Wait()
@@ -247,4 +260,5 @@ func printDefaults() {
 	fmt.Printf("log_file_max_size_kb: %d\n", cfg.LogFileMaxSizeKB)
 	fmt.Printf("debug: %t\n", cfg.Debug)
 	fmt.Printf("# status_file: /var/run/cake-autorate/status.json  # status of all links, written each second\n")
+	fmt.Printf("# control_socket: /var/run/cake-autorate/control.sock  # commands: pause, resume, list\n")
 }

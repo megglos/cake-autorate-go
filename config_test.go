@@ -644,6 +644,32 @@ func TestWarnings_LinkTimestampReflectors(t *testing.T) {
 	}
 }
 
+func TestValidate_LinkNameForControlSocket(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links[0].Name = "mobile wan"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a space is fine without a control socket: %v", err)
+	}
+	cfg.ControlSocket = "/tmp/x.sock"
+	for _, name := range []string{"mobile wan", strings.Repeat("a", 65), "wän", "a/b"} {
+		cfg.Links[0].Name = name
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "with control_socket") {
+			t.Errorf("%q: expected a name error, got: %v", name, err)
+		}
+	}
+	for _, name := range []string{"wan5g", strings.Repeat("a", 64), "fiber_1.2-x"} {
+		cfg.Links[0].Name = name
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%q: unexpected error: %v", name, err)
+		}
+	}
+	// The longest command with the longest name fits in the limit.
+	if n := len("resume " + strings.Repeat("a", 64) + " dl\n"); n > maxControlLine {
+		t.Errorf("longest command has %d bytes, limit %d", n, maxControlLine)
+	}
+}
+
 func TestValidate_DuplicateLinkName(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.migrateLinks()
@@ -651,5 +677,18 @@ func TestValidate_DuplicateLinkName(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "more than one time") {
 		t.Errorf("expected a duplicate name error, got: %v", err)
+	}
+}
+
+func TestValidate_ControlSocketPathLength(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.ControlSocket = "/" + strings.Repeat("a", maxControlSocketPath-1)
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a path of %d bytes is valid: %v", maxControlSocketPath, err)
+	}
+	cfg.ControlSocket += "a"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "longer than") {
+		t.Errorf("expected a length error, got: %v", err)
 	}
 }

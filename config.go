@@ -154,6 +154,10 @@ type Config struct {
 	// status of all links to it each second. Empty: no status file.
 	StatusFile string `yaml:"status_file"`
 
+	// ControlSocket is the path of the Unix socket for the commands pause
+	// and resume. Empty: no control socket.
+	ControlSocket string `yaml:"control_socket"`
+
 	// unknownKeys are the keys in the config file that the program does not
 	// know (for example, a typing error). LoadConfig sets them.
 	unknownKeys []string
@@ -507,6 +511,18 @@ func (c *Config) Warnings() []string {
 // interpolated into sysfs paths or tc arguments.
 var ifnameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$`)
 
+// controlNameRe matches the link names that the control socket can address.
+// The longest command with such a name is much shorter than maxControlLine.
+var controlNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
+// maxControlSocketPath is the maximum length of control_socket in bytes.
+// Linux accepts a Unix socket path of not more than 107 bytes. The program
+// creates the socket first in a temporary directory next to the path (see
+// listenPrivate). That path can be 15 bytes longer than the parent
+// directory plus the socket name. This limit keeps all such paths short
+// enough.
+const maxControlSocketPath = 90
+
 // validateIfname checks that name is a valid Linux network interface name.
 func validateIfname(name string) error {
 	if !ifnameRe.MatchString(name) {
@@ -521,6 +537,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one link must be configured")
 	}
 
+	if len(c.ControlSocket) > maxControlSocketPath {
+		return fmt.Errorf("control_socket %q is longer than %d bytes", c.ControlSocket, maxControlSocketPath)
+	}
+
 	seen := make(map[string]bool)
 	for _, link := range c.Links {
 		if link.Name == "" {
@@ -530,6 +550,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("link name %q is used more than one time", link.Name)
 		}
 		seen[link.Name] = true
+		if c.ControlSocket != "" && !controlNameRe.MatchString(link.Name) {
+			return fmt.Errorf("link name %q: with control_socket, use 1 to 64 characters of [A-Za-z0-9_.-]", link.Name)
+		}
 		for _, dc := range []struct {
 			name string
 			dir  DirectionConfig
