@@ -189,3 +189,28 @@ func TestServeControlConn_IgnoresIncompleteCommand(t *testing.T) {
 		t.Errorf("an incomplete command must not run: %v %v", a.dirs, a.paused)
 	}
 }
+
+func TestRemoveStaleSocket_OtherErrorsKeepSocket(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "control.sock")
+	// A socket file that is not accessible gives a permission error, not
+	// ECONNREFUSED. The test needs a non-root user.
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the file mode")
+	}
+	if err := removeStaleSocket(path); err == nil {
+		t.Error("a probe error other than ECONNREFUSED must not remove the socket")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Error("the socket must stay")
+	}
+}

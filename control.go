@@ -10,6 +10,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -88,9 +89,16 @@ func removeStaleSocket(path string) error {
 	if fi.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("control socket path %s exists and is not a socket", path)
 	}
-	if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
 		conn.Close()
 		return fmt.Errorf("control socket %s is in use by another program", path)
+	}
+	// Only a refused connection shows that no program listens. Another
+	// error (a full queue, a missing permission, a timeout) can come from a
+	// live listener.
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("control socket %s: cannot show that it is stale: %w", path, err)
 	}
 	return os.Remove(path)
 }
@@ -148,13 +156,16 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 // runs the command only if the client sent a complete line.
 func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, logger *Logger) {
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(controlTimeout))
+	conn.SetReadDeadline(time.Now().Add(controlTimeout))
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
+		conn.SetWriteDeadline(time.Now().Add(controlTimeout))
 		fmt.Fprintln(conn, "error: no complete command")
 		return
 	}
 	answer := handleControlCommand(line, names, links)
+	// The answer has its own time. The command can use the read time.
+	conn.SetWriteDeadline(time.Now().Add(controlTimeout))
 	logger.Infof("control: %q: %s", strings.TrimSpace(line), answer)
 	fmt.Fprintln(conn, answer)
 }

@@ -129,11 +129,15 @@ func (c *LinkController) Run(ctx context.Context) error {
 			c.publishStatus()
 		case cmd := <-c.ctrlCh:
 			now := time.Now()
-			c.rateErr = nil
 			for _, dir := range cmd.dirs {
+				c.rateErr = nil
 				c.core.SetPaused(dir, cmd.paused, now)
+				if c.rateErr != nil {
+					// A new command for this direction sets the base rate again.
+					c.core.Core().MarkBaseUnsure(dir)
+					cmd.err = c.rateErr
+				}
 			}
-			cmd.err = c.rateErr
 			close(cmd.done)
 
 		case <-healthTicker.C:

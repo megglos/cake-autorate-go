@@ -1144,3 +1144,23 @@ func TestSetPaused_SecondPauseSetsBaseRateAgain(t *testing.T) {
 		t.Error("a resume of a running direction must change nothing")
 	}
 }
+
+func TestSetPaused_ResumeRetriesAfterFailedBaseRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	c.Start(time.Now())
+	c.SetPaused(DL, true)
+	c.SetPaused(DL, false)
+	c.MarkBaseUnsure(DL) // the controller saw an error from the shaper
+	n := len(act.rates[DL])
+	c.SetPaused(DL, false)
+	if len(act.rates[DL]) != n+1 {
+		t.Errorf("a resume after a failed base rate must send the base rate again: %v", act.rates[DL])
+	}
+	c.SetPaused(DL, false)
+	if len(act.rates[DL]) != n+1 {
+		t.Error("after a success, a resume must change nothing")
+	}
+}
