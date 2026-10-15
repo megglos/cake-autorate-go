@@ -168,7 +168,7 @@ if [ -n "$UPSTREAM_DIR" ]; then
     command -v fping >/dev/null || die "fping is not installed (necessary for -U)"
     if [ "$UPSTREAM_PINGER" = fping-ts ]; then
         fping --help 2>&1 | grep -q -- --icmp-timestamp \
-            || die "fping $(fping -v 2>&1 | awk '{ print $NF }') has no --icmp-timestamp (fping 5.2 or later is necessary for fping-ts)"
+            || die "fping $(fping -v 2>&1 | awk '{ print $NF }') has no --icmp-timestamp (fping 5.3 or later is necessary for fping-ts)"
     fi
     UPSTREAM_DIR=$(cd "$UPSTREAM_DIR" && pwd)
 fi
