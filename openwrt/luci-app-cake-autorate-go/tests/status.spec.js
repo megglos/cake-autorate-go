@@ -417,6 +417,50 @@ test('the arrow keys start from the sample under the pointer', async ({ page }) 
 	expect(next).toBeGreaterThanOrEqual(shown - 5);
 });
 
+test('the pointer on one graph does not change the selection of the other graph', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	const rate = link.locator('[data-graph="rate"]');
+	const delay = link.locator('[data-graph="delay"]');
+	const ago = async (g) => +(await g.locator('.graph-tip').textContent()).match(/(\d+) s ago/)[1];
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(8);
+
+	// Select the oldest sample of Rates, then move the pointer over Delay
+	// delta and away.
+	await rate.locator('svg').focus();
+	await page.keyboard.press('Home');
+	const oldest = await ago(rate);
+	const box = await delay.locator('svg').boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
+	await expect(delay.locator('.graph-tip')).toBeHidden();
+	await expect(rate.locator('.graph-tip')).toBeVisible();
+	// The same sample: a refresh can add 2 seconds to its age.
+	const still = await ago(rate);
+	expect(still).toBeGreaterThanOrEqual(oldest);
+	expect(still).toBeLessThanOrEqual(oldest + 4);
+	await page.keyboard.press('ArrowRight');
+	const next = await ago(rate);
+	expect(next).toBeLessThan(still);
+	expect(next).toBeGreaterThanOrEqual(still - 5);
+
+	// With the pointer over Rates, Tab to Delay delta: Delay delta has a
+	// selection, also after the pointer leaves Rates.
+	const rbox = await rate.locator('svg').boundingBox();
+	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height / 2);
+	await page.keyboard.press('Tab');
+	await expect(delay.locator('svg')).toBeFocused();
+	await page.keyboard.press('Home');
+	const delayOldest = await ago(delay);
+	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height + 200);
+	await expect(rate.locator('.graph-tip')).toBeHidden();
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	const delayStill = await ago(delay);
+	expect(delayStill).toBeGreaterThanOrEqual(delayOldest);
+	expect(delayStill).toBeLessThanOrEqual(delayOldest + 4);
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {

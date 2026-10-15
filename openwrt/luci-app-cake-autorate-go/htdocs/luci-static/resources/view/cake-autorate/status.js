@@ -168,11 +168,14 @@ return view.extend({
 	lastSampled: null,
 	lastData: null,
 
-	// The cursor on a graph: the link, the graph, and the x position of the
-	// pointer as a fraction of the width ("fx") or the time of the sample
-	// that the keyboard selected ("t"), and the time of the shown sample
-	// ("shown"). A refresh shows the cursor again.
-	hover: null,
+	// The cursor of the pointer: the link, the graph and the x position as a
+	// fraction of the width ("fx").
+	pointer: null,
+
+	// The sample that the keyboard selected: the link, the graph and the
+	// time of the sample ("t"). Only the graph with the keyboard focus has
+	// a selection. A refresh shows the two cursors again.
+	selection: null,
 
 	// Adds one sample for each link if the program wrote a new status, and
 	// removes the old samples and the links that are not in the status.
@@ -254,24 +257,31 @@ return view.extend({
 
 		const xOf = (s) => GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
 
-		// Shows the cursor at the sample nearest to the hover position.
-		const showCursor = (hover) => {
+		const mine = (c) => c && c.name == name && c.kind == kind;
+
+		// Returns the sample nearest to the cursor c, or null.
+		const nearest = (c) => {
 			let best = null, dist = Infinity;
 			for (const s of visible) {
-				const d = (hover.t != null) ? Math.abs(s.t - hover.t) : Math.abs(xOf(s) - hover.fx * GRAPH_WIDTH);
+				const d = (c.t != null) ? Math.abs(s.t - c.t) : Math.abs(xOf(s) - c.fx * GRAPH_WIDTH);
 				if (d < dist) {
 					best = s;
 					dist = d;
 				}
 			}
+			return best;
+		};
+
+		// Shows the cursor at a sample: the sample under the pointer, else
+		// the selected sample. A selected sample that is out of the period
+		// now changes to the oldest sample in the period.
+		const showCursor = () => {
+			const c = mine(this.pointer) ? this.pointer : mine(this.selection) ? this.selection : null;
+			const best = c && nearest(c);
 			if (best == null)
 				return hideCursor();
-			// The arrow keys start from the shown sample: the sample under
-			// the pointer, or the oldest sample in the period if the
-			// selected sample is out of the period now.
-			hover.shown = best.t;
-			if (hover.t != null)
-				hover.t = best.t;
+			if (c.t != null)
+				c.t = best.t;
 			const bestX = xOf(best);
 			cursor.setAttribute('x1', bestX.toFixed(1));
 			cursor.setAttribute('x2', bestX.toFixed(1));
@@ -294,40 +304,45 @@ return view.extend({
 			tip.style.display = 'none';
 		};
 
-		const setHover = (hover) => {
-			this.hover = Object.assign({ name: name, kind: kind }, hover);
-			showCursor(this.hover);
+		// Returns the index of the shown sample, or -1.
+		const shown = () => {
+			const c = mine(this.pointer) ? this.pointer : mine(this.selection) ? this.selection : null;
+			const best = c && nearest(c);
+			return best ? visible.indexOf(best) : -1;
 		};
-		const clearHover = () => {
-			this.hover = null;
-			hideCursor();
-		};
-		// The index of the shown sample, or -1.
-		const selected = () => {
-			const h = this.hover;
-			return (h && h.name == name && h.kind == kind) ? visible.findIndex((s) => s.t == h.shown) : -1;
+		const select = (i) => {
+			this.selection = { name: name, kind: kind, t: visible[i].t };
+			showCursor();
 		};
 
 		graph.addEventListener('pointermove', (ev) => {
 			const r = graph.getBoundingClientRect();
-			setHover({ fx: Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) });
+			this.pointer = { name: name, kind: kind, fx: Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) };
+			showCursor();
 		});
 		graph.addEventListener('pointerleave', () => {
-			if (document.activeElement !== graph)
-				clearHover();
+			if (mine(this.pointer))
+				this.pointer = null;
+			showCursor();
 		});
 		// The keyboard selects a sample: the arrow keys the previous or the
-		// next sample, Home the first and End the newest.
+		// next sample, Home the first and End the newest. The focus selects
+		// the shown sample, or the newest.
 		graph.addEventListener('focus', () => {
-			const h = this.hover;
-			if (visible.length && !(h && h.name == name && h.kind == kind))
-				setHover({ t: visible[visible.length - 1].t });
+			if (visible.length && !mine(this.selection)) {
+				const i = shown();
+				select(i < 0 ? visible.length - 1 : i);
+			}
 		});
-		graph.addEventListener('blur', clearHover);
+		graph.addEventListener('blur', () => {
+			if (mine(this.selection))
+				this.selection = null;
+			showCursor();
+		});
 		graph.addEventListener('keydown', (ev) => {
 			if (!visible.length)
 				return;
-			const i = selected(), last = visible.length - 1;
+			const i = shown(), last = visible.length - 1;
 			let j;
 			switch (ev.key) {
 			case 'ArrowLeft': j = Math.max((i < 0 ? last : i) - 1, 0); break;
@@ -337,10 +352,12 @@ return view.extend({
 			default: return;
 			}
 			ev.preventDefault();
-			setHover({ t: visible[j].t });
+			// The keyboard moves the cursor away from the pointer.
+			if (mine(this.pointer))
+				this.pointer = null;
+			select(j);
 		});
-		if (this.hover && this.hover.name == name && this.hover.kind == kind)
-			showCursor(this.hover);
+		showCursor();
 
 		const legend = series.map((se) => E('span', { 'style': 'margin-right:1em; white-space:nowrap' }, [
 			E('span', { 'style': 'display:inline-block; width:1.5em; vertical-align:middle; border-top:2px %s %s'.format(se.dash ? 'dashed' : 'solid', se.color) }),
@@ -531,13 +548,13 @@ return view.extend({
 			const inside = focused && this.container.contains(focused);
 			const key = (inside && focused.dataset.dir) ? [ focused.dataset.link, 'dir', focused.dataset.dir ]
 				: (inside && focused.dataset.plot) ? [ focused.dataset.link, 'plot', focused.dataset.plot ] : null;
-			const hover = this.hover;
+			const selection = this.selection;
 			this.addSamples(data.status);
 			this.lastData = data;
 			this.container.replaceChildren(this.renderStatus(data));
 			// The remove of a focused graph can send "blur", which clears the
-			// cursor.
-			this.hover = hover;
+			// selection.
+			this.selection = selection;
 			if (key) {
 				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-' + key[1] + ']'),
 					(e) => e.dataset.link == key[0] && e.dataset[key[1]] == key[2]);
