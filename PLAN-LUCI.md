@@ -291,7 +291,7 @@ Each phase is a PR, with the Copilot review cycles.
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
 | L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
-| L3 | In review (2026-10-15): #45. |
+| L3 | Ready for merge (2026-10-15): #45. 9 Copilot cycles, then stopped: the last findings needed values from a manual UCI edit. CI runs 28 Playwright tests in the VM. |
 
 ### L0 decisions and results
 
@@ -336,3 +336,7 @@ Each phase is a PR, with the Copilot review cycles.
 - Errors after apply: the init script writes `/var/run/cake-autorate/config-error` (converter or check-config output), a valid start removes it. The page polls it every 5 s (ACL: file read).
 - Browser test: Playwright with Chromium in the scratchpad against the VM (login root, empty password). Not in CI (download of Chromium was slow and hung at the extraction).
 - The denied `uci get luci` call in the browser log is from the login page (session 0), not from the app.
+- Browser tests in CI (user request 2026-10-15): Playwright in the job `vm`, `openwrt/luci-app-cake-autorate-go/tests/`. Each Copilot finding got a test that fails with the old code.
+- Checks follow the converter and `Config.Validate`: integers, decimals (LuCI `parseDecimal` = converter syntax), pairs with defaults of empty fields, rates per field, `icmp-timestamp` reflectors with live form values (not for a disabled service or link), absolute log path, interfaces of enabled links only, anonymous or missing global section, link dialog save keeps page edits.
+- Follow-up core PR: `Config.Validate` must reject an interface that more than one direction or link uses (two controllers on one shaper). The page checks this, but a manual UCI or YAML edit can still do it.
+- Local 5G test: later, macvtap passthru on enp7s0 for the VM WAN, host on Wi-Fi (adapter off in BIOS for now). Separate small PR.
