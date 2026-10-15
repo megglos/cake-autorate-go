@@ -108,6 +108,8 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           PACKAGES: cake-autorate-go
+          # The prebuilt program needs no other feeds.
+          NO_DEFAULT_FEEDS: 1
 
       # The apk file names do not have the architecture. Add it, because
       # the names of the release files must be unique.
