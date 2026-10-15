@@ -158,12 +158,14 @@ func writeStatusFile(path string, f StatusFile) error {
 	if err != nil {
 		return err
 	}
-	_, err = tmp.Write(data)
+	// Set the mode on the open file, not on the path. Another user could
+	// replace the path by a link.
+	err = tmp.Chmod(0o644)
+	if err == nil {
+		_, err = tmp.Write(data)
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
-	}
-	if err == nil {
-		err = os.Chmod(tmp.Name(), 0o644)
 	}
 	if err == nil {
 		err = os.Rename(tmp.Name(), path)
