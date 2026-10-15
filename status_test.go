@@ -66,6 +66,12 @@ func TestRunStatusWriter(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { RunStatusWriter(ctx, b, path, NewDiscardLogger()); close(done) }()
+	// Stop the writer on each exit path, also when an assertion fails.
+	stop := func() {
+		cancel()
+		<-done
+	}
+	t.Cleanup(stop)
 
 	var data []byte
 	for range 40 {
@@ -79,11 +85,11 @@ func TestRunStatusWriter(t *testing.T) {
 	if err := json.Unmarshal(data, &f); err != nil || len(f.Links) != 1 {
 		t.Fatalf("status file not valid: %v %q", err, data)
 	}
+	// Stop the writer first: a write in progress has a temporary file.
+	stop()
 	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
 		t.Errorf("temporary files must not stay: %v", left)
 	}
-	cancel()
-	<-done
 	if _, err := os.Stat(path); err == nil {
 		t.Error("status file must be removed at stop")
 	}
