@@ -291,7 +291,7 @@ Each phase is a PR, with the Copilot review cycles.
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
 | L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
-| L3 | Ready for merge (2026-10-15): #45. 9 Copilot cycles, then stopped: the last findings needed values from a manual UCI edit. CI runs 28 Playwright tests in the VM. |
+| L3 | Done (2026-10-15): #45 merged (fdcc28d). 9 Copilot cycles, then stopped: the last findings needed values from a manual UCI edit. CI runs 28 Playwright tests in the VM. |
 
 ### L0 decisions and results
 
