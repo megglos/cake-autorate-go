@@ -290,7 +290,7 @@ Each phase is a PR, with the Copilot review cycles.
 | Phase | Status |
 |---|---|
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
-| L1 | Ready for merge (2026-10-15): #44, 4 Copilot cycles, 0 open findings. CI builds the apk for arm64 and x86_64. Not yet run on OpenWrt (L2). |
+| L1+L2 | Ready for merge (2026-10-15): #44 has the package and the VM test (user wanted one PR for CI feedback). 7 Copilot cycles, then stopped: the last findings were nits in the test helpers. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. |
 
 ### L0 decisions and results
 
@@ -317,3 +317,11 @@ Each phase is a PR, with the Copilot review cycles.
 - Versions: CI writes the apk version to the Makefile. Release tag `1.2.0-rc.1` gives `1.2.0_rc1`; other builds `PKG_VERSION_p<commit count>`. Binary version = `git describe`. Release files get the arch in the name.
 - CI: the `converter` job also runs `-check-config -strict` on a converted sample (tests/sample.uc). The `package` job needs `converter`.
 - Not done: `procd_add_interface_trigger` for the WAN interfaces (the netlink retry handles a late interface), migration from `setup.sh` YAML, PKG_MAINTAINER (user to decide).
+
+### L2 decisions and results (in #44)
+
+- `scripts/openwrt-vm.sh start|ssh|install|stop|reset`: OpenWrt 25.12.5 x86-64 ext4 image, QEMU/KVM, user network. LAN eth0 with hostfwd SSH 2222 and HTTP 8080, WAN eth1 with internet (ICMP echo through host ping sockets; ICMP timestamps do not go through, thus the test uses `ping_method icmp`). SSH key is set through the serial console (python3 socket). State in `~/.cache/cake-autorate-vm`.
+- `scripts/openwrt-vm-test.sh`: CAKE on eth1 (upload) and br-lan (download), then start, adjust default, status file, socket mode 0600 and dir 0755, list/pause/resume/unknown link (control socket via ucode-mod-socket), reload without change keeps the PID, UCI change + reload_config restarts, converter error and check-config error in the log, disabled link, stop removes the files.
+- Finding: `reload_config` sends `config.change` only for files from its last run. After a package install, run `reload_config` once (the test does it). LuCI apply uses ubus, thus not affected.
+- CI: job `vm` after `package`; job `release` (release events only) after `package` and `vm` attaches the apk files.
+- KVM works on GitHub runners with the udev rule.
