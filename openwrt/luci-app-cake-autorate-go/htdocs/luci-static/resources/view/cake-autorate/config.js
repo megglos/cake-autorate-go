@@ -47,6 +47,36 @@ function rangeOpenClosed(lo, hi) {
 	};
 }
 
+// Returns a validate function for a value that must be more than 0.
+function positive(sid, value) {
+	return (isEmpty(value) || +value > 0) ? true : _('Must be more than 0');
+}
+
+// Adds the validate function fn to the option o. The checks run in order,
+// the first error stops them.
+function addCheck(o, fn) {
+	const prev = o.validate;
+	o.validate = function(sid, value) {
+		const r = prev ? prev.call(this, sid, value) : true;
+		return r !== true ? r : fn.call(this, sid, value);
+	};
+}
+
+// Checks that the option low is not more than the option high. An empty
+// field uses its default value. Both fields get the check, thus a change
+// of one field also checks it against the default value of the other.
+function pair(s, low, lowDef, high, highDef, lowMsg, highMsg) {
+	const check = function(msg) {
+		return function(sid, value) {
+			if (formNumber(this.section, sid, low, lowDef) > formNumber(this.section, sid, high, highDef))
+				return msg;
+			return true;
+		};
+	};
+	addCheck(s.children.find(o => o.option == low), check(lowMsg));
+	addCheck(s.children.find(o => o.option == high), check(highMsg));
+}
+
 function validateIfname(sid, value) {
 	if (isEmpty(value) || IFNAME_RE.test(value))
 		return true;
@@ -114,9 +144,9 @@ function globalSection(m) {
 	o.value('icmp', _('ICMP echo (icmp)'));
 	o.value('icmp-timestamp', _('ICMP timestamp (icmp-timestamp)'));
 
-	number(s, 'general', 'pinger_count', _('Pingers'), 6, 'min(1)',
+	number(s, 'general', 'pinger_count', _('Pingers'), 6, 'and(uinteger,min(1))',
 		_('The number of reflectors that the service pings at the same time.'));
-	number(s, 'general', 'ping_interval_ms', _('Ping interval (ms)'), 300, 'min(1)',
+	number(s, 'general', 'ping_interval_ms', _('Ping interval (ms)'), 300, 'and(uinteger,min(1))',
 		_('The interval between two pings to one reflector.'));
 
 	o = field(s, 'general', widgets.DeviceSelect, 'ping_interface', _('Ping interface'), null,
@@ -144,35 +174,32 @@ function globalSection(m) {
 	number(s, 'idle', 'sustained_idle_sleep_thr_s', _('Idle time before sleep (s)'), 60, 'ufloat');
 	flag(s, 'idle', 'min_shaper_rates_enforcement', _('Minimum rate when idle'), false,
 		_('Set the minimum rate when the link is idle or stalled.'));
-	number(s, 'idle', 'stall_detection_thr', _('Stall threshold (lost pings)'), 5, 'min(1)');
+	number(s, 'idle', 'stall_detection_thr', _('Stall threshold (lost pings)'), 5, 'and(uinteger,min(1))');
 	number(s, 'idle', 'connection_stall_thr_kbps', _('Stall load threshold (kbit/s)'), 10, 'uinteger');
 	number(s, 'idle', 'global_ping_response_timeout_s', _('Ping response timeout (s)'), 10, 'ufloat',
 		_('When no reflector replies for this time, the service starts the pingers again.'));
 	number(s, 'idle', 'startup_wait_s', _('Wait at start (s)'), 0, 'ufloat');
 
 	for (const [ d, title ] of DIRECTIONS) {
-		number(s, 'thresholds', d + '_owd_delta_delay_thr_ms', _('%s: bufferbloat threshold (ms)').format(title), 30, 'ufloat',
+		let t;
+		t = number(s, 'thresholds', d + '_owd_delta_delay_thr_ms', _('%s: bufferbloat threshold (ms)').format(title), 30, 'ufloat',
 			_('A delay increase above this value is a bufferbloat sample. Applies to the links that do not set it.'));
-		number(s, 'thresholds', d + '_avg_owd_delta_max_adjust_up_thr_ms', _('%s: maximum increase threshold (ms)').format(title), 10, 'ufloat',
+		t.validate = positive;
+		t = number(s, 'thresholds', d + '_avg_owd_delta_max_adjust_up_thr_ms', _('%s: maximum increase threshold (ms)').format(title), 10, 'ufloat',
 			_('Below this average delay increase, the rate increases by the maximum step.'));
-		number(s, 'thresholds', d + '_avg_owd_delta_max_adjust_down_thr_ms', _('%s: maximum decrease threshold (ms)').format(title), 60, 'ufloat',
+		t.validate = positive;
+		t = number(s, 'thresholds', d + '_avg_owd_delta_max_adjust_down_thr_ms', _('%s: maximum decrease threshold (ms)').format(title), 60, 'ufloat',
 			_('Above this average delay increase, the rate decreases by the maximum step.'));
+		t.validate = positive;
 	}
 
 	o = s.taboption('advanced', form.DummyValue, '_advanced_note');
 	o.rawhtml = true;
 	o.default = '<em>%s</em>'.format(_('Change these values only if you know the effect. The defaults are good for most links.'));
 
-	o = number(s, 'advanced', 'bufferbloat_detection_window', _('Bufferbloat window (samples)'), 6, 'min(1)');
-	o = number(s, 'advanced', 'bufferbloat_detection_thr', _('Bufferbloat threshold (samples)'), 3, 'min(1)',
+	o = number(s, 'advanced', 'bufferbloat_detection_window', _('Bufferbloat window (samples)'), 6, 'and(uinteger,min(1))');
+	o = number(s, 'advanced', 'bufferbloat_detection_thr', _('Bufferbloat threshold (samples)'), 3, 'and(uinteger,min(1))',
 		_('The number of bufferbloat samples in the window that decreases the rate.'));
-	o.validate = function(sid, value) {
-		if (isEmpty(value))
-			return true;
-		if (+value > formNumber(this.section, sid, 'bufferbloat_detection_window', 6))
-			return _('Must not be more than the bufferbloat window');
-		return true;
-	};
 
 	o = number(s, 'advanced', 'alpha_baseline_increase', _('Baseline increase factor'), 0.001, 'ufloat');
 	o.validate = rangeOpenClosed(0, 1);
@@ -185,61 +212,53 @@ function globalSection(m) {
 	o.validate = rangeOpenClosed(0, 1);
 	o = number(s, 'advanced', 'shaper_rate_max_adjust_down_bufferbloat', _('Maximum decrease on bufferbloat'), 0.75, 'ufloat',
 		_('A smaller factor is a larger decrease.'));
-	o.validate = function(sid, value) {
-		if (isEmpty(value))
-			return true;
-		const r = rangeOpenClosed(0, 1)(sid, value);
-		if (r !== true)
-			return r;
-		if (+value > formNumber(this.section, sid, 'shaper_rate_min_adjust_down_bufferbloat', 0.99))
-			return _('Must not be more than the minimum decrease factor');
-		return true;
-	};
+	o.validate = rangeOpenClosed(0, 1);
 	o = number(s, 'advanced', 'shaper_rate_min_adjust_up_load_high', _('Minimum increase on high load'), 1, 'min(1)');
 	o = number(s, 'advanced', 'shaper_rate_max_adjust_up_load_high', _('Maximum increase on high load'), 1.04, 'min(1)');
-	o.validate = function(sid, value) {
-		if (isEmpty(value))
-			return true;
-		if (+value < formNumber(this.section, sid, 'shaper_rate_min_adjust_up_load_high', 1))
-			return _('Must not be less than the minimum increase factor');
-		return true;
-	};
 	o = number(s, 'advanced', 'shaper_rate_adjust_down_load_low', _('Decrease on low load'), 0.99, 'ufloat');
 	o.validate = rangeOpenClosed(0, 1);
 	number(s, 'advanced', 'shaper_rate_adjust_up_load_low', _('Increase on low load'), 1.01, 'min(1)');
 	number(s, 'advanced', 'high_load_thr', _('High load threshold'), 0.75, 'range(0,1)',
 		_('The part of the shaper rate (0 to 1) above which the load is high.'));
 
-	number(s, 'advanced', 'monitor_interval_ms', _('Load monitor interval (ms)'), 200, 'min(1)');
+	number(s, 'advanced', 'monitor_interval_ms', _('Load monitor interval (ms)'), 200, 'and(uinteger,min(1))');
 	number(s, 'advanced', 'bufferbloat_refractory_period_ms', _('Bufferbloat refractory period (ms)'), 300, 'uinteger');
 	number(s, 'advanced', 'decay_refractory_period_ms', _('Decay refractory period (ms)'), 1000, 'uinteger');
 	o = number(s, 'advanced', 'reflector_response_deadline_s', _('Reflector response deadline (s)'), 1, 'ufloat');
-	o.validate = function(sid, value) {
-		return (isEmpty(value) || +value > 0) ? true : _('Must be more than 0');
-	};
-	number(s, 'advanced', 'reflector_misbehaving_detection_window', _('Reflector check window (samples)'), 60, 'min(1)');
-	o = number(s, 'advanced', 'reflector_misbehaving_detection_thr', _('Reflector check threshold (samples)'), 3, 'min(1)',
+	o.validate = positive;
+	number(s, 'advanced', 'reflector_misbehaving_detection_window', _('Reflector check window (samples)'), 60, 'and(uinteger,min(1))');
+	o = number(s, 'advanced', 'reflector_misbehaving_detection_thr', _('Reflector check threshold (samples)'), 3, 'and(uinteger,min(1))',
 		_('The number of bad samples in the window that replaces a reflector.'));
-	o.validate = function(sid, value) {
-		if (isEmpty(value))
-			return true;
-		if (+value > formNumber(this.section, sid, 'reflector_misbehaving_detection_window', 60))
-			return _('Must not be more than the reflector check window');
-		return true;
-	};
+
+	pair(s, 'bufferbloat_detection_thr', 3, 'bufferbloat_detection_window', 6,
+		_('Must not be more than the bufferbloat window'),
+		_('Must not be less than the bufferbloat threshold'));
+	pair(s, 'reflector_misbehaving_detection_thr', 3, 'reflector_misbehaving_detection_window', 60,
+		_('Must not be more than the reflector check window'),
+		_('Must not be less than the reflector check threshold'));
+	// The maximum decrease is the smaller factor.
+	pair(s, 'shaper_rate_max_adjust_down_bufferbloat', 0.75, 'shaper_rate_min_adjust_down_bufferbloat', 0.99,
+		_('Must not be more than the minimum decrease factor'),
+		_('Must not be less than the maximum decrease factor'));
+	pair(s, 'shaper_rate_min_adjust_up_load_high', 1, 'shaper_rate_max_adjust_up_load_high', 1.04,
+		_('Must not be more than the maximum increase factor'),
+		_('Must not be less than the minimum increase factor'));
 
 	flag(s, 'logging', 'log_to_file', _('Log to a file'), true);
 	o = field(s, 'logging', form.Value, 'log_file_path', _('Log file'), '/var/log/cake-autorate.log');
 	o.datatype = 'string';
-	number(s, 'logging', 'log_file_max_size_kb', _('Maximum log file size (KB)'), 2000, 'min(1)');
+	number(s, 'logging', 'log_file_max_size_kb', _('Maximum log file size (KB)'), 2000, 'and(uinteger,min(1))');
 	flag(s, 'logging', 'debug', _('Debug messages'), false);
 }
 
 // Validates the rate key of the direction d: min <= base <= max, all > 0.
-// Each field shows only the errors of its own value.
+// Each field shows only the errors of its own value. A link must set its
+// rates: the program does not use default rates for a link.
 function validateRate(d, key) {
 	return function(sid, value) {
-		if (!isEmpty(value) && +value <= 0)
+		if (isEmpty(value))
+			return _('Enter a rate');
+		if (+value <= 0)
 			return _('Must be more than 0');
 		const min = formNumber(this.section, sid, d + '_min_rate_kbps', 5000);
 		const base = formNumber(this.section, sid, d + '_base_rate_kbps', 20000);
@@ -338,6 +357,9 @@ function linkSection(m) {
 					: _('1000 kbit/s = 1 Mbit/s.'));
 			o.validate = validateRate(d, key);
 			o.modalonly = true;
+			// A new link gets the default rates.
+			o.default = String(def);
+			o.rmempty = false;
 		}
 	}
 
@@ -368,9 +390,7 @@ function linkSection(m) {
 			o = number(s, 'thresholds', d + '_' + key, label.format(title), null, 'ufloat');
 			o.placeholder = _('global value');
 			o.modalonly = true;
-			o.validate = function(sid, value) {
-				return (isEmpty(value) || +value > 0) ? true : _('Must be more than 0');
-			};
+			o.validate = positive;
 		}
 	}
 
@@ -386,12 +406,12 @@ function linkSection(m) {
 	o.modalonly = true;
 
 	o = s.taboption('pings', form.Value, 'pinger_count', _('Pingers'));
-	o.datatype = 'min(1)';
+	o.datatype = 'and(uinteger,min(1))';
 	o.placeholder = _('global value');
 	o.modalonly = true;
 
 	o = s.taboption('pings', form.Value, 'ping_interval_ms', _('Ping interval (ms)'));
-	o.datatype = 'min(1)';
+	o.datatype = 'and(uinteger,min(1))';
 	o.placeholder = _('global value');
 	o.modalonly = true;
 
