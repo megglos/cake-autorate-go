@@ -56,6 +56,11 @@ func TestHandleControlCommand(t *testing.T) {
 	if got := handleControlCommand("pause a", names, links); got != "error: link does not run" {
 		t.Errorf("error from the link: %q", got)
 	}
+	// An error text with line breaks (tc output) gives one answer line.
+	a.err = fmt.Errorf("tc failed:\nError: line 1\r\nline 2")
+	if got := handleControlCommand("pause a", names, links); got != "error: tc failed: Error: line 1 line 2" {
+		t.Errorf("multiline error: %q", got)
+	}
 }
 
 func TestRunControlSocket(t *testing.T) {
@@ -212,5 +217,21 @@ func TestRemoveStaleSocket_OtherErrorsKeepSocket(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); err != nil {
 		t.Error("the socket must stay")
+	}
+}
+
+func TestServeControlConn_RejectsLongLine(t *testing.T) {
+	a := &fakeLinkControl{}
+	client, server := net.Pipe()
+	go serveControlConn(server, []string{"a"}, map[string]LinkControl{"a": a}, NewDiscardLogger())
+	go func() {
+		// Write more than the limit, then a valid command. The program must
+		// stop the read at the limit and not run the command.
+		client.Write([]byte(strings.Repeat("x", maxControlLine) + "\npause a\n"))
+	}()
+	answer, _ := bufio.NewReader(client).ReadString('\n')
+	client.Close()
+	if !strings.HasPrefix(answer, "error: no complete command") || a.paused {
+		t.Errorf("answer %q, paused %v", answer, a.paused)
 	}
 }

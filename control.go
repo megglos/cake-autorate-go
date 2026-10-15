@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,6 +33,14 @@ import (
 
 // controlTimeout is the time that a client has to send its command.
 const controlTimeout = 5 * time.Second
+
+// maxControlLine is the maximum length of a command line in bytes, with the
+// newline. The program does not read more from a client.
+const maxControlLine = 256
+
+// oneLine replaces the line breaks in s with spaces. An answer must be one
+// line, but an error text (for example, the output of tc) can have more.
+var oneLine = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 // LinkControl is the part of a link controller that the control socket uses.
 type LinkControl interface {
@@ -67,7 +76,7 @@ func handleControlCommand(line string, names []string, links map[string]LinkCont
 			}
 		}
 		if err := lc.SetPaused(dirs, f[0] == "pause"); err != nil {
-			return "error: " + err.Error()
+			return "error: " + oneLine.Replace(err.Error())
 		}
 		return "ok"
 	default:
@@ -133,12 +142,15 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 		<-ctx.Done()
 		ln.Close()
 	}()
-	// Remove the socket before the return, but only our own socket.
+	// At the return, close the listener (also after an Accept error), then
+	// remove the socket, but only our own socket. The defers run in the
+	// reverse order.
 	defer func() {
 		if fi, err := os.Lstat(path); err == nil && os.SameFile(fi, created) {
 			os.Remove(path)
 		}
 	}()
+	defer ln.Close()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -157,7 +169,9 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, logger *Logger) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(controlTimeout))
-	line, err := bufio.NewReader(conn).ReadString('\n')
+	// Read not more than maxControlLine bytes. A longer line gives an
+	// error, because it has no newline in the limit.
+	line, err := bufio.NewReader(io.LimitReader(conn, maxControlLine)).ReadString('\n')
 	if err != nil {
 		conn.SetWriteDeadline(time.Now().Add(controlTimeout))
 		fmt.Fprintln(conn, "error: no complete command")
