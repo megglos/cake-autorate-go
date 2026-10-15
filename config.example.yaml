@@ -46,6 +46,12 @@ links:
     #   - 9.9.9.9
     # ping_interface: wan       # Bind ICMP socket to this interface (SO_BINDTODEVICE)
     # ping_source_addr: 0.0.0.0 # Source IP address for ICMP packets
+    # A link can override these top-level keys. A key that the link does not
+    # set uses the top-level value.
+    # ping_method: icmp-timestamp
+    # pinger_count: 4
+    # ping_interval_ms: 300
+    # learn_cross_delay: true
 
   # -- Second WAN (uncomment to enable) ----------------------------------------
   # - name: secondary

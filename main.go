@@ -124,7 +124,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i := range cfg.Links {
 		link := &cfg.Links[i]
-		lc := NewLinkController(link, cfg, shaper, recorder, logger)
+		lc := NewLinkController(link, cfg.ForLink(link), shaper, recorder, logger)
 
 		wg.Add(1)
 		go func(ctrl *LinkController, linkName string) {
