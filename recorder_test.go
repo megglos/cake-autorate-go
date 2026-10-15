@@ -208,6 +208,7 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			Dir       Direction `json:"dir"`
 			RateKbps  int       `json:"rate_kbps"`
 			State     string    `json:"state"`
+			Paused    bool      `json:"paused"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			t.Fatal(err)
@@ -239,6 +240,8 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			core.HandleRate(RateStats{DlRateKbps: ev.DlKbps, UlRateKbps: ev.UlKbps, Timestamp: ts})
 		case recReflectorReset:
 			core.ResetReflector(ev.Reflector)
+		case recPause:
+			core.SetPaused(ev.Dir, ev.Paused)
 		case recShaper:
 			recorded = append(recorded, recDecision{ev.T, "shaper " + string(ev.Dir), fmt.Sprint(ev.RateKbps)})
 		case recState:
@@ -331,5 +334,29 @@ func TestRecording_ReplayStallAndResume(t *testing.T) {
 	}
 	if fmt.Sprint(recorded) != fmt.Sprint(replayed) {
 		t.Errorf("recorded %v\nreplay gave %v", recorded, replayed)
+	}
+}
+
+func TestRecordingCore_RecordsPause(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	path := filepath.Join(t.TempDir(), "rec.jsonl")
+	start := time.Now()
+	rec, err := newRecorderAt(path, 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, rec, testLogger(t))
+	rc.Start(start)
+	rc.SetPaused(DL, true, start.Add(time.Second))
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"type":"pause"`) || !strings.Contains(string(data), `"paused":true`) {
+		t.Errorf("recording has no pause event:\n%s", data)
 	}
 }

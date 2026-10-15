@@ -66,6 +66,7 @@ type dirState struct {
 	lastDeltaUs       float64   // delay delta of the last ping reply
 	rateChanges       int       // number of rate changes since the start
 	lastRequestedKbps int       // last rate that Core sent to the actuator
+	paused            bool      // true: Core does not change the shaper rate
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -134,6 +135,25 @@ func (c *Core) Start(now time.Time) {
 	c.applyRate(DL)
 	c.applyRate(UL)
 }
+
+// SetPaused pauses or resumes the rate control of a direction. In both
+// cases, the shaper goes to the base rate of the direction. This is a safe
+// rate. While a direction is paused, Core still processes pings and
+// throughput samples, but it does not change the shaper rate. After a
+// resume, the normal control starts from the base rate.
+func (c *Core) SetPaused(dir Direction, paused bool) {
+	ds := c.getDirState(dir)
+	if ds.paused == paused {
+		return
+	}
+	ds.paused = false
+	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
+	c.applyRate(dir)
+	ds.paused = paused
+}
+
+// Paused reports whether the rate control of a direction is paused.
+func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }
 
 // State returns the current operating state.
 func (c *Core) State() State { return c.state }
@@ -382,6 +402,9 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		ds.delayWindowCount++
 	}
 	bbCount := ds.delayWindowCount
+	if ds.paused {
+		return
+	}
 
 	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
 	bbRefractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
@@ -527,17 +550,21 @@ func (c *Core) adjustRateDecay(dir Direction) {
 
 // setRates sets and applies the two shaper rates.
 func (c *Core) setRates(dlKbps, ulKbps int) {
-	c.dl.shaperRateKbps = float64(dlKbps)
-	c.ul.shaperRateKbps = float64(ulKbps)
+	if !c.dl.paused {
+		c.dl.shaperRateKbps = float64(dlKbps)
+	}
+	if !c.ul.paused {
+		c.ul.shaperRateKbps = float64(ulKbps)
+	}
 	c.applyRate(DL)
 	c.applyRate(UL)
 }
 
 func (c *Core) applyRate(dir Direction) {
-	if !c.link.DirConfig(dir).Adjust {
+	ds := c.getDirState(dir)
+	if ds.paused || !c.link.DirConfig(dir).Adjust {
 		return
 	}
-	ds := c.getDirState(dir)
 	rate := int(math.Round(ds.shaperRateKbps))
 	if rate != ds.lastRequestedKbps {
 		ds.lastRequestedKbps = rate

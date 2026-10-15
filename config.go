@@ -154,6 +154,10 @@ type Config struct {
 	// status of all links to it each second. Empty: no status file.
 	StatusFile string `yaml:"status_file"`
 
+	// ControlSocket is the path of the Unix socket for the commands pause
+	// and resume. Empty: no control socket.
+	ControlSocket string `yaml:"control_socket"`
+
 	// unknownKeys are the keys in the config file that the program does not
 	// know (for example, a typing error). LoadConfig sets them.
 	unknownKeys []string

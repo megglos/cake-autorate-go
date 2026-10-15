@@ -1083,3 +1083,45 @@ func TestHandlePing_LearnCrossDelay_ShortLowLoad(t *testing.T) {
 		t.Errorf("low-load time not reset at high load")
 	}
 }
+
+func TestSetPaused_StopsRateChangesAndUsesBaseRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Adjust = true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	now := time.Now()
+	c.Start(now)
+	c.dl.shaperRateKbps = float64(cfg.Links[0].Download.MaxRateKbps)
+
+	c.SetPaused(DL, true)
+	base := cfg.Links[0].Download.BaseRateKbps
+	if got := act.rates[DL][len(act.rates[DL])-1]; got != base {
+		t.Errorf("pause must set the base rate %d, got %d", base, got)
+	}
+	if !c.Paused(DL) || c.Paused(UL) {
+		t.Error("only DL must be paused")
+	}
+
+	// Pings with a high delay must not change the rate of a paused direction.
+	n := len(act.rates[DL])
+	c.updateBaseline("1.1.1.1", 10000)
+	for i := range 20 {
+		c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 500 * time.Millisecond, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	c.setRates(1, 1)
+	if len(act.rates[DL]) != n || c.dl.shaperRateKbps != float64(base) {
+		t.Errorf("a paused direction changed its rate: %v", act.rates[DL])
+	}
+	if c.ul.shaperRateKbps == float64(cfg.Links[0].Upload.BaseRateKbps) {
+		t.Error("the upload direction must keep running")
+	}
+
+	c.SetPaused(DL, false)
+	if c.Paused(DL) {
+		t.Error("resume must clear the pause")
+	}
+	if got := act.rates[DL][len(act.rates[DL])-1]; got != base {
+		t.Errorf("resume must start at the base rate %d, got %d", base, got)
+	}
+}

@@ -19,7 +19,7 @@ import (
 
 // The recording is a JSONL file. Each line is one event. The first line is a
 // header with the config. The recording contains all inputs of Core (ping
-// results, throughput samples, start, reflector resets). Thus, a replay
+// results, throughput samples, start, reflector resets, pause and resume). Thus, a replay
 // through Core gives the same decisions. The recording also contains the
 // decisions (shaper rates, state changes), to compare a replay with the real
 // session.
@@ -47,6 +47,7 @@ const (
 	recReflectorReset = "reflector_reset"
 	recShaper         = "shaper"
 	recState          = "state"
+	recPause          = "pause"
 )
 
 type recHeaderEvent struct {
@@ -96,6 +97,14 @@ type recShaperEvent struct {
 	Link     string    `json:"link"`
 	Dir      Direction `json:"dir"`
 	RateKbps int       `json:"rate_kbps"`
+}
+
+type recPauseEvent struct {
+	T      int64     `json:"t"`
+	Type   string    `json:"type"`
+	Link   string    `json:"link"`
+	Dir    Direction `json:"dir"`
+	Paused bool      `json:"paused"`
 }
 
 type recStateEvent struct {
@@ -329,6 +338,15 @@ func (r *Recorder) Shaper(link string, dir Direction, rateKbps int, ts time.Time
 	r.write(recShaperEvent{T: r.since(ts), Type: recShaper, Link: link, Dir: dir, RateKbps: rateKbps})
 }
 
+// Pause records that a user paused or resumed the rate control of a
+// direction. It is an input of Core.
+func (r *Recorder) Pause(link string, dir Direction, paused bool, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recPauseEvent{T: r.since(ts), Type: recPause, Link: link, Dir: dir, Paused: paused})
+}
+
 // State records a state change of Core.
 func (r *Recorder) State(link string, s State, ts time.Time) {
 	if r == nil {
@@ -385,6 +403,12 @@ func (rc *RecordingCore) HandlePing(p PingResult) {
 func (rc *RecordingCore) ResetReflector(reflector string, ts time.Time) {
 	rc.rec.ReflectorReset(rc.name, reflector, ts)
 	rc.process(ts, func() { rc.core.ResetReflector(reflector) })
+}
+
+// SetPaused records a pause or a resume and sends it to the Core.
+func (rc *RecordingCore) SetPaused(dir Direction, paused bool, ts time.Time) {
+	rc.rec.Pause(rc.name, dir, paused, ts)
+	rc.process(ts, func() { rc.core.SetPaused(dir, paused) })
 }
 
 // process lets the Core process an event with timestamp ts. It records a
