@@ -126,12 +126,15 @@ cmd_install() {
 		echo "usage: $0 install APK..." >&2
 		exit 1
 	fi
-	local remote=()
+	# Use generated names in the VM: a file name can have characters that
+	# the shell of the VM interprets.
+	local remote="" i=0
 	for f in "$@"; do
-		ssh_vm "cat > /tmp/$(basename "$f")" < "$f"
-		remote+=("/tmp/$(basename "$f")")
+		i=$((i + 1))
+		ssh_vm "cat > /tmp/cake-autorate-install-$i.apk" <"$f"
+		remote="$remote /tmp/cake-autorate-install-$i.apk"
 	done
-	ssh_vm "apk update >/dev/null && apk add --allow-untrusted ${remote[*]}"
+	ssh_vm "apk update >/dev/null && apk add --allow-untrusted$remote"
 }
 
 cmd_stop() {

@@ -71,7 +71,7 @@ echo "== preparation"
 # the LAN). The socket module is only for the control socket test.
 vm 'apk add ucode-mod-socket >/dev/null' || fail "install ucode-mod-socket"
 vm '/etc/init.d/sqm stop 2>/dev/null
-	tc qdisc replace dev eth1 root cake bandwidth 20mbit
+	tc qdisc replace dev eth1 root cake bandwidth 20mbit &&
 	tc qdisc replace dev br-lan root cake bandwidth 80mbit' || fail "set up CAKE"
 vm '/etc/init.d/cake-autorate stop 2>/dev/null
 	uci -q delete cake-autorate.wan
