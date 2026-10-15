@@ -98,6 +98,13 @@ function ms(v) {
 	return '%.1f ms'.format(+v || 0);
 }
 
+// Returns the key of a focusable element. A refresh gives the focus to
+// the new element with the same key. JSON keeps link names with any
+// character apart.
+function focusKey(link, kind, id) {
+	return JSON.stringify([ link, kind, id ]);
+}
+
 function svg(tag, attrs) {
 	const e = document.createElementNS(SVG_NS, tag);
 	for (const k in attrs)
@@ -231,6 +238,7 @@ return view.extend({
 			'tabindex': 0,
 			'data-link': name,
 			'data-plot': kind,
+			'data-focus': focusKey(name, 'plot', kind),
 			'style': 'display:block; width:100%; height:%dpx; border:1px solid rgba(128,128,128,.4)'.format(GRAPH_HEIGHT)
 		});
 		for (const f of [ 0.25, 0.5, 0.75 ])
@@ -500,6 +508,7 @@ return view.extend({
 				'class': 'cbi-button ' + (st.paused ? 'cbi-button-apply' : 'cbi-button-neutral'),
 				'data-link': link,
 				'data-dir': dir,
+				'data-focus': focusKey(link, 'button', dir),
 				'click': ui.createHandlerFn(this, 'handleControl', verb, link, dir)
 			}, st.paused ? _('Resume') : _('Pause')));
 		return E('span', {}, nodes);
@@ -521,7 +530,7 @@ return view.extend({
 				E('p', {}, text(problem)),
 				E('p', {}, this.hasSqm
 					? [ _('Set up CAKE on this interface, for example with'), ' ',
-						E('a', { 'href': L.url('admin/network/sqm') }, _('SQM QoS')), '.' ]
+						E('a', { 'href': L.url('admin/network/sqm'), 'data-focus': focusKey(ls.name, 'sqm', dir) }, _('SQM QoS')), '.' ]
 					: _('Set up CAKE on this interface, for example with SQM QoS (package luci-app-sqm).'))
 			]));
 		}
@@ -620,13 +629,11 @@ return view.extend({
 				return this.checkQdiscs(data.status).then(() => data);
 			return data;
 		}, this)).then(L.bind(function(data) {
-			// The refresh makes new buttons and graphs. Keep the keyboard
-			// focus on the button of the same link and direction, or on the
-			// same graph, and keep the cursor.
+			// The refresh makes new buttons, links and graphs. Keep the
+			// keyboard focus on the element with the same focus key, and
+			// keep the cursor.
 			const focused = document.activeElement;
-			const inside = focused && this.container.contains(focused);
-			const key = (inside && focused.dataset.dir) ? [ focused.dataset.link, 'dir', focused.dataset.dir ]
-				: (inside && focused.dataset.plot) ? [ focused.dataset.link, 'plot', focused.dataset.plot ] : null;
+			const key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
 			const selection = this.selection;
 			this.addSamples(data.status);
 			this.lastData = data;
@@ -635,8 +642,8 @@ return view.extend({
 			// selection.
 			this.selection = selection;
 			if (key) {
-				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-' + key[1] + ']'),
-					(e) => e.dataset.link == key[0] && e.dataset[key[1]] == key[2]);
+				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
+					(e) => e.dataset.focus == key);
 				if (target)
 					target.focus();
 			}

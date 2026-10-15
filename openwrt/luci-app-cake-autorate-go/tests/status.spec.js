@@ -253,7 +253,14 @@ test('the warning links to SQM QoS if the page is in the menu', async ({ browser
 		await page.goto(PAGE);
 		const warning = page.locator('.cbi-section[data-link="wan"] [data-cake-warning="dl"]');
 		await expect(warning).toContainText('the interface br-lan has no CAKE', { timeout: 20000 });
-		await expect(warning.getByRole('link', { name: 'SQM QoS' })).toHaveAttribute('href', /\/admin\/network\/sqm$/);
+		const sqm = warning.getByRole('link', { name: 'SQM QoS' });
+		await expect(sqm).toHaveAttribute('href', /\/admin\/network\/sqm$/);
+
+		// A refresh keeps the keyboard focus on the link.
+		await sqm.focus();
+		const old = await sqm.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(sqm).toBeFocused();
 	}
 	finally {
 		await context.close();
