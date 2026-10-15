@@ -217,6 +217,17 @@ Do not use the package and the service of `setup.sh` at the same time: both chan
 
 To build the package on your computer with Docker, run `scripts/openwrt-build.sh`. The package goes to `bin/openwrt/`.
 
+To test the package without a router, use an OpenWrt x86-64 VM (QEMU with KVM). The CI does the same test:
+
+```bash
+scripts/openwrt-build.sh x86_64-openwrt-25.12
+scripts/openwrt-vm.sh start
+scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
+scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop
+scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
+scripts/openwrt-vm.sh stop
+```
+
 ## OpenWrt service installation with setup.sh
 
 Run [`setup.sh`](setup.sh) on your router. It installs the binary, makes a default config and makes a procd service:

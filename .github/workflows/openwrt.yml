@@ -118,3 +118,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" dist/*.apk
+
+  # Install the x86_64 package in an OpenWrt VM and test the service:
+  # start, status file, control socket, reload, invalid configuration, stop.
+  vm:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openwrt-x86_64-openwrt-25.12
+          path: apk
+
+      - name: Start the VM and install the package
+        run: |
+          scripts/openwrt-vm.sh start
+          scripts/openwrt-vm.sh install apk/*.apk
+
+      - name: Test the service
+        run: scripts/openwrt-vm-test.sh
+
+      - name: Stop the VM
+        if: always()
+        run: scripts/openwrt-vm.sh stop
