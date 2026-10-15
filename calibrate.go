@@ -163,7 +163,8 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 			return nil, nil, fmt.Errorf("block %d: the config must have exactly one link (calibrate one link at a time)", b.num)
 		}
 		if cfg == nil {
-			cfg = rec.config
+			// Use the settings that apply to the link: the link overrides win.
+			cfg = rec.config.ForLink(&rec.config.Links[0])
 		}
 		// A variant config (record-session.sh -A) must be for the same link.
 		first, l := cfg.Links[0], rec.config.Links[0]

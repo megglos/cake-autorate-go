@@ -34,6 +34,7 @@ type calTestLink struct {
 	unshapedTimeouts     bool    // all pings time out in the load of the unshaped blocks
 	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
+	linkPingerCount      int     // the link overrides pinger_count (0: no override)
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -46,6 +47,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 	cfg.Links[0].Download.Interface = "ifb4wan"
 	cfg.Links[0].Upload.Interface = "wan"
 	cfg.PingMethod = PingMethodTimestamp
+	if l.linkPingerCount > 0 {
+		cfg.Links[0].PingerCount = &l.linkPingerCount
+	}
 	reflectors := []string{"r1", "r2", "r3", "r4", "r5"}
 	rng := rand.New(rand.NewPCG(1, 2))
 
@@ -790,5 +794,18 @@ func TestReadCalRecording_RateInFileOrder(t *testing.T) {
 	}
 	if len(r.pings) != 1 || r.pings[0].ulShaperKbps != 5000 || r.pings[0].ulKbps != 4000 {
 		t.Errorf("pings = %+v, want shaper 5000 and upload 4000 kbit/s", r.pings)
+	}
+}
+
+// The settings of the link win over the top-level settings. Thus, the
+// proposal and the config file use the pinger count of the link.
+func TestCalibrateSession_LinkOverrides(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{dlCapKbps: 100000, ulCapKbps: 20000, ulCapBothKbps: 20000, idleJitterMs: 2, linkPingerCount: 2})
+	_, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PingerCount != 2 {
+		t.Errorf("pinger_count = %d, want the link value 2", cfg.PingerCount)
 	}
 }
