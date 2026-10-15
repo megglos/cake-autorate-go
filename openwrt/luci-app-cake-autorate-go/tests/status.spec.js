@@ -7,7 +7,7 @@
 const { test, expect } = require('@playwright/test');
 const { vm, resetConfig, login } = require('./helpers');
 
-const PAGE = '/cgi-bin/luci/admin/services/cake-autorate/status';
+const PAGE = '/cgi-bin/luci/admin/network/cake-autorate/status';
 const OVERVIEW = '/cgi-bin/luci/admin/status/overview';
 
 // Returns the "paused" value of the direction key in the status file.
@@ -75,7 +75,7 @@ test.afterEach(() => {
 
 test('menu opens the status page first', async ({ page }) => {
 	// The menu entry shows its first child without a redirect.
-	await page.goto('/cgi-bin/luci/admin/services/cake-autorate');
+	await page.goto('/cgi-bin/luci/admin/network/cake-autorate');
 	await expect(page.locator('h2')).toHaveText('CAKE Autorate (Go)');
 	await expect(page.locator('#cake-autorate-status .cbi-section[data-link="wan"]')).toBeVisible();
 });

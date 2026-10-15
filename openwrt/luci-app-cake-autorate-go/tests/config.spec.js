@@ -7,7 +7,7 @@
 const { test, expect } = require('@playwright/test');
 const { vm, resetConfig, login } = require('./helpers');
 
-const PAGE = '/cgi-bin/luci/admin/services/cake-autorate/config';
+const PAGE = '/cgi-bin/luci/admin/network/cake-autorate/config';
 
 // The input element of the option name in section sid.
 function input(page, sid, name) {
