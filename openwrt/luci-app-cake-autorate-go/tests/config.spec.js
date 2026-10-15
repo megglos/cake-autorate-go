@@ -433,3 +433,54 @@ test('rate error only on the empty field', async ({ page }) => {
 	await expect(input(page, 'wan', 'dl_max_rate_kbps')).not.toHaveClass(INVALID);
 	resetConfig();
 });
+
+test('ping check: a disabled service is not checked', async ({ page }) => {
+	vm(`uci delete cake-autorate.wan.reflectors &&
+		uci add_list cake-autorate.wan.reflectors=8.8.8.8 &&
+		uci set cake-autorate.global.ping_method=icmp-timestamp &&
+		uci commit cake-autorate`);
+	await page.reload();
+	const method = input(page, 'global', 'ping_method');
+	await expect(method).toHaveClass(INVALID);
+	await page.locator('input[data-widget-id="widget.cbid.cake-autorate.global.enabled"]').uncheck();
+	await expect(method).not.toHaveClass(INVALID);
+	resetConfig();
+});
+
+test('a disabled link does not use its interfaces', async ({ page }) => {
+	vm(`uci set cake-autorate.old=link &&
+		uci set cake-autorate.old.dl_interface=ifb4old &&
+		uci set cake-autorate.old.ul_interface=eth0 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	const ulInvalid = () => page.locator('[id="cbid.cake-autorate.wan.ul_interface"]');
+	const selectEth0 = async () => {
+		await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+		const ul = page.locator('.modal [data-name="ul_interface"] .cbi-dropdown');
+		await ul.click();
+		await ul.locator('li[data-value="eth0"][tabindex]').click();
+	};
+	// The enabled link "old" uses eth0.
+	await selectEth0();
+	await expect(ulInvalid()).toHaveClass(INVALID);
+	await page.locator('.modal button', { hasText: 'Dismiss' }).click();
+	// Clear the Enabled box of "old" in the table, without a save.
+	await page.locator('input[data-widget-id="widget.cbid.cake-autorate.old.enabled"]').uncheck();
+	await selectEth0();
+	await expect(ulInvalid()).not.toHaveClass(INVALID);
+	resetConfig();
+});
+
+test('bounded decimal fields reject exponents, like the converter', async ({ page }) => {
+	await openTab(page, 'advanced');
+	for (const [ name, value ] of [
+		[ 'shaper_rate_min_adjust_up_load_high', '1e0' ],
+		[ 'shaper_rate_max_adjust_up_load_high', '1.5e0' ],
+		[ 'shaper_rate_adjust_up_load_low', '1e0' ],
+		[ 'high_load_thr', '0.5e0' ]
+	]) {
+		await setValue(page, 'global', name, value);
+		await expect(input(page, 'global', name), name + '=' + value).toHaveClass(INVALID);
+		await setValue(page, 'global', name, '');
+	}
+});

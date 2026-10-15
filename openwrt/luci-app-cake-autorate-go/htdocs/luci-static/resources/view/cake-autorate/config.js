@@ -120,6 +120,9 @@ function live(section, sid, name) {
 // that link.
 function pingMethodError(section, sid, only) {
 	const gsec = section && sid == page.globalSid ? section : page.global;
+	// The converter does not check a disabled service.
+	if (live(gsec, page.globalSid, 'enabled') == '0')
+		return true;
 	const gmethod = live(gsec, page.globalSid, 'ping_method') || 'icmp';
 	const grefl = toList(live(gsec, page.globalSid, 'reflectors'));
 	for (const l of uci.sections('cake-autorate', 'link')) {
@@ -178,16 +181,20 @@ function number(s, tab, name, title, def, datatype, description) {
 	return o;
 }
 
-// Returns the names of the interfaces that the other link sections use.
+// Returns the names of the interfaces that the other enabled link sections
+// use. The converter leaves out a disabled link. The values of the form
+// are used, see live().
 function otherInterfaces(sid) {
-	// No prototype: names such as "constructor" are valid interface names.
 	const used = Object.create(null);
 	for (const s of uci.sections('cake-autorate', 'link')) {
-		if (s['.name'] == sid)
+		const lsid = s['.name'];
+		if (lsid == sid || live(page.links, lsid, 'enabled') == '0')
 			continue;
-		for (const d of [ 'dl', 'ul' ])
-			if (s[d + '_interface'])
-				used[s[d + '_interface']] = s.name || s['.name'];
+		for (const d of [ 'dl', 'ul' ]) {
+			const ifname = live(page.links, lsid, d + '_interface');
+			if (ifname)
+				used[ifname] = live(page.links, lsid, 'name') || lsid;
+		}
 	}
 	return used;
 }
@@ -418,6 +425,9 @@ function linkSection(m) {
 			const other = this.section.formvalue(sid, (d == 'dl' ? 'ul' : 'dl') + '_interface');
 			if (other == value)
 				return _('Download and upload must use different interfaces');
+			// A disabled link does not use its interfaces.
+			if (live(this.section, sid, 'enabled') == '0')
+				return true;
 			const used = otherInterfaces(sid);
 			if (used[value])
 				return _('The link "%s" uses this interface').format(used[value]);
