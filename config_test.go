@@ -644,6 +644,19 @@ func TestWarnings_LinkTimestampReflectors(t *testing.T) {
 	}
 }
 
+func TestValidate_LinkNameForControlSocket(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links[0].Name = "mobile wan"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a space is fine without a control socket: %v", err)
+	}
+	cfg.ControlSocket = "/tmp/x.sock"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "contains a space") {
+		t.Errorf("expected a space error, got: %v", err)
+	}
+}
+
 func TestValidate_DuplicateLinkName(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.migrateLinks()

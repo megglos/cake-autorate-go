@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -73,31 +74,62 @@ func handleControlCommand(line string, names []string, links map[string]LinkCont
 	}
 }
 
+// removeStaleSocket removes the socket at path if no program listens on it.
+// It returns an error if the path is not a socket, or if a program listens
+// on it.
+func removeStaleSocket(path string) error {
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("control socket path %s exists and is not a socket", path)
+	}
+	if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
+		conn.Close()
+		return fmt.Errorf("control socket %s is in use by another program", path)
+	}
+	return os.Remove(path)
+}
+
 // RunControlSocket listens on the Unix socket at path until ctx ends. Then
-// it removes the socket. Only the owner of the socket can connect.
+// it removes the socket, but only if it is still the socket that this
+// function created. Only the owner of the socket can connect.
 func RunControlSocket(ctx context.Context, path string, names []string, links map[string]LinkControl, logger *Logger) error {
-	// Remove a socket that a former run left. Do not remove another file type.
-	if fi, err := os.Lstat(path); err == nil {
-		if fi.Mode()&os.ModeSocket == 0 {
-			return fmt.Errorf("control socket path %s exists and is not a socket", path)
-		}
-		os.Remove(path)
+	if err := removeStaleSocket(path); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	// Create the socket with mode 0600 from the start. A mode change after
+	// the creation leaves a short time in which other users can connect.
+	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
+	syscall.Umask(old)
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	// Do not let the listener remove the path: another program can have
+	// replaced the socket by a different file.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	created, err := os.Lstat(path)
+	if err != nil {
 		ln.Close()
 		return err
 	}
 	go func() {
 		<-ctx.Done()
 		ln.Close()
-		os.Remove(path)
+	}()
+	// Remove the socket before the return, but only our own socket.
+	defer func() {
+		if fi, err := os.Lstat(path); err == nil && os.SameFile(fi, created) {
+			os.Remove(path)
+		}
 	}()
 	for {
 		conn, err := ln.Accept()
@@ -108,16 +140,21 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 			logger.Errorf("control socket: %v", err)
 			return err
 		}
-		go func() {
-			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(controlTimeout))
-			line, err := bufio.NewReader(conn).ReadString('\n')
-			if err != nil && line == "" {
-				return
-			}
-			answer := handleControlCommand(line, names, links)
-			logger.Infof("control: %q: %s", strings.TrimSpace(line), answer)
-			fmt.Fprintln(conn, answer)
-		}()
+		go serveControlConn(conn, names, links, logger)
 	}
+}
+
+// serveControlConn reads one command from conn and writes the answer. It
+// runs the command only if the client sent a complete line.
+func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, logger *Logger) {
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(controlTimeout))
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		fmt.Fprintln(conn, "error: no complete command")
+		return
+	}
+	answer := handleControlCommand(line, names, links)
+	logger.Infof("control: %q: %s", strings.TrimSpace(line), answer)
+	fmt.Fprintln(conn, answer)
 }

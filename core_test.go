@@ -1125,3 +1125,22 @@ func TestSetPaused_StopsRateChangesAndUsesBaseRate(t *testing.T) {
 		t.Errorf("resume must start at the base rate %d, got %d", base, got)
 	}
 }
+
+func TestSetPaused_SecondPauseSetsBaseRateAgain(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	c.Start(time.Now())
+	c.SetPaused(DL, true)
+	n := len(act.rates[DL])
+	c.SetPaused(DL, true)
+	if len(act.rates[DL]) != n+1 || !c.Paused(DL) {
+		t.Errorf("a second pause must send the base rate again: %v", act.rates[DL])
+	}
+	m := len(act.rates[UL])
+	c.SetPaused(UL, false)
+	if len(act.rates[UL]) != m {
+		t.Error("a resume of a running direction must change nothing")
+	}
+}

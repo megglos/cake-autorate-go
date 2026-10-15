@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -534,6 +535,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("link name %q is used more than one time", link.Name)
 		}
 		seen[link.Name] = true
+		if c.ControlSocket != "" && strings.ContainsFunc(link.Name, unicode.IsSpace) {
+			return fmt.Errorf("link name %q contains a space: the control socket cannot address it", link.Name)
+		}
 		for _, dc := range []struct {
 			name string
 			dir  DirectionConfig

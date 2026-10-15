@@ -109,3 +109,83 @@ func TestRunControlSocket_RefusesRegularFile(t *testing.T) {
 		t.Error("the file must stay")
 	}
 }
+
+func TestRunControlSocket_RefusesLiveSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	live, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	if err := RunControlSocket(context.Background(), path, nil, nil, NewDiscardLogger()); err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("expected an in-use error, got: %v", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Error("the live socket must stay")
+	}
+}
+
+func TestRunControlSocket_ReplacesStaleSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	stale, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Close the listener without removal: the socket file stays.
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	stale.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunControlSocket(ctx, path, nil, nil, NewDiscardLogger()) }()
+	var conn net.Conn
+	for range 50 {
+		if conn, err = net.Dial("unix", path); err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("no listener on the stale path: %v", err)
+	}
+	cancel()
+	<-done
+}
+
+func TestRunControlSocket_KeepsReplacementAtStop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunControlSocket(ctx, path, nil, nil, NewDiscardLogger()) }()
+	for range 50 {
+		if c, err := net.Dial("unix", path); err == nil {
+			c.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Another program replaces the socket by a regular file.
+	os.Remove(path)
+	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	<-done
+	if data, err := os.ReadFile(path); err != nil || string(data) != "keep" {
+		t.Errorf("the replacement file must stay: %q %v", data, err)
+	}
+}
+
+func TestServeControlConn_IgnoresIncompleteCommand(t *testing.T) {
+	a := &fakeLinkControl{}
+	client, server := net.Pipe()
+	go func() {
+		serveControlConn(server, []string{"a"}, map[string]LinkControl{"a": a}, NewDiscardLogger())
+	}()
+	fmt.Fprint(client, "pause a") // no newline
+	client.Close()
+	time.Sleep(100 * time.Millisecond)
+	if a.dirs != nil || a.paused {
+		t.Errorf("an incomplete command must not run: %v %v", a.dirs, a.paused)
+	}
+}

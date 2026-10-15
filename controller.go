@@ -31,9 +31,11 @@ type LinkController struct {
 
 	// board receives the status of the link. It can be nil.
 	board *StatusBoard
+	// rateErr is the last error of SetRate. Only the goroutine of Run uses it.
+	rateErr error
 
 	// ctrlCh carries the pause and resume commands to the goroutine of Run.
-	ctrlCh chan pauseCmd
+	ctrlCh chan *pauseCmd
 
 	// Channels
 	pingCh chan PingResult
@@ -58,7 +60,7 @@ func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, recorder *
 		pingerMgr: NewPingerManager(link, cfg, logger),
 		monitor:   NewMonitor(link.Download.Interface, link.Upload.Interface, cfg.MonitorIntervalMs, logger),
 		logger:    logger,
-		ctrlCh:    make(chan pauseCmd),
+		ctrlCh:    make(chan *pauseCmd),
 		pingCh:    make(chan PingResult, 100),
 		rateCh:    make(chan RateStats, 10),
 	}
@@ -127,9 +129,11 @@ func (c *LinkController) Run(ctx context.Context) error {
 			c.publishStatus()
 		case cmd := <-c.ctrlCh:
 			now := time.Now()
+			c.rateErr = nil
 			for _, dir := range cmd.dirs {
 				c.core.SetPaused(dir, cmd.paused, now)
 			}
+			cmd.err = c.rateErr
 			close(cmd.done)
 
 		case <-healthTicker.C:
@@ -160,13 +164,15 @@ type pauseCmd struct {
 	dirs   []Direction
 	paused bool
 	done   chan struct{}
+	// err is the error of the rate change, set before done closes.
+	err error
 }
 
 // SetPaused pauses or resumes the rate control of the directions. It returns
 // after the controller has done the command. It returns an error if the
 // controller does not run or does not answer in time.
 func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
-	cmd := pauseCmd{dirs: dirs, paused: paused, done: make(chan struct{})}
+	cmd := &pauseCmd{dirs: dirs, paused: paused, done: make(chan struct{})}
 	timeout := time.After(2 * time.Second)
 	select {
 	case c.ctrlCh <- cmd:
@@ -175,7 +181,7 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 	}
 	select {
 	case <-cmd.done:
-		return nil
+		return cmd.err
 	case <-timeout:
 		return fmt.Errorf("link %q does not answer", c.name)
 	}
@@ -224,6 +230,7 @@ func (c *LinkController) StopPingers() {
 func (c *LinkController) SetRate(dir Direction, rateKbps int) {
 	if err := c.shaper.SetRate(c.link.DirConfig(dir).Interface, rateKbps); err != nil {
 		c.logger.Errorf("[%s] [%s] setting rate to %d kbps: %v", c.name, dir, rateKbps, err)
+		c.rateErr = fmt.Errorf("setting the rate of %s to %d kbps: %w", dir, rateKbps, err)
 	}
 }
 

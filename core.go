@@ -143,7 +143,9 @@ func (c *Core) Start(now time.Time) {
 // resume, the normal control starts from the base rate.
 func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
-	if ds.paused == paused {
+	// A resume of a running direction changes nothing. A second pause sets
+	// the base rate again: the first attempt can have failed.
+	if ds.paused == paused && !paused {
 		return
 	}
 	ds.paused = false
