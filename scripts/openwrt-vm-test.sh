@@ -126,7 +126,7 @@ wait_for "changed config restarts the process" "p=\$(pidof cake-autorate-go) && 
 echo "== invalid configuration"
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=fast && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "converter error is in the log" 'logread -e cake-autorate | grep -q "dl_min_rate_kbps: \"fast\" is not an integer"'
-check "program does not run" '! pidof cake-autorate-go >/dev/null'
+wait_for "program does not run" '! pidof cake-autorate-go >/dev/null'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=90000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "check-config error is in the log" 'logread -e cake-autorate | grep -q "configuration check failed"'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=5000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
@@ -134,7 +134,7 @@ wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
 
 echo "== disable and stop"
 vm 'uci set cake-autorate.wan.enabled=0 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
-check "disabled link: program does not run" '! pidof cake-autorate-go >/dev/null'
+wait_for "disabled link: program does not run" '! pidof cake-autorate-go >/dev/null'
 check "disabled message is in the log" 'logread -e cake-autorate | grep -q "disabled, not started"'
 vm 'uci set cake-autorate.wan.enabled=1 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'

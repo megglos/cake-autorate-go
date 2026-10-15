@@ -75,20 +75,26 @@ function enabled(s, where, errors) {
 // the section s. keys is the schema of the plain keys, dir_keys the schema
 // of the direction keys.
 function set_option(out, s, k, keys, dir_keys, where, errors) {
-	if (k == 'enabled' || empty(s[k]))
+	if (k == 'enabled')
 		return;
 	let target = out, key = k, t = keys[k];
 	let p = substr(k, 0, 3);
 	if (t == null && prefixes[p] && dir_keys[substr(k, 3)]) {
 		key = substr(k, 3);
 		t = dir_keys[key];
-		out[prefixes[p]] ??= {};
-		target = out[prefixes[p]];
+		if (!empty(s[k])) {
+			out[prefixes[p]] ??= {};
+			target = out[prefixes[p]];
+		}
 	}
 	if (t == null) {
 		push(errors, sprintf('%s: unknown option "%s"', where, k));
 		return;
 	}
+	// Check the name first, thus a wrong name with an empty value also
+	// gives an error.
+	if (empty(s[k]))
+		return;
 	let r = typed(t, s[k]);
 	if (r[1] != null)
 		push(errors, sprintf('%s.%s: %s', where, k, r[1]));

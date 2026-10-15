@@ -110,4 +110,9 @@ check('global ping keys apply to the links',
 	map(r.config.links, (l) => [ l.ping_interface, l.ping_source_addr ]),
 	[ [ 'wwan0', '10.0.0.2' ], [ 'eth1', '10.0.0.2' ] ]);
 
+r = convert({ a: sec('link', 'a', 0, { pinger_cout: '', dl_foo: '' }), g: sec('global', 'g', 1, { dl_owd_delta_delay_thr_ms: '' }) }, schema, null);
+check('unknown option with an empty value', r.errors, [ 'link a: unknown option "dl_foo"', 'link a: unknown option "pinger_cout"' ]);
+r = convert({ g: sec('global', 'g', 0, { dl_owd_delta_delay_thr_ms: '' }), a: sec('link', 'a', 1, {}) }, schema, null);
+check('empty direction option writes no direction', r.config.download, null);
+
 exit(failed > 0 ? 1 : 0);
