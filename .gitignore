@@ -5,3 +5,4 @@
 *.exe
 recordings/
 /bin/
+/openwrt/cake-autorate-go/prebuilt/

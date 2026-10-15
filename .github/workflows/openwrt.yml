@@ -53,9 +53,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - aarch64_cortex-a53-openwrt-25.12
-          - x86_64-openwrt-25.12
+        include:
+          - arch: aarch64_cortex-a53-openwrt-25.12
+            goarch: arm64
+          - arch: x86_64-openwrt-25.12
+            goarch: amd64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +85,23 @@ jobs:
           sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
             -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
           grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Build the program with the Go toolchain of the runner. Then the SDK
+      # does not build its own Go toolchain (about 10 minutes). The program
+      # is static, thus it does not need the C library of OpenWrt.
+      - name: Build the program
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          desc=$(git describe --tags --always)
+          go build -trimpath -ldflags="-s -w -X main.version=$desc" \
+            -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
 
       - name: Build
         uses: openwrt/gh-action-sdk@v11
