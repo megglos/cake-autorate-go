@@ -20,6 +20,8 @@ PKG_BUILD_FLAGS:=no-mips16
 # The root of the repository. CURDIR is the real path, also if the feed
 # links to this directory.
 REPO_DIR:=$(CURDIR)/../..
+# Build/Prepare copies these files. A change of them makes a new build.
+PKG_FILE_DEPENDS:=$(wildcard $(REPO_DIR)/*.go) $(REPO_DIR)/go.mod $(REPO_DIR)/go.sum
 
 # The version that the program shows. CI can set a different value, for
 # example the output of "git describe".

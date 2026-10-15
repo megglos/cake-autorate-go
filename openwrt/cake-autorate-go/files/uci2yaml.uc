@@ -29,7 +29,13 @@ if (!outfile) {
 }
 
 let schema = json(readfile(dir + '/schema.json'));
-let r = convert(cursor().get_all('cake-autorate'), schema, fixed);
+let uci = cursor();
+let sections = uci.get_all('cake-autorate');
+if (sections == null) {
+	warn(sprintf('cake-autorate: cannot read /etc/config/cake-autorate: %s\n', uci.error() ?? 'unknown error'));
+	exit(1);
+}
+let r = convert(sections, schema, fixed);
 
 for (let e in r.errors)
 	warn('cake-autorate: ' + e + '\n');

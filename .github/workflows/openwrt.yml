@@ -47,6 +47,8 @@ jobs:
 
   # Build the apk packages with the OpenWrt SDK.
   package:
+    # Do not build or publish packages with a converter that fails its tests.
+    needs: converter
     runs-on: ubuntu-latest
     permissions:
       # To attach the packages to a release.
@@ -68,15 +70,28 @@ jobs:
           ARCH: ${{ matrix.arch }}
           PACKAGES: cake-autorate-go
 
+      # The apk file names do not have the architecture. Add it, because
+      # the names of the release files must be unique.
+      - name: Name the packages
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir dist
+          for f in bin/packages/*/action/*.apk; do
+            b=$(basename "$f" .apk)
+            cp "$f" "dist/${b}_${ARCH}.apk"
+          done
+          ls -l dist
+
       - name: Store packages
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-${{ matrix.arch }}
-          path: bin/packages/*/action/*.apk
+          path: dist/*.apk
           if-no-files-found: error
 
       - name: Attach packages to the release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" bin/packages/*/action/*.apk
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.apk
