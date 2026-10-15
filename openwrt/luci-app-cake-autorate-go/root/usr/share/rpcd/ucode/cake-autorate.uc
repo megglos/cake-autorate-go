@@ -30,17 +30,21 @@ function command(line) {
 		return { error: 'The service does not run: ' + err };
 	}
 
-	const tv = { tv_sec: TIMEOUT, tv_usec: 0 };
+	// The socket module reads the fields "sec" and "usec".
+	const tv = { sec: TIMEOUT, usec: 0 };
 	s.setopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, tv);
 	s.setopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, tv);
 
 	let answer = null;
 	if (s.send(line + '\n') != null)
 		answer = s.recv(256);
+	// Get the error before close: a close without error clears it.
+	const err = socket.error();
 	s.close();
 
-	if (answer == null)
-		return { error: 'No answer from the service: ' + socket.error() };
+	// An empty answer: the program closed the connection without an answer.
+	if (answer == null || answer == '')
+		return { error: 'No answer from the service' + (err ? ': ' + err : '') };
 	answer = trim(answer);
 	if (answer == 'ok')
 		return { result: 'ok' };

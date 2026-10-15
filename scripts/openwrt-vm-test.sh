@@ -134,6 +134,14 @@ a=$(rpc pause '{"link":"wan\nresume wan"}')
 case $a in *'Invalid link name'*) ok "rpc invalid link name" ;; *) fail "rpc invalid link name (answer: $a)" ;; esac
 a=$(rpc pause '{"link":"wan","dir":"both"}')
 case $a in *'Invalid direction'*) ok "rpc invalid direction" ;; *) fail "rpc invalid direction (answer: $a)" ;; esac
+# A stopped process does not answer. The plugin must stop after its
+# timeout of 5 s.
+vm 'kill -STOP $(pidof cake-autorate-go)'
+t0=$(date +%s)
+a=$(rpc pause '{"link":"wan"}')
+t=$(( $(date +%s) - t0 ))
+vm 'kill -CONT $(pidof cake-autorate-go)'
+case $a in *'No answer from the service: '*) [ "$t" -le 10 ] && ok "rpc timeout (${t}s)" || fail "rpc timeout took ${t}s" ;; *) fail "rpc timeout (answer: $a)" ;; esac
 
 echo "== reload"
 p1=$(pid)

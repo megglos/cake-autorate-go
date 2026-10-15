@@ -221,7 +221,18 @@ return view.extend({
 
 	refresh: function() {
 		return readStatus().then(L.bind(function(data) {
+			// The refresh makes new buttons. Keep the keyboard focus on the
+			// button of the same link and direction.
+			const focused = document.activeElement;
+			const key = (focused && this.container.contains(focused) && focused.dataset.dir)
+				? [ focused.dataset.link, focused.dataset.dir ] : null;
 			this.container.replaceChildren(this.renderStatus(data));
+			if (key) {
+				const button = Array.prototype.find.call(this.container.querySelectorAll('button[data-dir]'),
+					(b) => b.dataset.link == key[0] && b.dataset.dir == key[1]);
+				if (button)
+					button.focus();
+			}
 		}, this));
 	},
 

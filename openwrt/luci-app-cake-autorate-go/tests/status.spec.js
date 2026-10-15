@@ -115,6 +115,17 @@ test('pause and resume one direction', async ({ page }) => {
 	expect(pausedInFile('download')).toBe('false');
 });
 
+test('a refresh keeps the keyboard focus on the button', async ({ page }) => {
+	await page.goto(PAGE);
+	const ul = page.locator('tr[data-dir="ul"] button');
+	await ul.focus();
+	await expect(ul).toBeFocused();
+	// Wait for more than one refresh (each 2 seconds).
+	const old = await ul.elementHandle();
+	await expect.poll(() => old.evaluate((b) => b.isConnected), { timeout: 10000 }).toBe(false);
+	await expect(ul).toBeFocused();
+});
+
 test('a direction with adjust off has no button', async ({ page }) => {
 	vm('uci set cake-autorate.wan.ul_adjust=0 && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {
