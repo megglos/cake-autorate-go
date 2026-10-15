@@ -8,9 +8,12 @@ USE_PROCD=1
 PROG=/usr/sbin/cake-autorate-go
 CONF=/var/etc/cake-autorate.yaml
 SHARE=/usr/share/cake-autorate
+# The errors of the last start. The LuCI page shows them.
+ERR=/var/run/cake-autorate/config-error
 
 start_service() {
 	mkdir -p /var/etc /var/run/cake-autorate
+	rm -f "$ERR"
 	# Write the messages of the converter and of the check to the system
 	# log.
 	local out rc
@@ -26,6 +29,7 @@ start_service() {
 		;;
 	*)
 		rm -f "$CONF.new"
+		echo "$out" >"$ERR"
 		logger -t cake-autorate "invalid configuration in /etc/config/cake-autorate"
 		return 1
 		;;
@@ -35,6 +39,7 @@ start_service() {
 	[ -n "$out" ] && echo "$out" | logger -t cake-autorate
 	if [ "$rc" -ne 0 ]; then
 		rm -f "$CONF.new"
+		echo "$out" >"$ERR"
 		logger -t cake-autorate "configuration check failed, not started"
 		return 1
 	fi

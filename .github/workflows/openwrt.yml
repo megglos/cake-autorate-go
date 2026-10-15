@@ -45,6 +45,15 @@ jobs:
           ucode -L "$PWD/openwrt/cake-autorate-go/files/*.uc" openwrt/cake-autorate-go/tests/sample.uc openwrt/cake-autorate-go/files > "$RUNNER_TEMP/sample.yaml"
           go run . -check-config -strict -config "$RUNNER_TEMP/sample.yaml"
 
+      - name: Check the syntax of the LuCI views
+        run: |
+          for f in openwrt/luci-app-cake-autorate-go/htdocs/luci-static/resources/view/*/*.js; do
+            node --check "$f"
+          done
+          for f in openwrt/luci-app-cake-autorate-go/root/usr/share/*/*/*.json; do
+            jq empty "$f"
+          done
+
   # Build the apk packages with the OpenWrt SDK.
   package:
     # Do not build or publish packages with a converter that fails its tests.
@@ -72,6 +81,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           mk=openwrt/cake-autorate-go/Makefile
+          luci=openwrt/luci-app-cake-autorate-go/Makefile
           if [ -n "$TAG" ]; then
             v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
           else
@@ -84,7 +94,8 @@ jobs:
           desc=$(git describe --tags --always --dirty)
           sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
             -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
-          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk"
+          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" "$luci"
+          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk" "$luci"
 
       - uses: actions/setup-go@v5
         with:
@@ -107,8 +118,8 @@ jobs:
         uses: openwrt/gh-action-sdk@v11
         env:
           ARCH: ${{ matrix.arch }}
-          PACKAGES: cake-autorate-go
-          # The prebuilt program needs no other feeds.
+          PACKAGES: cake-autorate-go luci-app-cake-autorate-go
+          # The prebuilt program and the LuCI app need no other feeds.
           NO_DEFAULT_FEEDS: 1
 
       # The apk file names do not have the architecture. Add it, because

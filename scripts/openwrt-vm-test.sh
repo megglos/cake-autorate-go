@@ -1,14 +1,15 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# Tests the package cake-autorate-go in the OpenWrt VM of
-# scripts/openwrt-vm.sh: start, status file, control socket, reload, invalid
-# configuration, disable and stop.
+# Tests the packages cake-autorate-go and luci-app-cake-autorate-go in the
+# OpenWrt VM of scripts/openwrt-vm.sh: start, status file, control socket,
+# reload, invalid configuration, disable, stop, and the files of the LuCI
+# app.
 #
 # Usage: scripts/openwrt-vm-test.sh
-# Start the VM and install the package first:
+# Start the VM and install the packages first:
 #   scripts/openwrt-vm.sh start
-#   scripts/openwrt-vm.sh install cake-autorate-go-*.apk
+#   scripts/openwrt-vm.sh install cake-autorate-go-*.apk luci-app-cake-autorate-go-*.apk
 #
 # The test changes the configuration in the VM. The exit code is 1 if a
 # test fails.
@@ -126,11 +127,14 @@ wait_for "changed config restarts the process" "p=\$(pidof cake-autorate-go) && 
 echo "== invalid configuration"
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=fast && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "converter error is in the log" 'logread -e cake-autorate | grep -q "dl_min_rate_kbps: \"fast\" is not an integer"'
+check "converter error is in the error file" 'grep -q "dl_min_rate_kbps: \"fast\" is not an integer" /var/run/cake-autorate/config-error'
 wait_for "program does not run" '! pidof cake-autorate-go >/dev/null'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=90000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 check "check-config error is in the log" 'logread -e cake-autorate | grep -q "configuration check failed"'
+check "check-config error is in the error file" 'grep -q "base_rate_kbps must be >= min_rate_kbps" /var/run/cake-autorate/config-error'
 vm 'uci set cake-autorate.wan.dl_min_rate_kbps=5000 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
+check "valid configuration removes the error file" '[ ! -e /var/run/cake-autorate/config-error ]'
 
 echo "== disable and stop"
 vm 'uci set cake-autorate.wan.enabled=0 && uci commit cake-autorate && /etc/init.d/cake-autorate restart'
@@ -140,6 +144,13 @@ vm 'uci set cake-autorate.wan.enabled=1 && uci commit cake-autorate && /etc/init
 wait_for "program runs again" 'pidof cake-autorate-go >/dev/null'
 vm '/etc/init.d/cake-autorate stop'
 wait_for "stop removes the status file and the socket" '! pidof cake-autorate-go >/dev/null && [ ! -e /var/run/cake-autorate/status.json ] && [ ! -e /var/run/cake-autorate/control.sock ]'
+
+echo "== LuCI app"
+check "web server sends the view" 'wget -qO- http://127.0.0.1/luci-static/resources/view/cake-autorate/config.js | grep -q "view.extend"'
+check "menu file is valid JSON" 'jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e "@[\"admin/services/cake-autorate/config\"].action.path" | grep -q "^cake-autorate/config$"'
+# rpcd loads the ACL file only if it is valid.
+check "rpcd knows the ACL group" 'sid=$(ubus call session login "{\"username\":\"root\",\"password\":\"\"}" | jsonfilter -e "@.ubus_rpc_session") &&
+	ubus call session access "{\"ubus_rpc_session\":\"$sid\",\"scope\":\"access-group\",\"object\":\"luci-app-cake-autorate-go\",\"function\":\"write\"}" | grep -q "\"access\": true"'
 
 if [ "$FAILED" -ne 0 ]; then
 	echo "== log"
