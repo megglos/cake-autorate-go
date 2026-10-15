@@ -308,6 +308,9 @@ function linkSection(m) {
 		_('The name in the log and the status. Empty: the section name.'));
 	o.placeholder = _('section name');
 	o.validate = function(sid, value) {
+		// The converter uses the section name only for a named section.
+		if (isEmpty(value) && uci.get('cake-autorate', sid, '.anonymous'))
+			return _('Enter a name');
 		const name = isEmpty(value) ? sid : value;
 		if (!LINK_NAME_RE.test(name))
 			return _('Use 1 to 64 characters of a-z, A-Z, 0-9, ".", "_" and "-"');
@@ -442,7 +445,9 @@ function renderError(text) {
 		return E('div');
 	return E('div', { 'class': 'alert-message warning' }, [
 		E('h4', {}, _('The service did not start: the configuration is not valid')),
-		E('pre', { 'style': 'white-space: pre-wrap' }, text.trim())
+		// A text node: the errors contain UCI values, E() reads a string
+		// as HTML.
+		E('pre', { 'style': 'white-space: pre-wrap' }, document.createTextNode(text.trim()))
 	]);
 }
 

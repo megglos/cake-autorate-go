@@ -238,3 +238,32 @@ test('errors after Save & Apply show without a reload', async ({ page }) => {
 		.toContainText('no reflector replies to ICMP timestamp requests', { timeout: 30000 });
 	resetConfig();
 });
+
+test('error box shows UCI values as text, not as HTML', async ({ page }) => {
+	vm(`uci set cake-autorate.wan.dl_min_rate_kbps='<img src=x onerror=window.xss=1>' &&
+		uci commit cake-autorate &&
+		/etc/init.d/cake-autorate restart; true`);
+	await page.reload();
+	const box = page.locator('.alert-message', { hasText: 'did not start' });
+	await expect(box).toContainText('<img src=x onerror=window.xss=1>');
+	await expect(box.locator('img')).toHaveCount(0);
+	expect(await page.evaluate(() => window.xss)).toBeUndefined();
+	resetConfig();
+});
+
+test('anonymous link must have a name', async ({ page }) => {
+	const sid = vm('uci add cake-autorate link').trim();
+	vm(`uci set cake-autorate.${sid}.name=lte &&
+		uci set cake-autorate.${sid}.enabled=0 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await page.locator(`.cbi-section-table-row[data-sid="${sid}"] .cbi-button-edit`).click();
+	const name = input(page, sid, 'name');
+	await name.fill('');
+	await name.press('Tab');
+	await expect(name).toHaveClass(INVALID);
+	await name.fill('lte2');
+	await name.press('Tab');
+	await expect(name).not.toHaveClass(INVALID);
+	resetConfig();
+});
