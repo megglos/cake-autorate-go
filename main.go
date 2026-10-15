@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"sync"
@@ -37,6 +38,8 @@ func main() {
 	recordPath := flag.String("record", "", "write all controller events to this JSONL file (gzip if the name ends with .gz)")
 	recordMaxMB := flag.Int("record-max-mb", 0, "stop the recording when the file gets to this size in MB (0: no limit)")
 	noAdjust := flag.Bool("no-adjust", false, "do not change the shaper rates (overrides adjust in config); use with --record to measure a link")
+	checkConfig := flag.Bool("check-config", false, "check the configuration file, print the warnings and exit (exit code 1 if the file is not valid)")
+	strict := flag.Bool("strict", false, "with -check-config: exit with code 1 if the check finds warnings")
 	flag.Parse()
 
 	if *showVersion {
@@ -53,6 +56,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *checkConfig {
+		os.Exit(reportConfigCheck(os.Stdout, os.Stderr, cfg, *strict))
 	}
 
 	if *debug {
@@ -130,6 +137,20 @@ func main() {
 
 	wg.Wait()
 	logger.Infof("cake-autorate-go stopped")
+}
+
+// reportConfigCheck prints the warnings of a valid config and returns the
+// exit code of -check-config. With strict, a warning gives exit code 1.
+func reportConfigCheck(out, errOut io.Writer, cfg *Config, strict bool) int {
+	warnings := cfg.Warnings()
+	for _, w := range warnings {
+		fmt.Fprintf(errOut, "warning: %s\n", w)
+	}
+	if strict && len(warnings) > 0 {
+		return 1
+	}
+	fmt.Fprintf(out, "config is valid: %d link(s)\n", len(cfg.Links))
+	return 0
 }
 
 func printDefaults() {
