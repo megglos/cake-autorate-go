@@ -292,16 +292,17 @@ Each phase is a PR, with the Copilot review cycles.
 | L0 | Done (2026-10-15): #40, #41, #42, #43 merged. |
 | L1+L2 | Done (2026-10-15): #44 merged (package and VM test in one PR, for CI feedback). 8 Copilot cycles, last one approval. CI job `vm` runs 22 service checks in OpenWrt 25.12.5 x86-64. PKG_MAINTAINER stays empty (user decision). |
 | L3 | Done (2026-10-15): #45 merged (fdcc28d). 9 Copilot cycles, then stopped: the last findings needed values from a manual UCI edit. CI runs 28 Playwright tests in the VM. |
+| L4 | In review (2026-10-15): #47. The status page (tab Status, first tab), pause/resume per direction through the rpcd ucode plugin `cake-autorate` (link name and direction checked, explicit AF_UNIX socket, 5 s timeouts), write ACL for the methods, Overview include 70_cake-autorate.js. Dependency ucode-mod-socket. VM test 49 checks, 38 Playwright tests. Learned: an rpcd reload ends the sessions; a limited rpcd user needs the `unauthenticated` read group (LuCI calls session.access); `socket.connect(path)` with a missing path tries DNS. |
 
 ### L0 decisions and results
 
 - Overrides: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay` are pointer fields in the link. `Config.ForLink` gives the effective config. The calibration also uses it.
 - `-check-config` and `-strict`: exit code 1 for an invalid file. With `-strict`, a warning also gives exit code 1.
-- Status file: JSON, `schema` 1, one write each second, atomic (random temp name + rename), removed at stop. Path set by the package: `/var/run/cake-autorate/status.json` (RAM). The `paused` field is not yet in the status: add it after #42 and #43 are merged.
+- Status file: JSON, `schema` 1, one write each second, atomic (random temp name + rename), removed at stop. Path set by the package: `/var/run/cake-autorate/status.json` (RAM). Each direction has `paused` (#46, merged).
 - Control socket: Unix socket mode 0600, commands `pause LINK [dl|ul]`, `resume LINK [dl|ul]`, `list`. A pause sets the base rate. The recording has a `pause` event.
 - Validation: a link name must be unique. With `control_socket`, it must have 1 to 64 characters of `[A-Za-z0-9_.-]`, and the socket path not more than 90 bytes.
 - Socket creation: in a temporary directory with mode 0700, then chmod 0600 and rename to the path. No umask change (the umask applies to all goroutines).
-- Follow-up for L0: add `paused` to the status file (small PR after #43).
+- Follow-up for L0: `paused` in the status file. Done: #46 merged (d83c761).
 - Open on #43 (finding after the rebase onto #42): `syscall.Umask` changes the mask of the whole process. The status writer can create its directory in that time with mode 0600. Fix: split the socket setup from the accept loop, and open the socket in `main` before the status writer and the controllers start.
 - Conflicts: resolve with a rebase onto main (user preference 2026-10-15).
 
