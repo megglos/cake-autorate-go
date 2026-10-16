@@ -207,3 +207,19 @@ func TestCallUntilDoneWaitsForSlowCommand(t *testing.T) {
 		t.Error("a command without a controller must time out")
 	}
 }
+
+// A calibration block starts the pingers of a stalled link.
+func TestCalBlockLeavesStall(t *testing.T) {
+	c := testPingerController(t)
+	act := &fakeActuator{}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	runCommands(t, c)
+	c.core.SetCalibrating(true, time.Now())
+	c.core.Core().state = StateStall
+	if err := c.CalBlock(nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.core.Core().State(); st != StateRunning {
+		t.Errorf("state after the block start: %s", st)
+	}
+}

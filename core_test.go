@@ -1209,3 +1209,16 @@ func TestSetFixedRate(t *testing.T) {
 		t.Errorf("after resume: rates %v, paused %v", got, c.Paused(DL))
 	}
 }
+
+// Many timeouts in a calibration block give STALL. The next block starts
+// the pingers again at once, for its idle measurements.
+func TestCalibratingLeavesStall(t *testing.T) {
+	c, act := newTestCore(t)
+	c.SetCalibrating(true, time.Now())
+	c.state = StateStall
+	starts, invalidates := act.starts, act.invalidates
+	c.SetCalibrating(true, time.Now())
+	if c.state != StateRunning || act.starts != starts+1 || act.invalidates != invalidates+1 {
+		t.Errorf("state %s, pinger starts %d, shaper invalidations %d", c.state, act.starts-starts, act.invalidates-invalidates)
+	}
+}

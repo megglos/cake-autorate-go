@@ -323,6 +323,9 @@ func (c *LinkController) CalBlock(rec *Recorder, unshaped bool) error {
 	return c.callUntilDone(func(now time.Time) error {
 		c.core.SetCalRecorder(rec, now)
 		c.rateErr = nil
+		// The pings must run in the idle time of the block, also after a
+		// STALL in the block before.
+		c.core.SetCalibrating(true, now)
 		for _, dir := range Directions() {
 			if unshaped {
 				c.core.SetFixedRate(dir, calUnshapedKbps, now)

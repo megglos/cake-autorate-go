@@ -158,13 +158,18 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 }
 
 // SetCalibrating starts or ends the calibration mode. In this mode, Core
-// does not go to IDLE, and it leaves IDLE at once (with the base rates and
-// the pingers on), because a calibration session needs the pings also
-// without load.
+// does not go to IDLE. On each call with on, it leaves IDLE and STALL at
+// once (with the base rates and the pingers on), because a calibration
+// block needs the pings also without load. A session calls it at the start
+// of each block: many timeouts in a block without a shaper limit can give
+// STALL.
 func (c *Core) SetCalibrating(on bool, now time.Time) {
 	c.calibrating = on
 	c.idleSince = time.Time{}
-	if on && c.state == StateIdle {
+	if on && c.state != StateRunning {
+		if c.state == StateStall {
+			c.act.InvalidateShaper()
+		}
 		c.transitionTo(StateRunning)
 		c.consecutiveTimeouts = 0
 		c.lastPingTime = now
