@@ -216,8 +216,79 @@ for (const [ name, offset ] of [ [ 'the same', 0 ], [ 'a later', 3600000 ], [ 'a
 	});
 }
 
-test('a user with only read permission sees no buttons', async ({ browser }) => {
+test('page warns about an interface without CAKE', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	await expect(link.locator('tr[data-dir="ul"]')).toBeVisible();
+	await expect(link.locator('[data-cake-warning]')).toHaveCount(0);
+
+	vm('tc qdisc replace dev eth1 root fq_codel');
+	try {
+		// The page checks the qdiscs each 10 seconds.
+		const warning = link.locator('[data-cake-warning="ul"]');
+		await expect(warning).toContainText('Upload: the interface eth1 has no CAKE (root qdisc: fq_codel).', { timeout: 20000 });
+		await expect(warning).toContainText('package luci-app-sqm');
+		await expect(link.locator('[data-cake-warning="dl"]')).toHaveCount(0);
+
+		vm('tc qdisc replace dev eth1 root cake bandwidth 12mbit');
+		await expect(warning).toHaveCount(0, { timeout: 20000 });
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('the warning links to SQM QoS if the page is in the menu', async ({ browser }) => {
+	// A menu entry like the one of luci-app-sqm.
+	vm(`echo '{"admin/network/sqm":{"title":"SQM QoS","action":{"type":"view","path":"network/sqm"}}}' > /usr/share/luci/menu.d/test-sqm.json
+		rm -rf /tmp/luci-*
+		tc qdisc replace dev br-lan root fq_codel`);
+	// LuCI keeps the menu of a session. A new login loads the new menu.
+	const context = await browser.newContext();
+	const page = await context.newPage();
+	try {
+		await login(page);
+		page.on('pageerror', (e) => errors.push(e.message));
+		await page.goto(PAGE);
+		const warning = page.locator('.cbi-section[data-link="wan"] [data-cake-warning="dl"]');
+		await expect(warning).toContainText('the interface br-lan has no CAKE', { timeout: 20000 });
+		const sqm = warning.getByRole('link', { name: 'SQM QoS' });
+		await expect(sqm).toHaveAttribute('href', /\/admin\/network\/sqm$/);
+
+		// A refresh keeps the keyboard focus on the link.
+		await sqm.focus();
+		const old = await sqm.elementHandle();
+		await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+		await expect(sqm).toBeFocused();
+	}
+	finally {
+		await context.close();
+		vm('rm -f /usr/share/luci/menu.d/test-sqm.json; rm -rf /tmp/luci-*');
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('a direction with adjust off has no CAKE warning', async ({ page }) => {
+	vm(`uci set cake-autorate.wan.ul_adjust=0 && uci commit cake-autorate && /etc/init.d/cake-autorate restart
+		tc qdisc replace dev eth1 root fq_codel`);
+	try {
+		await waitForStatus();
+		await page.goto(PAGE);
+		const link = page.locator('.cbi-section[data-link="wan"]');
+		await expect(link.locator('tr[data-dir="ul"]')).toContainText('Off (adjust)', { timeout: 10000 });
+		await expect(link.locator('[data-cake-warning]')).toHaveCount(0);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('a user with only read permission sees no buttons, but the CAKE warning', async ({ browser }) => {
 	const page = await browser.newPage();
+	vm('tc qdisc replace dev eth1 root fq_codel');
 	try {
 		await login(page, 'cakeread');
 		page.on('pageerror', (e) => errors.push(e.message));
@@ -225,9 +296,12 @@ test('a user with only read permission sees no buttons', async ({ browser }) => 
 		const dl = page.locator('tr[data-dir="dl"]');
 		await expect(dl.locator('.label')).toHaveText('Active');
 		await expect(page.locator('.cbi-section[data-link="wan"] button')).toHaveCount(0);
+		await expect(page.locator('[data-cake-warning="ul"]')).toContainText('has no CAKE');
 	}
 	finally {
 		await page.close();
+		resetConfig();
+		await waitForStatus();
 	}
 });
 
@@ -337,7 +411,9 @@ test('the cursor goes away if the graph under the pointer gets no pointerleave',
 		const g = document.querySelector('.cbi-section[data-link="wan"] svg[data-plot="rate"]');
 		g.replaceWith(g.cloneNode(true));
 	});
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 300);
+	// A point in the window, above the graph. A point out of the window
+	// gives no events.
+	await page.mouse.move(box.x + box.width / 2, box.y - 40);
 	// Also after the next refresh.
 	const old = await tip.elementHandle();
 	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);

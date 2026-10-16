@@ -3,16 +3,22 @@
 // rpcd plugin of luci-app-cake-autorate-go. It sends the commands "pause"
 // and "resume" to the control socket of cake-autorate-go. The ACL of the
 // app gives these methods only to the users that can write the
-// configuration.
+// configuration. The method "qdisc" gives the root qdisc of an interface,
+// to find interfaces without CAKE.
 
 'use strict';
 
 import * as socket from 'socket';
+import { popen } from 'fs';
 
 const CONTROL_SOCKET = '/var/run/cake-autorate/control.sock';
 
 // The rule of the program for link names (config.go).
 const LINK_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+// The rule of Linux for interface names, without the characters that the
+// shell or tc read in a different way.
+const IFACE_RE = /^[A-Za-z0-9_.@:-]{1,15}$/;
 
 // The time in seconds that the program has to answer.
 const TIMEOUT = 5;
@@ -63,8 +69,31 @@ function pause_resume(verb, args) {
 	return command(verb + ' ' + link + (dir ? ' ' + dir : ''));
 }
 
+// Returns the kind of the root qdisc of the interface, for example "cake"
+// or "fq_codel".
+function qdisc(args) {
+	const iface = args?.interface;
+	if (type(iface) != 'string' || !match(iface, IFACE_RE))
+		return { error: 'Invalid interface name' };
+	const p = popen('tc qdisc show dev ' + iface + ' root 2>&1');
+	if (!p)
+		return { error: 'Cannot run tc' };
+	const out = p.read('all');
+	const status = p.close();
+	const m = match(out, /^qdisc ([^ \n]+) /);
+	if (status != 0 || !m)
+		return { error: trim(out) || 'tc failed' };
+	return { kind: m[1] };
+}
+
 return {
 	'cake-autorate': {
+		qdisc: {
+			args: { interface: 'interface' },
+			call: function(req) {
+				return qdisc(req.args);
+			}
+		},
 		pause: {
 			args: { link: 'link', dir: 'dir' },
 			call: function(req) {

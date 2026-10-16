@@ -46,6 +46,9 @@ const GAP_SECONDS = 6;
 const GRAPH_WIDTH = 600;
 const GRAPH_HEIGHT = 150;
 
+// The time between two checks of the root qdiscs.
+const QDISC_SECONDS = 10;
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const COLORS = { dl: '#2a7ab8', ul: '#3a9a3a' };
@@ -69,6 +72,12 @@ const callPause = rpc.declare({
 	params: [ 'link', 'dir' ]
 });
 
+const callQdisc = rpc.declare({
+	object: 'cake-autorate',
+	method: 'qdisc',
+	params: [ 'interface' ]
+});
+
 const callResume = rpc.declare({
 	object: 'cake-autorate',
 	method: 'resume',
@@ -87,6 +96,13 @@ function rate(kbps) {
 
 function ms(v) {
 	return '%.1f ms'.format(+v || 0);
+}
+
+// Returns the key of a focusable element. A refresh gives the focus to
+// the new element with the same key. JSON keeps link names with any
+// character apart.
+function focusKey(link, kind, id) {
+	return JSON.stringify([ link, kind, id ]);
 }
 
 function svg(tag, attrs) {
@@ -222,6 +238,7 @@ return view.extend({
 			'tabindex': 0,
 			'data-link': name,
 			'data-plot': kind,
+			'data-focus': focusKey(name, 'plot', kind),
 			'style': 'display:block; width:100%; height:%dpx; border:1px solid rgba(128,128,128,.4)'.format(GRAPH_HEIGHT)
 		});
 		for (const f of [ 0.25, 0.5, 0.75 ])
@@ -414,11 +431,42 @@ return view.extend({
 		]);
 	},
 
+	// The root qdisc of each interface of the links: the answer of the
+	// method "qdisc" ({kind} or {error}). The page checks the interfaces
+	// on the load and each QDISC_SECONDS.
+	qdiscs: new Map(),
+	qdiscChecked: 0,
+
+	// True if the menu has the page of SQM QoS (luci-app-sqm).
+	hasSqm: false,
+
+	// Gets the root qdisc of each interface in the status. An interface
+	// without an answer (for example, no permission) has no entry.
+	checkQdiscs: function(status) {
+		const ifaces = new Set();
+		for (const ls of (status && Array.isArray(status.links)) ? status.links : [])
+			for (const [ key ] of DIRECTIONS)
+				if (ls[key] && ls[key].interface)
+					ifaces.add(String(ls[key].interface));
+		this.qdiscChecked = performance.now();
+		return Promise.all(Array.from(ifaces, (i) =>
+			L.resolveDefault(callQdisc(i), null).then((res) => [ i, res ])
+		)).then((list) => {
+			this.qdiscs = new Map(list.filter((e) => e[1] && (e[1].kind || e[1].error)));
+		});
+	},
+
 	load: function() {
 		return Promise.all([
 			readStatus(),
-			L.resolveDefault(callAccess('ubus', 'cake-autorate', 'pause'), false)
-		]);
+			L.resolveDefault(callAccess('ubus', 'cake-autorate', 'pause'), false),
+			L.resolveDefault(ui.menu.load(), null)
+		]).then(L.bind(function(data) {
+			const network = data[2] && data[2].children && data[2].children.admin &&
+				data[2].children.admin.children && data[2].children.admin.children.network;
+			this.hasSqm = !!(network && network.children && network.children.sqm);
+			return this.checkQdiscs(data[0].status).then(() => data);
+		}, this));
 	},
 
 	// Runs pause or resume and shows the answer of the program.
@@ -460,9 +508,33 @@ return view.extend({
 				'class': 'cbi-button ' + (st.paused ? 'cbi-button-apply' : 'cbi-button-neutral'),
 				'data-link': link,
 				'data-dir': dir,
+				'data-focus': focusKey(link, 'button', dir),
 				'click': ui.createHandlerFn(this, 'handleControl', verb, link, dir)
 			}, st.paused ? _('Resume') : _('Pause')));
 		return E('span', {}, nodes);
+	},
+
+	// Returns a warning for each direction with rate control whose
+	// interface has no CAKE as root qdisc.
+	renderCakeWarnings: function(ls) {
+		const nodes = [];
+		for (const [ key, dir, title ] of DIRECTIONS) {
+			const st = ls[key] || {};
+			const q = this.qdiscs.get(String(st.interface));
+			if (!st.adjust || !q || q.kind == 'cake')
+				continue;
+			const problem = q.kind
+				? _('%s: the interface %s has no CAKE (root qdisc: %s). The program cannot change the rate.').format(title, st.interface, q.kind)
+				: _('%s: cannot read the qdisc of the interface %s: %s').format(title, st.interface, q.error);
+			nodes.push(E('div', { 'class': 'alert-message warning', 'data-cake-warning': dir }, [
+				E('p', {}, text(problem)),
+				E('p', {}, this.hasSqm
+					? [ _('Set up CAKE on this interface, for example with'), ' ',
+						E('a', { 'href': L.url('admin/network/sqm'), 'data-focus': focusKey(ls.name, 'sqm', dir) }, _('SQM QoS')), '.' ]
+					: _('Set up CAKE on this interface, for example with SQM QoS (package luci-app-sqm).'))
+			]));
+		}
+		return nodes;
 	},
 
 	renderLink: function(ls) {
@@ -526,6 +598,7 @@ return view.extend({
 				text(ls.name), ' ',
 				E('span', { 'class': 'label', 'title': state[1], 'data-state': ls.state }, text(state[0]))
 			]),
+			...this.renderCakeWarnings(ls),
 			E('table', { 'class': 'table' }, rows),
 			this.renderGraphs(ls.name),
 			E('table', { 'class': 'table' }, refl)
@@ -552,13 +625,15 @@ return view.extend({
 
 	refresh: function() {
 		return readStatus().then(L.bind(function(data) {
-			// The refresh makes new buttons and graphs. Keep the keyboard
-			// focus on the button of the same link and direction, or on the
-			// same graph, and keep the cursor.
+			if (performance.now() - this.qdiscChecked >= QDISC_SECONDS * 1000)
+				return this.checkQdiscs(data.status).then(() => data);
+			return data;
+		}, this)).then(L.bind(function(data) {
+			// The refresh makes new buttons, links and graphs. Keep the
+			// keyboard focus on the element with the same focus key, and
+			// keep the cursor.
 			const focused = document.activeElement;
-			const inside = focused && this.container.contains(focused);
-			const key = (inside && focused.dataset.dir) ? [ focused.dataset.link, 'dir', focused.dataset.dir ]
-				: (inside && focused.dataset.plot) ? [ focused.dataset.link, 'plot', focused.dataset.plot ] : null;
+			const key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
 			const selection = this.selection;
 			this.addSamples(data.status);
 			this.lastData = data;
@@ -567,8 +642,8 @@ return view.extend({
 			// selection.
 			this.selection = selection;
 			if (key) {
-				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-' + key[1] + ']'),
-					(e) => e.dataset.link == key[0] && e.dataset[key[1]] == key[2]);
+				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
+					(e) => e.dataset.focus == key);
 				if (target)
 					target.focus();
 			}
