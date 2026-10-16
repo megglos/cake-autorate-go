@@ -421,7 +421,7 @@ func TestRecordingCore_CalRecorder(t *testing.T) {
 	}
 	rc.SetCalRecorder(cal, start.Add(2*time.Second))
 	rc.HandleRate(RateStats{DlRateKbps: 2, Timestamp: start.Add(3 * time.Second)})
-	rc.SetFixedRate(DL, calUnshapedKbps, start.Add(4*time.Second))
+	rc.SetFixedRate(DL, unshapedKbps, start.Add(4*time.Second))
 	rc.SetCalRecorder(nil, start.Add(5*time.Second))
 	rc.HandleRate(RateStats{DlRateKbps: 3, Timestamp: start.Add(6 * time.Second)})
 	for _, r := range []*Recorder{main, cal} {
@@ -474,8 +474,8 @@ func TestRecording_ReplayCalibration(t *testing.T) {
 		t.Fatalf("state %s, want IDLE", rc.Core().State())
 	}
 	rc.SetCalibrating(true, at(4))
-	rc.SetFixedRate(DL, calUnshapedKbps, at(5))
-	rc.SetFixedRate(UL, calUnshapedKbps, at(5))
+	rc.SetFixedRate(DL, unshapedKbps, at(5))
+	rc.SetFixedRate(UL, unshapedKbps, at(5))
 	for s := 6; s <= 8; s++ {
 		rc.HandleRate(RateStats{Timestamp: at(s)})
 	}
@@ -494,7 +494,7 @@ func TestRecording_ReplayCalibration(t *testing.T) {
 	}
 	var fixed bool
 	for _, d := range recorded {
-		fixed = fixed || d.value == fmt.Sprint(calUnshapedKbps)
+		fixed = fixed || d.value == fmt.Sprint(unshapedKbps)
 	}
 	if !fixed {
 		t.Errorf("no fixed rate in the recording: %v", recorded)

@@ -223,3 +223,135 @@ func TestCalBlockLeavesStall(t *testing.T) {
 		t.Errorf("state after the block start: %s", st)
 	}
 }
+
+// testUnshapeController returns a controller with rate control in both
+// directions, a fake actuator and a status board.
+func testUnshapeController(t *testing.T) (*LinkController, *fakeActuator) {
+	t.Helper()
+	c := testPingerController(t)
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	act := &fakeActuator{}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	c.board = NewStatusBoard("test", time.Now(), []string{c.name})
+	runCommands(t, c)
+	return c, act
+}
+
+// boardStatus returns the status of the link on the status board.
+func boardStatus(c *LinkController) LinkStatus {
+	for _, st := range c.board.File(time.Now()).Links {
+		if st.Name == c.name {
+			return st
+		}
+	}
+	return LinkStatus{}
+}
+
+// lastRate returns the last rate that the controller set for dir.
+func lastRate(act *fakeActuator, dir Direction) int {
+	r := act.rates[dir]
+	if len(r) == 0 {
+		return 0
+	}
+	return r[len(r)-1]
+}
+
+// Without shaping, both directions have no useful shaper limit and no rate
+// control. The status shows it. Then the shaping comes back with the pause
+// state from before.
+func TestSetUnshaped(t *testing.T) {
+	c, act := testUnshapeController(t)
+	if err := c.SetPaused([]Direction{UL}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetUnshaped(true); err != nil {
+		t.Fatal(err)
+	}
+	core := c.core.Core()
+	for _, dir := range Directions() {
+		if lastRate(act, dir) != unshapedKbps || !core.Paused(dir) {
+			t.Errorf("%s: rate %d, paused %v", dir, lastRate(act, dir), core.Paused(dir))
+		}
+	}
+	c.publishStatus()
+	if !boardStatus(c).Unshaped {
+		t.Error("the status must show the unshaped link")
+	}
+	// A second "unshape" changes nothing.
+	n := len(act.rates[DL])
+	if err := c.SetUnshaped(true); err != nil || len(act.rates[DL]) != n {
+		t.Errorf("second unshape: %v, %d rate changes", err, len(act.rates[DL])-n)
+	}
+
+	if err := c.SetUnshaped(false); err != nil {
+		t.Fatal(err)
+	}
+	if lastRate(act, DL) != c.link.Download.BaseRateKbps || core.Paused(DL) {
+		t.Errorf("dl after shape: rate %d, paused %v", lastRate(act, DL), core.Paused(DL))
+	}
+	if lastRate(act, UL) != c.link.Upload.BaseRateKbps || !core.Paused(UL) {
+		t.Errorf("ul after shape: rate %d, paused %v (must stay paused)", lastRate(act, UL), core.Paused(UL))
+	}
+	c.publishStatus()
+	if boardStatus(c).Unshaped {
+		t.Error("the status must show the shaped link")
+	}
+}
+
+// While the shaping is off, a pause, a resume and a calibration would
+// change the shaper: the controller refuses them. During a calibration,
+// the controller refuses "unshape".
+func TestUnshapedRefusesOtherCommands(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	if err := c.SetUnshaped(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetPaused([]Direction{DL}, false); err == nil || !strings.Contains(err.Error(), "shaping is off") {
+		t.Errorf("resume without shaping: %v", err)
+	}
+	if err := c.CalStart(); err == nil || !strings.Contains(err.Error(), "shaping is off") {
+		t.Errorf("calibration without shaping: %v", err)
+	}
+	if c.core.Core().Calibrating() {
+		t.Error("the calibration must not start")
+	}
+	if err := c.SetUnshaped(false); err != nil {
+		t.Fatal(err)
+	}
+	c.core.SetCalibrating(true, time.Now())
+	if err := c.SetUnshaped(true); err == nil || !strings.Contains(err.Error(), "calibration runs") {
+		t.Errorf("unshape during a calibration: %v", err)
+	}
+	if c.unshaped {
+		t.Error("the link must stay shaped")
+	}
+}
+
+// A direction without rate control keeps its shaper rate.
+func TestSetUnshapedOnlyAdjustedDirections(t *testing.T) {
+	c, act := testUnshapeController(t)
+	c.link.Upload.Adjust = false
+	if err := c.SetUnshaped(true); err != nil {
+		t.Fatal(err)
+	}
+	if lastRate(act, DL) != unshapedKbps || len(act.rates[UL]) != 0 {
+		t.Errorf("rates: %v", act.rates)
+	}
+	c.link.Download.Adjust = false
+	c.unshaped = false
+	if err := c.SetUnshaped(true); err == nil {
+		t.Error("a link without rate control cannot be unshaped")
+	}
+}
+
+// The program shapes an unshaped link again before it stops.
+func TestStopShapesAgain(t *testing.T) {
+	c, act := testUnshapeController(t)
+	if err := c.SetUnshaped(true); err != nil {
+		t.Fatal(err)
+	}
+	c.stop(time.Now())
+	if c.unshaped || lastRate(act, DL) != c.link.Download.BaseRateKbps || lastRate(act, UL) != c.link.Upload.BaseRateKbps {
+		t.Errorf("after the stop: unshaped %v, rates %v", c.unshaped, act.rates)
+	}
+}

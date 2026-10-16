@@ -45,7 +45,7 @@ All other lines have these fields:
 | `reflector_reset` | `reflector` | The controller removed the delay data of a reflector (a spare reflector became active). |
 | `pause` | `dir`, `paused` | A user paused or resumed the rate control of a direction (control socket). |
 | `calibrating` | `on` | A calibration session started (`true`) or ended (`false`) the calibration mode: the controller does not go to `IDLE`. |
-| `fixed_rate` | `dir`, `rate_kbps` | A calibration block set a fixed shaper rate (no useful limit) and paused the rate control of the direction. |
+| `fixed_rate` | `dir`, `rate_kbps` | A calibration block or the command `unshape` set a fixed shaper rate (no useful limit) and paused the rate control of the direction. |
 | `shaper` | `dir`, `rate_kbps` | The controller set a shaper rate. |
 | `state` | `state` | The controller changed its state (`RUNNING`, `IDLE`, `STALL`). |
 

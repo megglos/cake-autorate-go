@@ -1195,13 +1195,13 @@ func TestCalibratingLeavesIdle(t *testing.T) {
 func TestSetFixedRate(t *testing.T) {
 	c, act := newTestCore(t)
 	c.link.Download.Adjust = true
-	c.SetFixedRate(DL, calUnshapedKbps)
-	if got := act.rates[DL]; len(got) == 0 || got[len(got)-1] != calUnshapedKbps || !c.Paused(DL) {
+	c.SetFixedRate(DL, unshapedKbps)
+	if got := act.rates[DL]; len(got) == 0 || got[len(got)-1] != unshapedKbps || !c.Paused(DL) {
 		t.Fatalf("rates %v, paused %v", got, c.Paused(DL))
 	}
 	// The rate control does not change the fixed rate.
 	c.setRates(1000, 1000)
-	if got := act.rates[DL]; got[len(got)-1] != calUnshapedKbps {
+	if got := act.rates[DL]; got[len(got)-1] != unshapedKbps {
 		t.Errorf("a paused direction changed: %v", got)
 	}
 	c.SetPaused(DL, false)

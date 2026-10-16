@@ -547,7 +547,7 @@ Set `status_file` to a path, for example `/var/run/cake-autorate/status.json`. T
 
 The program writes the file each second. Thus, use a path on a RAM file system, for example `/var/run` on OpenWrt, so that the flash memory does not wear out.
 
-The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, its threshold, whether the last delta was above the threshold (`high_delay`; the threshold includes the time to send one packet at the shaper rate), the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
+The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, whether the shaping is off (`unshaped`), and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, its threshold, whether the last delta was above the threshold (`high_delay`; the threshold includes the time to send one packet at the shaper rate), the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
 
 ### Control socket
 
@@ -557,6 +557,8 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 |---|---|
 | `pause LINK [dl\|ul]` | Set the shaper to the base rate and stop the rate changes. Without a direction, the command applies to both directions. |
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
+| `unshape LINK` | Turn the shaping of the link off: the shaper rate of each direction with rate control is 10 Gbit/s (no useful limit), and the rate control stops. |
+| `shape LINK` | Turn the shaping of the link on again. Each direction gets its pause state from before `unshape`: a paused direction stays paused at the base rate, the others start the rate control again from the base rate. |
 | `list` | Answer with the link names. |
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [docs/calibration.md](docs/calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
 | `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
@@ -564,6 +566,8 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `history` | Answer with the samples of the last 15 minutes of each link, as one line of JSON. The program adds one sample each second, when it writes the status file. Only with `status_history: true` and a status file. |
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
+
+Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`). A recording contains the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

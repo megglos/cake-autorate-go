@@ -68,10 +68,13 @@ type LinkStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	// Calibrating is true during a calibration session of the link.
-	Calibrating bool                   `json:"calibrating"`
-	Download    DirStatus              `json:"download"`
-	Upload      DirStatus              `json:"upload"`
-	Reflectors  []ReflectorDelayStatus `json:"reflectors"`
+	Calibrating bool `json:"calibrating"`
+	// Unshaped is true while a user turned the shaping of the link off
+	// through the control socket.
+	Unshaped   bool                   `json:"unshaped"`
+	Download   DirStatus              `json:"download"`
+	Upload     DirStatus              `json:"upload"`
+	Reflectors []ReflectorDelayStatus `json:"reflectors"`
 }
 
 // StatusFile is the content of the status file.

@@ -15,9 +15,15 @@ import (
 )
 
 type fakeLinkControl struct {
-	dirs   []Direction
-	paused bool
-	err    error
+	dirs     []Direction
+	paused   bool
+	unshaped []bool // the arguments of SetUnshaped
+	err      error
+}
+
+func (f *fakeLinkControl) SetUnshaped(on bool) error {
+	f.unshaped = append(f.unshaped, on)
+	return f.err
 }
 
 func (f *fakeLinkControl) SetPaused(dirs []Direction, paused bool) error {
@@ -43,6 +49,9 @@ func TestHandleControlCommand(t *testing.T) {
 		{"pause", "error: usage", nil, false},
 		{"", "error: empty", nil, false},
 		{"stop a", "error: unknown command", nil, false},
+		{"unshape", "error: usage: unshape LINK", nil, false},
+		{"shape a dl", "error: usage: shape LINK", nil, false},
+		{"unshape x", `error: unknown link "x"`, nil, false},
 	} {
 		*a = fakeLinkControl{}
 		got := handleControlCommand(tc.line, &ControlHandler{Names: names, Links: links})
@@ -51,6 +60,18 @@ func TestHandleControlCommand(t *testing.T) {
 		}
 		if !slices.Equal(a.dirs, tc.dirs) || a.paused != tc.paused {
 			t.Errorf("%q: link got dirs %v paused %v", tc.line, a.dirs, a.paused)
+		}
+	}
+	if a.unshaped != nil {
+		t.Errorf("SetUnshaped calls: %v", a.unshaped)
+	}
+	for _, line := range []string{"unshape a", "shape a"} {
+		*a = fakeLinkControl{}
+		if got := handleControlCommand(line, &ControlHandler{Names: names, Links: links}); got != "ok" {
+			t.Errorf("%q: got %q", line, got)
+		}
+		if want := []bool{line == "unshape a"}; !slices.Equal(a.unshaped, want) {
+			t.Errorf("%q: SetUnshaped calls %v, want %v", line, a.unshaped, want)
 		}
 	}
 	a.err = fmt.Errorf("link does not run")

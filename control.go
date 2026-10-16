@@ -28,6 +28,8 @@ import (
 //
 //	pause LINK [dl|ul]    pause the rate control (both directions if not set)
 //	resume LINK [dl|ul]   resume the rate control
+//	unshape LINK          turn the shaping of the link off
+//	shape LINK            turn the shaping of the link on again
 //	list                  answer: the link names, separated by spaces
 //	history               answer: the samples of the last 15 minutes of
 //	                      each link as one line of JSON (see History)
@@ -40,6 +42,10 @@ import (
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
+//
+// Without shaping, the shaper rate is 10 Gbit/s (no useful limit) and the
+// rate control stops. The program does not keep this state: at a restart
+// and before a stop, it shapes the link again.
 
 // controlTimeout is the time that a client has to send its command.
 const controlTimeout = 5 * time.Second
@@ -55,6 +61,7 @@ var oneLine = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 // LinkControl is the part of a link controller that the control socket uses.
 type LinkControl interface {
 	SetPaused(dirs []Direction, paused bool) error
+	SetUnshaped(on bool) error
 }
 
 // CalControl is the part of the Calibrator that the control socket uses.
@@ -117,6 +124,18 @@ func handleControlCommand(line string, h *ControlHandler) string {
 			}
 		}
 		if err := lc.SetPaused(dirs, f[0] == "pause"); err != nil {
+			return "error: " + oneLine.Replace(err.Error())
+		}
+		return "ok"
+	case "unshape", "shape":
+		if len(f) != 2 {
+			return fmt.Sprintf("error: usage: %s LINK", f[0])
+		}
+		lc, ok := links[f[1]]
+		if !ok {
+			return fmt.Sprintf("error: unknown link %q", f[1])
+		}
+		if err := lc.SetUnshaped(f[0] == "unshape"); err != nil {
 			return "error: " + oneLine.Replace(err.Error())
 		}
 		return "ok"
