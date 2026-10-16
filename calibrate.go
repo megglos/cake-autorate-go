@@ -138,7 +138,10 @@ type calResult struct {
 	CrossDelayMs   calDist // upload delta while the download is saturated
 	GrantDelayMs   calDist // upload delta with upload load, low shaper rate
 	Reflectors     []calReflector
-	Notes          []string
+	// Probed has each reflector with a ping in the session: a reply or a
+	// timeout.
+	Probed map[string]bool
+	Notes  []string
 }
 
 // calibrateSession analyzes the session in dir.
@@ -156,6 +159,7 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 	idle := map[string][]calSample{} // key: block number and reflector
 	echo := map[string]int{}
 	sent, replied := map[string]int{}, map[string]int{}
+	probed := map[string]bool{} // each reflector with a ping (reply or timeout)
 
 	for _, b := range blocks {
 		rec, err := readCalRecording(filepath.Join(dir, b.recording))
@@ -184,6 +188,7 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		// delay) for all reflectors.
 		counts := func(t time.Time) bool { return b.policy != "unshaped" || t.Before(b.idleEnd) }
 		for _, p := range rec.sent {
+			probed[p.reflector] = true
 			if counts(p.t) {
 				sent[p.reflector]++
 			}
@@ -295,6 +300,7 @@ func calibrateSession(dir string) (*calResult, *Config, error) {
 		return a.Addr < b.Addr
 	})
 	res.IdleJitterMs = newCalDist(jitter)
+	res.Probed = probed
 
 	// Seconds without throughput (the load generator failed, or the link
 	// was down) are not a capacity measurement (secondMeans).

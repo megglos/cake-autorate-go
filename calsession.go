@@ -134,15 +134,12 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) 
 		notes = append(notes, fmt.Sprintf("the session pinged only %d reflectors (pinger_count %d): ping_method and reflectors keep the values of the config", len(res.Reflectors), cfg.PingerCount))
 	}
 	// The session has no data of the configured reflectors that it did
-	// not ping (spares). Keep them after the measured ones.
+	// not ping (spares). Keep them after the measured ones. A reflector
+	// with only timeouts was pinged: it does not come back.
 	if len(p.Reflectors) > 0 {
-		seen := map[string]bool{}
-		for _, r := range res.Reflectors {
-			seen[r.Addr] = true
-		}
 		var kept []string
 		for _, r := range cfg.Links[0].Reflectors {
-			if !seen[r] && !slices.Contains(p.Reflectors, r) {
+			if !res.Probed[r] && !slices.Contains(p.Reflectors, r) {
 				kept = append(kept, r)
 			}
 		}
@@ -229,6 +226,8 @@ type Calibrator struct {
 	lastPoll time.Time
 	cancel   context.CancelFunc
 	done     chan struct{}
+	// sessionCtx is the context of the last session.
+	sessionCtx context.Context
 }
 
 // NewCalibrator creates a calibrator. The sessions end when ctx ends. dir
@@ -270,9 +269,15 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	k.end = now.Add(time.Duration(len(calSessionBlocks)) * block)
 	k.lastPoll = now
 	k.cancel = cancel
-	k.done = make(chan struct{})
+	k.sessionCtx = ctx
+	done := make(chan struct{})
+	k.done = done
 	k.logger.Infof("[%s] calibration started (load %v for each block)", link, times.Load)
-	go k.run(ctx, link, target, times, k.done)
+	go func() {
+		// Release the context of the session at its end.
+		defer cancel()
+		k.run(ctx, link, target, times, done)
+	}()
 	return nil
 }
 

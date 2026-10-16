@@ -51,6 +51,8 @@ type fakeCalTarget struct {
 	onFinish  func()
 	// reflectors is the number of reflectors that reply (default 4).
 	reflectors int
+	// timeout is a reflector that only times out (or empty).
+	timeout string
 }
 
 func newFakeCalTarget(clock *fakeClock, times calTimes) *fakeCalTarget {
@@ -99,6 +101,11 @@ func (f *fakeCalTarget) CalBlock(rec *Recorder, unshaped bool) error {
 		jitter := time.Duration(i%3) * time.Millisecond
 		rec.Ping("wan", PingResult{Reflector: r, RTT: 20 * time.Millisecond, Timestamp: t,
 			OWD: true, DlOWD: 10*time.Millisecond + jitter, UlOWD: 10*time.Millisecond + jitter})
+	}
+	if f.timeout != "" {
+		for t := start; t.Before(end); t = t.Add(time.Second) {
+			rec.Ping("wan", PingResult{Reflector: f.timeout, Timestamp: t, Timeout: true})
+		}
 	}
 	for i, t := 0, start; t.Before(end); i, t = i+1, t.Add(time.Second) {
 		var dl, ul float64
@@ -675,7 +682,9 @@ func TestCalibrationFewReflectors(t *testing.T) {
 func TestCalibrationKeepsSpareReflectors(t *testing.T) {
 	times := defaultCalTimes(30 * time.Second)
 	k, target, _ := newTestCalibrator(t, times)
-	target.cfg.Links[0].Reflectors = append(target.cfg.Links[0].Reflectors, "10.0.0.8", "10.0.0.9")
+	// 10.0.0.7 only times out: it was pinged and does not come back.
+	target.cfg.Links[0].Reflectors = append(target.cfg.Links[0].Reflectors, "10.0.0.7", "10.0.0.8", "10.0.0.9")
+	target.timeout = "10.0.0.7"
 	if err := k.Start("wan", times); err != nil {
 		t.Fatal(err)
 	}
@@ -690,5 +699,24 @@ func TestCalibrationKeepsSpareReflectors(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(r.Notes, "\n"), "did not ping the reflectors [10.0.0.8 10.0.0.9]") {
 		t.Errorf("notes: %v", r.Notes)
+	}
+}
+
+// The context of a session ends with the session: else each session leaves
+// a child of the context of the daemon.
+func TestCalibrationReleasesContext(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, _, _ := newTestCalibrator(t, times)
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	k.mu.Lock()
+	ctx := k.sessionCtx
+	k.mu.Unlock()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Error("the context of the session is not canceled after its end")
 	}
 }
