@@ -152,6 +152,12 @@ a=$(rpc unshape '{"link":"wan"}')
 case $a in *'"result": "ok"'*) ok "rpc unshape" ;; *) fail "rpc unshape (answer: $a)" ;; esac
 a=$(rpc shape '{"link":"wan"}')
 case $a in *'"result": "ok"'*) ok "rpc shape" ;; *) fail "rpc shape (answer: $a)" ;; esac
+a=$(rpc unshape '{"link":"wan","seconds":6}')
+case $a in *'"result": "ok"'*) ok "rpc unshape with a time" ;; *) fail "rpc unshape with a time (answer: $a)" ;; esac
+wait_for "status file shows the time left" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped_left_s" | grep -q "^[1-6]"'
+wait_for "the shaping comes back after the time" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" | grep -qx false'
+a=$(rpc unshape '{"link":"wan","seconds":0}')
+case $a in *'Invalid time'*) ok "rpc unshape: invalid time" ;; *) fail "rpc unshape: invalid time (answer: $a)" ;; esac
 a=$(rpc unshape '{"link":"wan\nunshape wan"}')
 case $a in *'Invalid link name'*) ok "rpc unshape: invalid link name" ;; *) fail "rpc unshape: invalid link name (answer: $a)" ;; esac
 a=$(rpc pause '{"link":"wan","dir":"both"}')
