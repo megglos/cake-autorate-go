@@ -283,7 +283,7 @@ Discussion (2026-10-17, user decision: **option 1 for now**). A third option was
 - Against option 1: 2 packages and 2 pages more. The SQM rates are not correct while the daemon runs. The user must type the IFB name (`ifb4<wan>`, cut to 15 characters).
 - Option 2 costs: our own reconnect handling (hotplug; USB modems remove and add the device), detection of SQM on the same device, cleanup, and the CAKE options UI. Size M.
 - If we do option 2 later: a switch for each link (off = SQM, as today), one WAN device field, few CAKE options plus a free-text field. Write the reconnect tests first (ifdown/ifup, device removed and added again) in the VM and on the GL-MT6000 with the 5G modem. Make it the default for new links only when these tests pass.
-- Small help for option 1 (no decision yet): the link modal can propose the interfaces from `/etc/config/sqm` (WAN for upload, `ifb4<wan>` for download). L7 docs: a section "Set up CAKE with SQM".
+- Small help for option 1 (issue #74): the link modal can propose the interfaces from `/etc/config/sqm` (WAN for upload, `ifb4<wan>` for download). L7 docs: a section "Set up CAKE with SQM".
 
 ## 10. Test environment (no router at hand)
 
