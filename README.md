@@ -161,7 +161,7 @@ The Go version also shows the types of decisions (bufferbloat, high load, decay)
 
 ### Pre-built binaries
 
-Download the latest release for your platform from the [Releases](https://github.com/megglos/cake-autorate-go/releases) page.
+Download the latest release for your platform from the [Releases](https://github.com/megglos/cake-autorate-go/releases) page. For OpenWrt, the releases also have apk packages: see [Install from a release](#install-from-a-release).
 
 ### Build from source
 
@@ -185,6 +185,27 @@ The directory [`openwrt/`](openwrt) has the OpenWrt package `cake-autorate-go` a
 | `/usr/share/cake-autorate/` | the converter from UCI to the configuration file of the program |
 
 The LuCI app also installs an rpcd plugin, `/usr/share/rpcd/ucode/cake-autorate.uc`. It gives the ubus methods `cake-autorate pause` and `cake-autorate resume` (arguments `link` and optional `dir`, `dl` or `ul`) and sends them to the control socket. The method `cake-autorate qdisc` (argument `interface`) gives the kind of the root qdisc of an interface, for example `cake` or `fq_codel`.
+
+### Install from a release
+
+Each release has the apk files for each architecture. The name of a file has the architecture at the end, for example `cake-autorate-go-1.2.0-r1_aarch64_cortex-a53-openwrt-25.12.apk`. The LuCI app is the same for all architectures. On the router:
+
+```bash
+cd /tmp
+# Download the two files of your architecture from the Releases page, then:
+apk update
+apk add --allow-untrusted ./cake-autorate-go-*.apk ./luci-app-cake-autorate-go-*.apk
+```
+
+`apk update` is necessary because apk installs the dependencies (for example `kmod-sched-cake`) from the OpenWrt feeds. The packages have no signature, thus `--allow-untrusted` is necessary.
+
+Then:
+
+1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`).
+2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
+3. Open the tab **Status**. If an interface has no CAKE, the page shows a warning.
+
+### Configuration with UCI
 
 The UCI options have the names of the configuration keys (see [Configuration reference](#configuration-reference)). The section `global` has the global keys. Each section `link` is one link. A link has the keys of the download direction with the prefix `dl_` and the keys of the upload direction with the prefix `ul_`. An empty option uses the default value of the program, with these exceptions: `dl_adjust` and `ul_adjust` are `1` if they are not set, and the options `ping_interface` and `ping_source_addr` of the section `global` apply to each link that does not set them. Each link must set the interfaces and the rates. For example:
 
@@ -221,7 +242,11 @@ Do not use the package and the service of `setup.sh` at the same time: both chan
 
 The package `luci-app-cake-autorate-go` adds the page **Network → CAKE Autorate (Go)** with two tabs.
 
+![The tab Status: the rates, the delays and the graphs of a link](docs/images/luci-status.png)
+
 The tab **Status** shows each link: the state (Running, Idle or Stall), and for each direction the shaper rate, the measured rate, the load, the delay delta and its threshold, the number of pings with a high delay and the number of rate changes. It also shows the reflectors with their baseline RTT and missed replies. Two graphs for each link show the shaper rates and the measured rates, and the delay deltas and their thresholds, for the last 1, 5 or 15 minutes. A pointer on a graph shows the values at that time. With the keyboard, select a graph with Tab, then select a sample with the arrow keys, Home and End. The browser keeps the data of the graphs only while the page is open: a reload starts with empty graphs. The page reads the status file each 2 seconds. The button **Pause** sets the shaper of a direction to the base rate and stops the rate changes. **Resume** starts the control again. The pause stops at a restart of the service. Only a user with write permission for the app sees the buttons. If an interface of a direction with rate control has no CAKE as root qdisc, the page shows a warning, because the program cannot change the rate. Set up CAKE on the interface, for example with SQM QoS (`luci-app-sqm`). The page checks the interfaces each 10 seconds. The **Overview** page of LuCI shows one row for each link: the state, the shaper rates, the delay deltas and the pauses.
+
+![The tab Configuration](docs/images/luci-config.png)
 
 The tab **Configuration** has:
 
@@ -230,7 +255,11 @@ The tab **Configuration** has:
 
 An empty field uses the default value of the program. The field shows this value in grey. The page checks the values before the save: for example the rates (minimum ≤ base ≤ maximum), the interface names, and that two links do not use the same interface. After **Save & Apply**, the service starts again with the new configuration. If the configuration is not valid, the page shows the errors of the service.
 
+![The dialog of a link](docs/images/luci-link.png)
+
 The shapers must have CAKE: set them up with SQM (`luci-app-sqm`) or `tc`, then select the same interfaces in the link.
+
+![The section of the app on the Overview page](docs/images/luci-overview.png)
 
 To build the packages on your computer with Docker, run `scripts/openwrt-build.sh`. The packages go to `bin/openwrt/`.
 
@@ -243,6 +272,7 @@ scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
 scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
 (cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI pages in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
+(cd openwrt/luci-app-cake-autorate-go/tests && node screenshots.js)  # the screenshots in docs/images (put load on the link first)
 scripts/openwrt-vm.sh stop
 ```
 
