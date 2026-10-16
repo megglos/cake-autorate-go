@@ -244,9 +244,10 @@ return view.extend({
 
 	// Returns a graph of the series. Each series has a key, a color, a dash
 	// pattern and a function that gets the value from a sample. "floor" is
-	// the smallest maximum of the y axis.
-	renderGraph: function(name, kind, title, unit, samples, series, floor) {
-		const now = performance.now();
+	// the smallest maximum of the y axis. "now" is the time at the right
+	// side. All graphs of a link must use the same time, so that a cursor
+	// finds the same sample in each graph.
+	renderGraph: function(name, kind, title, unit, samples, series, floor, now) {
 		const span = this.period * 1000;
 		const visible = samples.filter((s) => now - s.t <= span);
 		let max = floor;
@@ -454,6 +455,7 @@ return view.extend({
 
 	renderGraphs: function(name) {
 		const samples = this.history.get(name) || [];
+		const now = performance.now();
 		const v = (dir, field) => (s) => s[dir][field];
 		return E('div', { 'class': 'cake-autorate-graphs', 'style': 'display:flex; flex-wrap:wrap; gap:1em; margin:1em 0' }, [
 			this.renderGraph(name, 'rate', _('Rates'), 'Mbit/s', samples, [
@@ -461,13 +463,13 @@ return view.extend({
 				{ key: 'dl-achieved', title: _('Download achieved'), color: COLORS.dl, value: v('dl', 'achieved') },
 				{ key: 'ul-shaper', title: _('Upload shaper'), color: COLORS.ul, dash: '4 3', value: v('ul', 'shaper') },
 				{ key: 'ul-achieved', title: _('Upload achieved'), color: COLORS.ul, value: v('ul', 'achieved') }
-			], 1),
+			], 1, now),
 			this.renderGraph(name, 'delay', _('Delay delta'), 'ms', samples, [
 				{ key: 'dl-delta', title: _('Download delta'), color: COLORS.dl, value: v('dl', 'delta') },
 				{ key: 'dl-threshold', title: _('Download threshold'), color: COLORS.dl, dash: '1 3', value: v('dl', 'threshold') },
 				{ key: 'ul-delta', title: _('Upload delta'), color: COLORS.ul, value: v('ul', 'delta') },
 				{ key: 'ul-threshold', title: _('Upload threshold'), color: COLORS.ul, dash: '1 3', value: v('ul', 'threshold') }
-			], 1)
+			], 1, now)
 		]);
 	},
 

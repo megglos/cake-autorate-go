@@ -593,6 +593,34 @@ test('the pointer on one graph does not change the selection of the other graph'
 	expect(delayStill).toBeLessThanOrEqual(delayOldest + 4);
 });
 
+test('the cursor of the other graph shows the same sample near the middle of two samples', async ({ page }) => {
+	// A slow browser: each call of performance.now() adds 500 ms. If the
+	// two graphs read the time separately, the samples of the second graph
+	// are more to the left.
+	await page.addInitScript(() => {
+		const now = performance.now.bind(performance);
+		let extra = 0;
+		performance.now = () => now() + (extra += 500);
+	});
+	await page.goto(PAGE);
+	await page.selectOption('#cake-autorate-period', '60');
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	const rate = link.locator('[data-graph="rate"]');
+	const delay = link.locator('[data-graph="delay"]');
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(4);
+
+	// Just after a refresh: point a little to the left of the middle of the
+	// two newest samples of Rates.
+	const old = await rate.locator('svg').elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	const p = await points(page, 'rate', 'dl-shaper');
+	const x = (p[p.length - 2][1] + p[p.length - 1][1]) / 2 - 2;
+	const box = await rate.locator('svg').boundingBox();
+	await page.mouse.move(box.x + x / 600 * box.width, box.y + box.height / 2);
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	expect(await delay.locator('.graph-time').textContent()).toBe(await rate.locator('.graph-time').textContent());
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {
