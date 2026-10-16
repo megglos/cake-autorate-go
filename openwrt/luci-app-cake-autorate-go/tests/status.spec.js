@@ -771,7 +771,15 @@ test('without Graph history (the default), the graphs start empty', async ({ pag
 	expect(vm('ubus call cake-autorate history')).toContain('status_history is off');
 	await page.goto(PAGE);
 	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
-	await expect(rate.getByText('Collecting data…')).toBeVisible();
+	await expect(rate.locator('svg')).toBeVisible();
+	// Only the samples since the load: not more than some seconds. The
+	// text "Collecting data…" can be gone at once: the first refresh runs
+	// right after the load and can get a new status.
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p.length).toBeLessThanOrEqual(3);
+	// 10 s of the period of 5 minutes at the right side of 600 units.
+	for (const e of p)
+		expect(e[1]).toBeGreaterThan(580);
 	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
 });
 
@@ -799,7 +807,12 @@ test('without the history of the program, the graphs start empty', async ({ page
 	});
 	await page.goto(PAGE);
 	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
-	await expect(rate.getByText('Collecting data…')).toBeVisible();
+	await expect(rate.locator('svg')).toBeVisible();
+	// Only the samples since the load (see the test before).
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p.length).toBeLessThanOrEqual(3);
+	for (const e of p)
+		expect(e[1]).toBeGreaterThan(580);
 	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
 });
 
