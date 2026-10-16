@@ -220,8 +220,16 @@ The daemon runs the session for one link. It writes a session directory in the f
 - Unshaped block: the rate control of the link stops (as a pause), and the shaper rate goes to the maximum (CAKE without a useful limit). Autorate block: the normal rate control from the base rate.
 - Recordings: the RecordingCore of the link gets a recorder for each block (on the goroutine of the controller). The header has a config with only this link (the analysis needs exactly one link).
 - Pings during the session: the controller must not go to IDLE (it stops the pingers). The session keeps the pingers on.
-- Safety: the session stops if the browser does not ask for the status for 15 s (the load is gone, and an unshaped link must not stay), after a hard maximum time, on a stall, and at a stop of the daemon. At the end, the controller of the link continues as before (paused directions stay paused).
-- Result (JSON): the proposal (min, base, max for each direction, the thresholds, learn_cross_delay, ping_method, reflectors) and the measured data (capacity distributions, jitter, cross delay, grant delay, notes). The daemon also keeps the result file `/var/run/cake-autorate/calibration-LINK.json`.
+- Safety (as built in #67, after 10 Copilot rounds):
+  - The session stops if nobody asks for the status for 15 s (the load is gone, and an unshaped link must not stay), on `calibrate stop` and at a stop of the daemon.
+  - The rate control comes back after the last block, before the analysis; after every error or stop; a failed restore is always a failed session. At the stop of the daemon, the session ends and restores first, then the controllers stop (own context). No new session after the start of the shutdown.
+  - The calibration commands wait until the controller has run them (`callUntilDone`), thus the restore cannot time out after a slow block command.
+  - Pause and resume are refused during a session. One session at a time. Both directions need `adjust`.
+  - Each block start leaves IDLE and STALL (base rates, pingers on), so that the idle phase has pings.
+  - The session directories are private (0700, checked with Lstat: no links, owner, not writable by others); the link names `.` and `..` are refused; a truncated recording (size limit, write error) fails the session.
+  - The unshaped rate is 10 Gbit/s. The status file shows `calibrating` for each link. The recording has the inputs `calibrating` and `fixed_rate`, thus a replay gives the same decisions.
+- Result (JSON): the proposal (min, base, max for each direction, the thresholds, learn_cross_delay, ping_method, reflectors, connection_active_thr_kbps) and the measured data (capacity distributions, jitter, cross delay, grant delay, notes). With fewer than 4 pinged reflectors (small pinger_count), ping_method and reflectors keep the config values; configured reflectors without pings (spares) stay in the list. Files: `calibration/sessions/LINK/` and `calibration/results/LINK.json` next to the control socket.
+- End-to-end check (2026-10-16): OpenWrt VM with a simulated 5G link (netns with netem, trace of `gen-trace.sh`), a load script in the VM in place of the browser: state done, plausible rates.
 
 ### 7.2 rpcd and ACL
 
@@ -311,6 +319,8 @@ Each phase is a PR, with the Copilot review cycles.
 7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11). Menu entry: Services → CAKE Autorate (Go).
 8. Graphs (2026-10-15): data only in the browser (no core change), before L5. Changed (2026-10-16, #54): the daemon keeps 15 minutes of history, the page loads it.
 9. Calibration (2026-10-16, #56): option 2, the browser makes the load, the router controls the session. Passive and continuous calibration later (#57).
+10. Graph history opt-in (2026-10-16, user review of #62): `status_history`, default off (memory).
+11. Workflow (2026-10-16): merges with merge commits; PRs that resolve an issue have "Closes #N"; the user also reviews PRs on GitHub (answer each point); aarch64 packages only on main and releases.
 
 ## 13. Status
 
@@ -325,8 +335,9 @@ Each phase is a PR, with the Copilot review cycles.
 | Fix | 2026-10-16: #51 merged (a014548). A refresh replaced the graph under the pointer without "pointerleave"; the cursor stayed (flaky CI on main). Now a document listener removes the pointer cursor. |
 | L6 (option 1) | Done (2026-10-16): #50 merged (5254887). 2 Copilot cycles. rpcd method `cake-autorate qdisc {interface}` (tc qdisc show, interface names without shell characters, read ACL). The status page warns for each direction with adjust on and no CAKE root qdisc (check on load and each 10 s), with a link to SQM QoS if the menu has it. One focus key for all focusable elements. Option 2 (own CAKE setup, CAKE tab) only if users ask. |
 | L7 | Done (2026-10-16): #52 merged. 2 Copilot cycles (fix: enable the service after the installation). README: install from a release, UCI heading, 4 screenshots in docs/images; tests/screenshots.js makes them again from the VM. The release workflow was already done in L1. |
-| Issues | 2026-10-16: #53 colors (PR #60, with core #61 high_delay), #54 graph history (core PR #59, LuCI PR next), #55 README, #56 calibration from LuCI, #57 passive and continuous calibration. #58: cursor on all graphs of a link and the time of the sample. |
-| L5 | Next (2026-10-16): design in section 7 (option 2 of #56). |
+| Issues | 2026-10-16: #53 colors: done (#60, core #61 `high_delay`). #54 graph history: done (core #59, opt-in `status_history` #63 after the user review, LuCI #62). #58 cursor on all graphs of a link and the time of the sample: done. #64 CI time: done (#66). Open: #55 README, #56 calibration (in progress), #57 passive and continuous calibration. |
+| CI | 2026-10-16: #66 merged: the job vm is a matrix (service + 3 browser shards, each with its own VM; wait for the WAN of the VM before the tests; the VM state in the artifacts on a failure). Package build as a reusable workflow: package-x86 (needed by vm), package-arm only on main and releases. Fixed flaky tests: dropdown selection (#65), sample times instead of ages in the cursor tests, history tests check the samples. VM tests now approximately 16 min after the start instead of 26 min. |
+| L5 | In progress (2026-10-16). Core #67 (online calibration session): 10 Copilot rounds, all findings fixed, CI green; waits for the safety review of the user (Copilot asks for a human review, the session removes the shaper limit for some time). LuCI part: done locally (branch feat/luci-calibration, one commit): button "Calibrate…", dialog with load time and data volume, load from the browser (Cloudflare `__down`/`__up`, 4 streams each), progress, stop, resume after a reload, result table with current/proposed values and apply to UCI, rpcd methods `calibrate_start/status/stop` (write ACL); 6 Playwright tests (fake session and fake endpoints, one real session start/stop), VM test checks. PR (Closes #56) after the merge of #67. Not possible in the VM: the browser traffic does not go through the VM (a SOCKS proxy over SSH into the VM would work). Idea: show the last result after the session. |
 
 ### L0 decisions and results
 
