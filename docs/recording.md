@@ -43,10 +43,13 @@ All other lines have these fields:
 | `ping` | `reflector`, `rtt_us`, `timeout`, `dl_owd_us`, `ul_owd_us` | A ping reply or a ping timeout. `dl_owd_us` and `ul_owd_us` are the one-way delays (only with `ping_method: icmp-timestamp`). They contain the clock offset between the hosts. |
 | `rate` | `dl_kbps`, `ul_kbps` | A sample of the measured throughput. |
 | `reflector_reset` | `reflector` | The controller removed the delay data of a reflector (a spare reflector became active). |
+| `pause` | `dir`, `paused` | A user paused or resumed the rate control of a direction (control socket). |
+| `calibrating` | `on` | A calibration session started (`true`) or ended (`false`) the calibration mode: the controller does not go to `IDLE`. |
+| `fixed_rate` | `dir`, `rate_kbps` | A calibration block set a fixed shaper rate (no useful limit) and paused the rate control of the direction. |
 | `shaper` | `dir`, `rate_kbps` | The controller set a shaper rate. |
 | `state` | `state` | The controller changed its state (`RUNNING`, `IDLE`, `STALL`). |
 
-The `start`, `ping`, `rate` and `reflector_reset` events are the inputs of the controller. The `shaper` and `state` events are the decisions of the controller.
+The `start`, `ping`, `rate`, `reflector_reset`, `pause`, `calibrating` and `fixed_rate` events are the inputs of the controller. The `shaper` and `state` events are the decisions of the controller.
 
 When `adjust` is `false` for a direction, the controller does not set the shaper rate for that direction. Thus, the recording has no `shaper` events for that direction.
 

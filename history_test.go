@@ -136,7 +136,7 @@ func TestHistoryWithoutBoard(t *testing.T) {
 	if historySource(nil) != nil {
 		t.Error("historySource(nil) must be a nil interface")
 	}
-	if got := handleControlCommand("history", nil, nil, historySource(nil)); got != "error: no history" {
+	if got := handleControlCommand("history", &ControlHandler{History: historySource(nil)}); got != "error: no history" {
 		t.Errorf("answer: %q", got)
 	}
 }
@@ -150,14 +150,14 @@ func (f fakeHistory) HistoryJSON() ([]byte, error) { return f.data, f.err }
 
 func TestHandleHistoryCommand(t *testing.T) {
 	src := fakeHistory{data: []byte(`{"links":[]}`)}
-	if got := handleControlCommand("history\n", nil, nil, src); got != `{"links":[]}` {
+	if got := handleControlCommand("history\n", &ControlHandler{History: src}); got != `{"links":[]}` {
 		t.Errorf("answer: %q", got)
 	}
-	if got := handleControlCommand("history a", nil, nil, src); got != "error: usage: history" {
+	if got := handleControlCommand("history a", &ControlHandler{History: src}); got != "error: usage: history" {
 		t.Errorf("answer with an argument: %q", got)
 	}
 	src.err = errors.New("broken\nboard")
-	if got := handleControlCommand("history", nil, nil, src); got != "error: broken board" {
+	if got := handleControlCommand("history", &ControlHandler{History: src}); got != "error: broken board" {
 		t.Errorf("answer with an error: %q", got)
 	}
 }
@@ -174,7 +174,9 @@ func TestControlSocketHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- RunControlSocket(ctx, path, []string{"a"}, nil, historySource(b), NewDiscardLogger()) }()
+	go func() {
+		done <- RunControlSocket(ctx, path, &ControlHandler{Names: []string{"a"}, History: historySource(b)}, NewDiscardLogger())
+	}()
 	t.Cleanup(func() {
 		cancel()
 		<-done

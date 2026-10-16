@@ -210,6 +210,7 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			RateKbps  int       `json:"rate_kbps"`
 			State     string    `json:"state"`
 			Paused    bool      `json:"paused"`
+			On        bool      `json:"on"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			t.Fatal(err)
@@ -243,6 +244,10 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			core.ResetReflector(ev.Reflector)
 		case recPause:
 			core.SetPaused(ev.Dir, ev.Paused)
+		case recCalibrating:
+			core.SetCalibrating(ev.On, ts)
+		case recFixedRate:
+			core.SetFixedRate(ev.Dir, ev.RateKbps)
 		case recShaper:
 			recorded = append(recorded, recDecision{ev.T, "shaper " + string(ev.Dir), fmt.Sprint(ev.RateKbps)})
 		case recState:
@@ -393,5 +398,105 @@ func TestRecording_ReplayPauseAndRetry(t *testing.T) {
 	}
 	if len(shaper) == 0 || !slices.Equal(shaper, replayed) {
 		t.Errorf("recorded %v, replay gave %v", shaper, replayed)
+	}
+}
+
+// The recorder of a calibration block gets the same events as the main
+// recorder, from the start of the block until it is removed.
+func TestRecordingCore_CalRecorder(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	dir := t.TempDir()
+	start := time.Now()
+	main, err := newRecorderAt(filepath.Join(dir, "main.jsonl"), 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, main, testLogger(t))
+	rc.Start(start)
+	rc.HandleRate(RateStats{DlRateKbps: 1, Timestamp: start.Add(time.Second)})
+	cal, err := newRecorderAt(filepath.Join(dir, "cal.jsonl"), 0, cfg, start.Add(2*time.Second), testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.SetCalRecorder(cal, start.Add(2*time.Second))
+	rc.HandleRate(RateStats{DlRateKbps: 2, Timestamp: start.Add(3 * time.Second)})
+	rc.SetFixedRate(DL, calUnshapedKbps, start.Add(4*time.Second))
+	rc.SetCalRecorder(nil, start.Add(5*time.Second))
+	rc.HandleRate(RateStats{DlRateKbps: 3, Timestamp: start.Add(6 * time.Second)})
+	for _, r := range []*Recorder{main, cal} {
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	types := func(name string) string {
+		var out []string
+		for _, ev := range readRecording(t, filepath.Join(dir, name)) {
+			s := fmt.Sprint(ev["type"])
+			if s == "rate" {
+				s += fmt.Sprint(ev["dl_kbps"])
+			}
+			out = append(out, s)
+		}
+		return strings.Join(out, " ")
+	}
+	if got, want := types("cal.jsonl"), "header start rate2 fixed_rate shaper"; got != want {
+		t.Errorf("calibration recording: got %q, want %q", got, want)
+	}
+	if got := types("main.jsonl"); !strings.Contains(got, "rate1 rate2 fixed_rate shaper rate3") {
+		t.Errorf("main recording: %q", got)
+	}
+}
+
+// A recording with a calibration gives the same decisions in a replay: the
+// start of the calibration mode from IDLE (base rates, RUNNING) and an
+// unshaped block with a fixed rate.
+func TestRecording_ReplayCalibration(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Adjust = true
+	cfg.EnableSleepFunction = true
+	cfg.SustainedIdleSleepThrS = 1
+	path := filepath.Join(t.TempDir(), "rec.jsonl")
+	start := time.Now()
+	rec, err := newRecorderAt(path, 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, rec, testLogger(t))
+	rc.Start(start)
+	at := func(s int) time.Time { return start.Add(time.Duration(s) * time.Second) }
+	// No load: the link goes to IDLE.
+	for s := 1; s <= 3; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	if rc.Core().State() != StateIdle {
+		t.Fatalf("state %s, want IDLE", rc.Core().State())
+	}
+	rc.SetCalibrating(true, at(4))
+	rc.SetFixedRate(DL, calUnshapedKbps, at(5))
+	rc.SetFixedRate(UL, calUnshapedKbps, at(5))
+	for s := 6; s <= 8; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	rc.SetPaused(DL, false, at(9))
+	rc.SetPaused(UL, false, at(9))
+	rc.SetCalibrating(false, at(10))
+	for s := 11; s <= 13; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorded, replayed := replayRecording(t, path)
+	if len(recorded) == 0 || !slices.Equal(recorded, replayed) {
+		t.Errorf("recorded:\n%v\nreplay:\n%v", recorded, replayed)
+	}
+	var fixed bool
+	for _, d := range recorded {
+		fixed = fixed || d.value == fmt.Sprint(calUnshapedKbps)
+	}
+	if !fixed {
+		t.Errorf("no fixed rate in the recording: %v", recorded)
 	}
 }

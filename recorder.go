@@ -48,6 +48,8 @@ const (
 	recShaper         = "shaper"
 	recState          = "state"
 	recPause          = "pause"
+	recCalibrating    = "calibrating"
+	recFixedRate      = "fixed_rate"
 )
 
 type recHeaderEvent struct {
@@ -107,6 +109,23 @@ type recPauseEvent struct {
 	Paused bool      `json:"paused"`
 }
 
+// recCalibratingEvent is the start or the end of the calibration mode.
+type recCalibratingEvent struct {
+	T    int64  `json:"t"`
+	Type string `json:"type"`
+	Link string `json:"link"`
+	On   bool   `json:"on"`
+}
+
+// recFixedRateEvent is a fixed shaper rate of a calibration block.
+type recFixedRateEvent struct {
+	T        int64     `json:"t"`
+	Type     string    `json:"type"`
+	Link     string    `json:"link"`
+	Dir      Direction `json:"dir"`
+	RateKbps int       `json:"rate_kbps"`
+}
+
 type recStateEvent struct {
 	T     int64  `json:"t"`
 	Type  string `json:"type"`
@@ -126,9 +145,11 @@ type Recorder struct {
 	buf      *bufio.Writer
 	maxBytes int64
 	stopped  bool
-	logger   *Logger
-	done     chan struct{}
-	closed   sync.WaitGroup
+	// stopReason is the reason of a stop before Close, or empty.
+	stopReason string
+	logger     *Logger
+	done       chan struct{}
+	closed     sync.WaitGroup
 }
 
 // countingWriter counts the bytes that go to the file.
@@ -223,7 +244,22 @@ func (r *Recorder) flushLocked() {
 // hold r.mu.
 func (r *Recorder) stopLocked(reason string) {
 	r.stopped = true
+	r.stopReason = reason
 	r.logger.Errorf("recording stopped: %s", reason)
+}
+
+// EarlyStop returns an error if the recorder stopped before Close (a write
+// error or the size limit): then the recording is not complete.
+func (r *Recorder) EarlyStop() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopReason == "" {
+		return nil
+	}
+	return fmt.Errorf("recording stopped: %s", r.stopReason)
 }
 
 // Close writes all buffered events and closes the file.
@@ -347,6 +383,24 @@ func (r *Recorder) Pause(link string, dir Direction, paused bool, ts time.Time) 
 	r.write(recPauseEvent{T: r.since(ts), Type: recPause, Link: link, Dir: dir, Paused: paused})
 }
 
+// Calibrating records the start or the end of the calibration mode. It is
+// an input of Core.
+func (r *Recorder) Calibrating(link string, on bool, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recCalibratingEvent{T: r.since(ts), Type: recCalibrating, Link: link, On: on})
+}
+
+// FixedRate records a fixed shaper rate of a calibration block. It is an
+// input of Core.
+func (r *Recorder) FixedRate(link string, dir Direction, rateKbps int, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recFixedRateEvent{T: r.since(ts), Type: recFixedRate, Link: link, Dir: dir, RateKbps: rateKbps})
+}
+
 // State records a state change of Core.
 func (r *Recorder) State(link string, s State, ts time.Time) {
 	if r == nil {
@@ -364,6 +418,9 @@ type RecordingCore struct {
 	core *Core
 	act  Actuator
 	rec  *Recorder
+	// cal is the recorder of the current block of a calibration session,
+	// or nil. It gets the same events as rec.
+	cal *Recorder
 
 	// eventTime is the timestamp of the event that Core processes now. The
 	// recorder uses it for the decisions of Core.
@@ -381,33 +438,60 @@ func NewRecordingCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actua
 // Core returns the Core.
 func (rc *RecordingCore) Core() *Core { return rc.core }
 
+// record writes an event to the recorders. The methods of Recorder accept a
+// nil recorder.
+func (rc *RecordingCore) record(f func(r *Recorder)) {
+	f(rc.rec)
+	f(rc.cal)
+}
+
+// SetCalRecorder sets the recorder of a calibration block (nil: no
+// recorder). The recording starts with a start event at ts.
+func (rc *RecordingCore) SetCalRecorder(rec *Recorder, ts time.Time) {
+	rc.cal = rec
+	rc.cal.Start(rc.name, ts)
+}
+
+// SetCalibrating starts or ends the calibration mode of the Core.
+func (rc *RecordingCore) SetCalibrating(on bool, ts time.Time) {
+	rc.record(func(r *Recorder) { r.Calibrating(rc.name, on, ts) })
+	rc.process(ts, func() { rc.core.SetCalibrating(on, ts) })
+}
+
+// SetFixedRate sets a fixed shaper rate and pauses the rate control of a
+// direction (a calibration block without a shaper limit).
+func (rc *RecordingCore) SetFixedRate(dir Direction, rateKbps int, ts time.Time) {
+	rc.record(func(r *Recorder) { r.FixedRate(rc.name, dir, rateKbps, ts) })
+	rc.process(ts, func() { rc.core.SetFixedRate(dir, rateKbps) })
+}
+
 // Start records the start and starts the Core.
 func (rc *RecordingCore) Start(ts time.Time) {
-	rc.rec.Start(rc.name, ts)
+	rc.record(func(r *Recorder) { r.Start(rc.name, ts) })
 	rc.process(ts, func() { rc.core.Start(ts) })
 }
 
 // HandleRate records a throughput sample and sends it to the Core.
 func (rc *RecordingCore) HandleRate(s RateStats) {
-	rc.rec.Rate(rc.name, s)
+	rc.record(func(r *Recorder) { r.Rate(rc.name, s) })
 	rc.process(s.Timestamp, func() { rc.core.HandleRate(s) })
 }
 
 // HandlePing records a ping result and sends it to the Core.
 func (rc *RecordingCore) HandlePing(p PingResult) {
-	rc.rec.Ping(rc.name, p)
+	rc.record(func(r *Recorder) { r.Ping(rc.name, p) })
 	rc.process(p.Timestamp, func() { rc.core.HandlePing(p) })
 }
 
 // ResetReflector records a reflector reset and sends it to the Core.
 func (rc *RecordingCore) ResetReflector(reflector string, ts time.Time) {
-	rc.rec.ReflectorReset(rc.name, reflector, ts)
+	rc.record(func(r *Recorder) { r.ReflectorReset(rc.name, reflector, ts) })
 	rc.process(ts, func() { rc.core.ResetReflector(reflector) })
 }
 
 // SetPaused records a pause or a resume and sends it to the Core.
 func (rc *RecordingCore) SetPaused(dir Direction, paused bool, ts time.Time) {
-	rc.rec.Pause(rc.name, dir, paused, ts)
+	rc.record(func(r *Recorder) { r.Pause(rc.name, dir, paused, ts) })
 	rc.process(ts, func() { rc.core.SetPaused(dir, paused) })
 }
 
@@ -418,13 +502,13 @@ func (rc *RecordingCore) process(ts time.Time, f func()) {
 	before := rc.core.State()
 	f()
 	if after := rc.core.State(); after != before {
-		rc.rec.State(rc.name, after, ts)
+		rc.record(func(r *Recorder) { r.State(rc.name, after, ts) })
 	}
 }
 
 // SetRate implements Actuator.
 func (rc *RecordingCore) SetRate(dir Direction, rateKbps int) {
-	rc.rec.Shaper(rc.name, dir, rateKbps, rc.eventTime)
+	rc.record(func(r *Recorder) { r.Shaper(rc.name, dir, rateKbps, rc.eventTime) })
 	rc.act.SetRate(dir, rateKbps)
 }
 

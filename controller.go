@@ -33,9 +33,13 @@ type LinkController struct {
 	board *StatusBoard
 	// rateErr is the last error of SetRate. Only the goroutine of Run uses it.
 	rateErr error
+	// calPaused are the pause states of the directions before a
+	// calibration session. Only the goroutine of Run uses it.
+	calPaused map[Direction]bool
 
-	// ctrlCh carries the pause and resume commands to the goroutine of Run.
-	ctrlCh chan *pauseCmd
+	// ctrlCh carries the commands (pause, resume, calibration) to the
+	// goroutine of Run.
+	ctrlCh chan *ctrlCmd
 
 	// Channels
 	pingCh chan PingResult
@@ -60,7 +64,7 @@ func NewLinkController(link *LinkConfig, cfg *Config, shaper *Shaper, recorder *
 		pingerMgr: NewPingerManager(link, cfg, logger),
 		monitor:   NewMonitor(link.Download.Interface, link.Upload.Interface, cfg.MonitorIntervalMs, logger),
 		logger:    logger,
-		ctrlCh:    make(chan *pauseCmd),
+		ctrlCh:    make(chan *ctrlCmd),
 		pingCh:    make(chan PingResult, 100),
 		rateCh:    make(chan RateStats, 10),
 	}
@@ -128,16 +132,7 @@ func (c *LinkController) Run(ctx context.Context) error {
 		case <-statusC:
 			c.publishStatus()
 		case cmd := <-c.ctrlCh:
-			now := time.Now()
-			for _, dir := range cmd.dirs {
-				c.rateErr = nil
-				c.core.SetPaused(dir, cmd.paused, now)
-				if c.rateErr != nil {
-					// The user can send the command again: it sets the
-					// base rate again.
-					cmd.err = c.rateErr
-				}
-			}
+			cmd.err = cmd.fn(time.Now())
 			close(cmd.done)
 
 		case <-healthTicker.C:
@@ -163,20 +158,39 @@ func (c *LinkController) publishStatus() {
 	c.board.Set(st)
 }
 
-// pauseCmd is a command to pause or resume directions.
-type pauseCmd struct {
-	dirs   []Direction
-	paused bool
-	done   chan struct{}
-	// err is the error of the rate change, set before done closes.
+// ctrlCmd is a function that the goroutine of Run calls.
+type ctrlCmd struct {
+	fn   func(now time.Time) error
+	done chan struct{}
+	// err is the result of fn, set before done closes.
 	err error
 }
 
-// SetPaused pauses or resumes the rate control of the directions. It returns
-// after the controller has done the command. It returns an error if the
-// controller does not run or does not answer in time.
-func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
-	cmd := &pauseCmd{dirs: dirs, paused: paused, done: make(chan struct{})}
+// calDispatchTimeout is the time that a calibration command waits until
+// the controller takes it. A rate change can take some seconds (netlink,
+// then tc).
+const calDispatchTimeout = 15 * time.Second
+
+// callUntilDone runs fn on the goroutine of Run. It waits up to dispatch
+// until the controller takes the command, and then until fn returns: the
+// controller always runs a command that it took. The calibration uses it,
+// so that the restore of the rate control cannot time out after the
+// controller took a block command.
+func (c *LinkController) callUntilDone(fn func(now time.Time) error, dispatch time.Duration) error {
+	cmd := &ctrlCmd{fn: fn, done: make(chan struct{})}
+	select {
+	case c.ctrlCh <- cmd:
+	case <-time.After(dispatch):
+		return fmt.Errorf("link %q does not run", c.name)
+	}
+	<-cmd.done
+	return cmd.err
+}
+
+// call runs fn on the goroutine of Run and returns its result. It returns
+// an error if the controller does not run or does not answer in time.
+func (c *LinkController) call(fn func(now time.Time) error) error {
+	cmd := &ctrlCmd{fn: fn, done: make(chan struct{})}
 	timeout := time.After(2 * time.Second)
 	select {
 	case c.ctrlCh <- cmd:
@@ -189,6 +203,28 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 	case <-timeout:
 		return fmt.Errorf("link %q does not answer", c.name)
 	}
+}
+
+// SetPaused pauses or resumes the rate control of the directions. It returns
+// after the controller has done the command.
+func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
+	return c.call(func(now time.Time) error {
+		// A pause or a resume changes the shaper of a calibration block.
+		if c.core.Core().Calibrating() {
+			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		var err error
+		for _, dir := range dirs {
+			c.rateErr = nil
+			c.core.SetPaused(dir, paused, now)
+			if c.rateErr != nil {
+				// The user can send the command again: it sets the base
+				// rate again.
+				err = c.rateErr
+			}
+		}
+		return err
+	})
 }
 
 // restartPingers starts the pingers again to use the new active set of
@@ -258,4 +294,66 @@ func readInterfaceMTU(iface string, logger *Logger) int {
 		return defaultMTU
 	}
 	return val
+}
+
+// CalConfig implements CalTarget: the config of the link with only this
+// link.
+func (c *LinkController) CalConfig() *Config {
+	cfg := *c.cfg
+	cfg.Links = []LinkConfig{*c.link}
+	return &cfg
+}
+
+// CalStart implements CalTarget. Both directions need the rate control: the
+// session changes the shaper rates.
+func (c *LinkController) CalStart() error {
+	return c.callUntilDone(func(now time.Time) error {
+		if !c.link.Download.Adjust || !c.link.Upload.Adjust {
+			return fmt.Errorf("link %q: the calibration needs the rate control (adjust) in both directions", c.name)
+		}
+		core := c.core.Core()
+		c.calPaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		c.core.SetCalibrating(true, now)
+		return nil
+	}, calDispatchTimeout)
+}
+
+// CalBlock implements CalTarget.
+func (c *LinkController) CalBlock(rec *Recorder, unshaped bool) error {
+	return c.callUntilDone(func(now time.Time) error {
+		c.core.SetCalRecorder(rec, now)
+		c.rateErr = nil
+		// The pings must run in the idle time of the block, also after a
+		// STALL in the block before.
+		c.core.SetCalibrating(true, now)
+		for _, dir := range Directions() {
+			if unshaped {
+				c.core.SetFixedRate(dir, calUnshapedKbps, now)
+			} else {
+				c.core.SetPaused(dir, false, now)
+			}
+		}
+		return c.rateErr
+	}, calDispatchTimeout)
+}
+
+// CalStopRecording implements CalTarget.
+func (c *LinkController) CalStopRecording() error {
+	return c.callUntilDone(func(now time.Time) error {
+		c.core.SetCalRecorder(nil, now)
+		return nil
+	}, calDispatchTimeout)
+}
+
+// CalFinish implements CalTarget.
+func (c *LinkController) CalFinish() error {
+	return c.callUntilDone(func(now time.Time) error {
+		c.core.SetCalRecorder(nil, now)
+		c.core.SetCalibrating(false, now)
+		c.rateErr = nil
+		for _, dir := range Directions() {
+			c.core.SetPaused(dir, c.calPaused[dir], now)
+		}
+		return c.rateErr
+	}, calDispatchTimeout)
 }
