@@ -55,7 +55,7 @@ return baseclass.extend({
 		for (const ls of status.links)
 			rows.push(E('tr', { 'class': 'tr', 'data-link': ls.name }, [
 				E('td', { 'class': 'td', 'data-title': _('Link') }, text(ls.name)),
-				E('td', { 'class': 'td', 'data-title': _('State') }, common.stateLabel(ls.state)),
+				E('td', { 'class': 'td', 'data-title': _('State') }, common.stateLabel(ls.state, ls.unshaped)),
 				E('td', { 'class': 'td', 'data-title': _('Download (delay delta)') }, direction(ls.download)),
 				E('td', { 'class': 'td', 'data-title': _('Upload (delay delta)') }, direction(ls.upload))
 			]));

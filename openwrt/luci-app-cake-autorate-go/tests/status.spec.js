@@ -911,6 +911,66 @@ test('Overview shows the state with the same label as the status page', async ({
 	await expect(label).toHaveClass('label success');
 });
 
+// Returns the "unshaped" value of the link in the status file.
+function unshapedInFile() {
+	return vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" 2>/dev/null || true').trim();
+}
+
+test('turn the shaping of a link off and on', async ({ page }) => {
+	try {
+		await page.goto(PAGE);
+		const link = page.locator('.cbi-section[data-link="wan"]');
+		const button = link.locator('.cake-autorate-shaping');
+		await expect(button).toHaveText('Turn shaping off');
+		await button.click();
+		await expect(link.locator('h3 [data-state]')).toHaveText('Shaping off', { timeout: 10000 });
+		await expect(link.locator('h3 [data-state]')).toHaveClass('label warning');
+		await expect(button).toHaveText('Turn shaping on');
+		expect(unshapedInFile()).toBe('true');
+		expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 10Gbit');
+		// No rate control: no pause buttons, and no calibration.
+		for (const dir of [ 'dl', 'ul' ]) {
+			await expect(link.locator(`tr[data-dir="${dir}"] [data-control="unshaped"]`)).toHaveText('Off (shaping off)');
+			await expect(link.locator(`tr[data-dir="${dir}"] button`)).toHaveCount(0);
+			await expect(link.locator(`tr[data-dir="${dir}"]`)).toContainText('No limit');
+		}
+		await expect(link.locator('.cake-autorate-calibrate')).toBeDisabled();
+		// The 10 Gbit/s of the shaper are not in the graph: the y axis
+		// fits the achieved rates.
+		await expect.poll(async () => +(await link.locator('[data-graph="rate"]').getAttribute('data-max')), { timeout: 15000 }).toBeLessThan(1000);
+		const rate = link.locator('[data-graph="rate"]');
+		const box = await rate.locator('svg').boundingBox();
+		await page.mouse.move(box.x + box.width * 0.99, box.y + box.height / 2);
+		await expect(rate.locator('.graph-tip')).toContainText('Download shaper: no limit');
+
+		await button.click();
+		await expect(link.locator('h3 [data-state]')).not.toHaveText('Shaping off', { timeout: 10000 });
+		await expect(button).toHaveText('Turn shaping off');
+		expect(unshapedInFile()).toBe('false');
+		expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 20Mbit');
+		await expect(link.locator('tr[data-dir="dl"] button')).toHaveText('Pause');
+		await expect(link.locator('.cake-autorate-calibrate')).toBeEnabled();
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+test('during a calibration, the shaping button is disabled', async ({ page }) => {
+	await mockStatus(page, (s) => { s.links[0].calibrating = true; });
+	await page.goto(PAGE);
+	await expect(page.locator('.cbi-section[data-link="wan"] .cake-autorate-shaping')).toBeDisabled();
+});
+
+test('Overview shows a link without shaping', async ({ page }) => {
+	await mockStatus(page, (s) => { s.links[0].unshaped = true; });
+	await page.goto(OVERVIEW);
+	const label = page.locator('tr[data-link="wan"] [data-state]');
+	await expect(label).toHaveText('Shaping off', { timeout: 15000 });
+	await expect(label).toHaveClass('label warning');
+});
+
 test('Overview shows a stopped service', async ({ page }) => {
 	vm('/etc/init.d/cake-autorate stop');
 	try {

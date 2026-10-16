@@ -103,6 +103,14 @@ function pause_resume(verb, args) {
 	return command(verb + ' ' + link + (dir ? ' ' + dir : ''));
 }
 
+// Checks the link name and sends "verb LINK" (unshape or shape).
+function shaping(verb, args) {
+	const link = args?.link;
+	if (type(link) != 'string' || !match(link, LINK_NAME_RE))
+		return { error: 'Invalid link name' };
+	return command(verb + ' ' + link);
+}
+
 // Returns the history of the program as a JSON text in "data". The page
 // parses it: a JSON text is smaller in a ubus message than a table.
 function history() {
@@ -157,6 +165,18 @@ return {
 		history: {
 			call: function() {
 				return history();
+			}
+		},
+		unshape: {
+			args: { link: 'link' },
+			call: function(req) {
+				return shaping('unshape', req.args);
+			}
+		},
+		shape: {
+			args: { link: 'link' },
+			call: function(req) {
+				return shaping('shape', req.args);
 			}
 		},
 		calibrate_start: {
