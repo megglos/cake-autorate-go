@@ -52,100 +52,43 @@ jobs:
             jq empty "$f"
           done
 
-  # Build the apk packages with the OpenWrt SDK.
-  package:
-    # Do not build or publish packages with a converter that fails its tests.
+  # Build the apk packages with the OpenWrt SDK, one job for each
+  # architecture. The VM tests need only x86_64; the aarch64 build takes
+  # much longer and runs at the same time.
+  # Do not build or publish packages with a converter that fails its tests.
+  package-x86:
     needs: converter
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64_cortex-a53-openwrt-25.12
-            goarch: arm64
-          - arch: x86_64-openwrt-25.12
-            goarch: amd64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    uses: ./.github/workflows/package.yml
+    with:
+      arch: x86_64-openwrt-25.12
+      goarch: amd64
 
-      # Write the version to the Makefile, because the SDK action does not
-      # pass variables to make. apk versions have no "-" (see "apk
-      # version"). A release tag 1.2.0-rc.1 (or v1.2.0-rc.1) gives 1.2.0_rc1.
-      # Other builds get the Makefile version plus _p and the commit count.
-      - name: Set the version
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          mk=openwrt/cake-autorate-go/Makefile
-          luci=openwrt/luci-app-cake-autorate-go/Makefile
-          if [ -n "$TAG" ]; then
-            v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
-          else
-            v="$(sed -n 's/^PKG_VERSION:=//p' "$mk")_p$(git rev-list --count HEAD)"
-          fi
-          if ! echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*(_(alpha|beta|pre|rc|p)[0-9]*)?$'; then
-            echo "::error::version $v (from tag \"$TAG\") is not a valid apk version"
-            exit 1
-          fi
-          desc=$(git describe --tags --always --dirty)
-          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
-            -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
-          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" "$luci"
-          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk" "$luci"
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      # Build the program with the Go toolchain of the runner. Then the SDK
-      # does not build its own Go toolchain (about 10 minutes). The program
-      # is static, thus it does not need the C library of OpenWrt.
-      - name: Build the program
-        env:
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-        run: |
-          desc=$(git describe --tags --always)
-          go build -trimpath -ldflags="-s -w -X main.version=$desc" \
-            -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
-
-      - name: Build
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ matrix.arch }}
-          PACKAGES: cake-autorate-go luci-app-cake-autorate-go
-          # The prebuilt program and the LuCI app need no other feeds.
-          NO_DEFAULT_FEEDS: 1
-
-      # The apk file names do not have the architecture. Add it, because
-      # the names of the release files must be unique.
-      - name: Name the packages
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          mkdir dist
-          for f in bin/packages/*/action/*.apk; do
-            b=$(basename "$f" .apk)
-            cp "$f" "dist/${b}_${ARCH}.apk"
-          done
-          ls -l dist
-
-      - name: Store packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-${{ matrix.arch }}
-          path: dist/*.apk
-          if-no-files-found: error
+  # Not for pull requests: the CI workflow already builds the program for
+  # arm64, and the package files are the same for all architectures. The
+  # runs on main and the releases build it.
+  package-arm:
+    if: github.event_name != 'pull_request'
+    needs: converter
+    uses: ./.github/workflows/package.yml
+    with:
+      arch: aarch64_cortex-a53-openwrt-25.12
+      goarch: arm64
 
   # Install the x86_64 packages in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
   # Then test the LuCI page in a browser (Playwright).
+  # Each matrix job starts its own VM: the tests change the state of the
+  # VM (configuration, service, rpcd), thus they cannot share a VM. The
+  # browser tests are split in shards; in a shard, they run one after the
+  # other, as on a local run.
   vm:
-    needs: package
+    needs: package-x86
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [service, 1/3, 2/3, 3/3]
+    name: vm (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4
 
@@ -170,30 +113,59 @@ jobs:
           scripts/openwrt-vm.sh start
           scripts/openwrt-vm.sh install apk/*.apk
 
+      # The VM must finish its start (the WAN gets its address by DHCP)
+      # before the browser tests: the start changes the network. Before the
+      # shards, the service test ran first and gave this time.
+      - name: Wait until the VM is ready
+        if: matrix.part != 'service'
+        run: |
+          for i in $(seq 60); do
+            if scripts/openwrt-vm.sh ssh 'ifstatus wan | jsonfilter -e "@.up" | grep -qx true'; then
+              sleep 10
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the WAN of the VM is not up" >&2
+          exit 1
+
       - name: Test the service
+        if: matrix.part == 'service'
         run: scripts/openwrt-vm-test.sh
 
       - uses: actions/setup-node@v4
+        if: matrix.part != 'service'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
 
       - name: Install the browser for the LuCI tests
+        if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
         run: |
           npm ci
           npx playwright install --with-deps chromium
 
+      # --fully-parallel splits the shards by test, not by file. With one
+      # worker, the tests of a shard still run one after the other.
       - name: Test the LuCI app in a browser
+        if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
-        run: npx playwright test
+        run: npx playwright test --fully-parallel --shard=${{ matrix.part }}
+
+      - name: Get the state of the VM
+        if: failure() && matrix.part != 'service'
+        run: |
+          mkdir -p openwrt/luci-app-cake-autorate-go/tests/test-results
+          scripts/openwrt-vm.sh ssh 'uptime; tc qdisc show; ifstatus wan; logread' \
+            > openwrt/luci-app-cake-autorate-go/tests/test-results/vm-state.txt 2>&1 || true
 
       - name: Store the browser test results
-        if: failure()
+        if: failure() && matrix.part != 'service'
         uses: actions/upload-artifact@v4
         with:
-          name: luci-test-results
+          name: luci-test-results-${{ strategy.job-index }}
           path: openwrt/luci-app-cake-autorate-go/tests/test-results
           if-no-files-found: ignore
 
@@ -204,7 +176,7 @@ jobs:
   # Attach the packages to the release, only after all tests passed.
   release:
     if: github.event_name == 'release'
-    needs: [package, vm]
+    needs: [package-x86, package-arm, vm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
