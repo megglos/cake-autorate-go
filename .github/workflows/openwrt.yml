@@ -143,9 +143,18 @@ jobs:
   # Install the x86_64 packages in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
   # Then test the LuCI page in a browser (Playwright).
+  # Each matrix job starts its own VM: the tests change the state of the
+  # VM (configuration, service, rpcd), thus they cannot share a VM. The
+  # browser tests are split in shards; in a shard, they run one after the
+  # other, as on a local run.
   vm:
     needs: package
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [service, 1/3, 2/3, 3/3]
+    name: vm (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4
 
@@ -171,29 +180,35 @@ jobs:
           scripts/openwrt-vm.sh install apk/*.apk
 
       - name: Test the service
+        if: matrix.part == 'service'
         run: scripts/openwrt-vm-test.sh
 
       - uses: actions/setup-node@v4
+        if: matrix.part != 'service'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
 
       - name: Install the browser for the LuCI tests
+        if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
         run: |
           npm ci
           npx playwright install --with-deps chromium
 
+      # --fully-parallel splits the shards by test, not by file. With one
+      # worker, the tests of a shard still run one after the other.
       - name: Test the LuCI app in a browser
+        if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
-        run: npx playwright test
+        run: npx playwright test --fully-parallel --shard=${{ matrix.part }}
 
       - name: Store the browser test results
-        if: failure()
+        if: failure() && matrix.part != 'service'
         uses: actions/upload-artifact@v4
         with:
-          name: luci-test-results
+          name: luci-test-results-${{ strategy.job-index }}
           path: openwrt/luci-app-cake-autorate-go/tests/test-results
           if-no-files-found: ignore
 
