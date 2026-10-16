@@ -142,6 +142,12 @@ a=$(rpc pause '{"link":"wan"}')
 t=$(( $(date +%s) - t0 ))
 vm 'kill -CONT $(pidof cake-autorate-go)'
 case $a in *'No answer from the service: '*) [ "$t" -le 10 ] && ok "rpc timeout (${t}s)" || fail "rpc timeout took ${t}s" ;; *) fail "rpc timeout (answer: $a)" ;; esac
+# The history is longer than one read of the socket: the plugin must read
+# the complete line. Wait for some samples (one each second).
+wait_for "history has samples" "ubus call cake-autorate history | jsonfilter -e @.data | jsonfilter -e '@.links[0].samples[5]' >/dev/null"
+a=$(rpc history '{}' | wc -c)
+[ "$a" -gt 256 ] && ok "rpc history (${a} bytes)" || fail "rpc history (${a} bytes)"
+check "rpc history is valid JSON" "ubus call cake-autorate history | jsonfilter -e @.data | jsonfilter -e '@.fields[0]' | grep -qx t_ms"
 a=$(rpc qdisc '{"interface":"eth1"}')
 case $a in *'"kind": "cake"'*) ok "rpc qdisc with CAKE" ;; *) fail "rpc qdisc with CAKE (answer: $a)" ;; esac
 a=$(rpc qdisc '{"interface":"lo"}')
@@ -228,6 +234,7 @@ access ubus cake-autorate pause && ok "ACL: pause" || fail "ACL: pause"
 access ubus cake-autorate resume && ok "ACL: resume" || fail "ACL: resume"
 access file /etc/shadow read && fail "ACL: other files are not readable" || ok "ACL: other files are not readable"
 ACL_USER=cakeread access file /var/run/cake-autorate/status.json read && ok "ACL: read-only user reads the status file" || fail "ACL: read-only user reads the status file"
+ACL_USER=cakeread access ubus cake-autorate history && ok "ACL: read-only user reads the history" || fail "ACL: read-only user reads the history"
 ACL_USER=cakeread access ubus cake-autorate qdisc && ok "ACL: read-only user reads the qdisc" || fail "ACL: read-only user reads the qdisc"
 ACL_USER=cakeread access ubus cake-autorate pause && fail "ACL: read-only user cannot pause" || ok "ACL: read-only user cannot pause"
 vm 'uci delete rpcd.cakeacl && uci delete rpcd.cakeread && uci commit rpcd && /etc/init.d/rpcd reload'

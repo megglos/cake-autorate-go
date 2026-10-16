@@ -7,7 +7,7 @@
 				"/var/run/cake-autorate/status.json": [ "read" ]
 			},
 			"ubus": {
-				"cake-autorate": [ "qdisc" ],
+				"cake-autorate": [ "history", "qdisc" ],
 				"file": [ "read" ]
 			},
 			"uci": [ "cake-autorate" ]

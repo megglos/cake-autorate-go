@@ -689,6 +689,78 @@ test('the cursor of the other graph shows the same sample near the middle of two
 	expect(await delay.locator('.graph-time').textContent()).toBe(await rate.locator('.graph-time').textContent());
 });
 
+// Returns the number of samples of the first link in the history of the
+// program.
+function historyLength() {
+	const n = vm(`ubus call cake-autorate history 2>/dev/null | jsonfilter -e @.data | jsonfilter -e '@.links[0].samples[*][0]' | wc -l`);
+	return +n.trim();
+}
+
+test('the graphs show the history of the program at the load of the page', async ({ page }) => {
+	await expect.poll(historyLength, { timeout: 40000, intervals: [ 2000 ] }).toBeGreaterThanOrEqual(15);
+	await page.goto(PAGE);
+	// Before the first refresh, the graph has the samples of the history:
+	// one each second.
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	await expect(rate.locator('svg')).toBeVisible();
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p.length).toBeGreaterThanOrEqual(14);
+	// One line: no gap between the history and the first sample of the page.
+	expect(p.filter((e) => e[0] == 'M').length).toBe(1);
+	await expect(rate.getByText('Collecting data…')).toHaveCount(0);
+
+	// The cursor on the oldest sample shows its age and its time.
+	const box = await rate.locator('svg').boundingBox();
+	await page.mouse.move(box.x + p[0][1] / 600 * box.width, box.y + box.height / 2);
+	const tip = rate.locator('.graph-tip');
+	await expect(tip).toBeVisible();
+	const ago = +(await tip.textContent()).match(/(\d+) s ago/)[1];
+	expect(ago).toBeGreaterThanOrEqual(13);
+	await expect(tip.locator('.graph-time')).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d:\d{3}$/);
+});
+
+test('the graphs keep the time when the user was on another page', async ({ page }) => {
+	await page.goto(PAGE);
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	await page.goto('/cgi-bin/luci/admin/network/cake-autorate/config');
+	await page.waitForTimeout(12000);
+	await page.goto(PAGE);
+	await expect(page.locator('.cbi-section[data-link="wan"] [data-graph="rate"] svg')).toBeVisible();
+	// The samples of the 12 seconds on the configuration page, without a
+	// gap.
+	const p = await points(page, 'rate', 'dl-shaper');
+	expect(p.length).toBeGreaterThanOrEqual(12);
+	expect(p.filter((e) => e[0] == 'M').length).toBe(1);
+});
+
+test('without the history of the program, the graphs start empty', async ({ page }) => {
+	// An old program has no command "history".
+	await page.route('**/ubus/**', async (route) => {
+		const request = route.request().postDataJSON();
+		const requests = Array.isArray(request) ? request : [ request ];
+		if (!requests.some((q) => q && q.params && q.params[1] == 'cake-autorate' && q.params[2] == 'history'))
+			return route.continue();
+		let response;
+		try {
+			response = await route.fetch();
+		}
+		catch (e) {
+			return;
+		}
+		const body = await response.json();
+		for (const res of Array.isArray(body) ? body : [ body ]) {
+			const q = requests.find((r) => r && r.id === res.id);
+			if (q && q.params[2] == 'history')
+				res.result = [ 0, { error: 'unknown command "history"' } ];
+		}
+		await route.fulfill({ response, json: body });
+	});
+	await page.goto(PAGE);
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	await expect(rate.getByText('Collecting data…')).toBeVisible();
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+});
+
 test('a link name that is an Object property has graphs', async ({ page }) => {
 	vm('uci rename cake-autorate.wan=constructor && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
 	try {

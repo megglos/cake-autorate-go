@@ -3,8 +3,9 @@
 // rpcd plugin of luci-app-cake-autorate-go. It sends the commands "pause"
 // and "resume" to the control socket of cake-autorate-go. The ACL of the
 // app gives these methods only to the users that can write the
-// configuration. The method "qdisc" gives the root qdisc of an interface,
-// to find interfaces without CAKE.
+// configuration. The method "history" gives the samples of the last 15
+// minutes, for the graphs. The method "qdisc" gives the root qdisc of an
+// interface, to find interfaces without CAKE.
 
 'use strict';
 
@@ -23,8 +24,13 @@ const IFACE_RE = /^[A-Za-z0-9_.@:-]{1,15}$/;
 // The time in seconds that the program has to answer.
 const TIMEOUT = 5;
 
-// Sends one command line and returns the answer line, or an error text.
-function command(line) {
+// The maximum length of an answer in bytes. A ubus message must be smaller
+// than 1 MiB.
+const MAX_ANSWER = 960 * 1024;
+
+// Sends one command line and returns { answer } (the answer line without
+// the newline) or { error }.
+function exchange(line) {
 	// An explicit Unix socket: socket.connect() with a path that does not
 	// exist tries a DNS lookup of the path.
 	let s = socket.create(socket.AF_UNIX, socket.SOCK_STREAM);
@@ -43,17 +49,40 @@ function command(line) {
 		return { error: 'The service does not run: ' + err };
 	}
 
-	let answer = null;
-	if (s.send(line + '\n') != null)
-		answer = s.recv(256);
+	// Read until the newline: a long answer comes in more parts.
+	let answer = '', err = null, complete = false;
+	if (s.send(line + '\n') != null) {
+		while (length(answer) <= MAX_ANSWER) {
+			const part = s.recv(65536);
+			if (part == null || part == '')
+				break;
+			answer += part;
+			if (index(part, '\n') >= 0) {
+				complete = true;
+				break;
+			}
+		}
+	}
 	// Get the error before close: a close without error clears it.
-	const err = socket.error();
+	err = socket.error();
 	s.close();
 
+	if (length(answer) > MAX_ANSWER)
+		return { error: 'The answer of the service is too long' };
 	// An empty answer: the program closed the connection without an answer.
-	if (answer == null || answer == '')
+	if (answer == '')
 		return { error: 'No answer from the service' + (err ? ': ' + err : '') };
-	answer = trim(answer);
+	if (!complete)
+		return { error: 'Incomplete answer from the service' + (err ? ': ' + err : '') };
+	return { answer: trim(answer) };
+}
+
+// Sends one command line and returns { result: 'ok' } or { error }.
+function command(line) {
+	const res = exchange(line);
+	if (res.error)
+		return res;
+	const answer = res.answer;
 	if (answer == 'ok')
 		return { result: 'ok' };
 	return { error: replace(answer, /^error: /, '') };
@@ -67,6 +96,17 @@ function pause_resume(verb, args) {
 	if (!(dir in [ '', 'dl', 'ul' ]))
 		return { error: 'Invalid direction, use dl or ul' };
 	return command(verb + ' ' + link + (dir ? ' ' + dir : ''));
+}
+
+// Returns the history of the program as a JSON text in "data". The page
+// parses it: a JSON text is smaller in a ubus message than a table.
+function history() {
+	const res = exchange('history');
+	if (res.error)
+		return res;
+	if (substr(res.answer, 0, 7) == 'error: ')
+		return { error: substr(res.answer, 7) };
+	return { data: res.answer };
 }
 
 // Returns the kind of the root qdisc of the interface, for example "cake"
@@ -88,6 +128,11 @@ function qdisc(args) {
 
 return {
 	'cake-autorate': {
+		history: {
+			call: function() {
+				return history();
+			}
+		},
 		qdisc: {
 			args: { interface: 'interface' },
 			call: function(req) {
