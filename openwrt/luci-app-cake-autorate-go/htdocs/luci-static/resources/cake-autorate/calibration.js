@@ -45,6 +45,10 @@ const ECHO_REFLECTORS = [
 	'9.9.9.9', '149.112.112.112', '208.67.222.222', '208.67.220.220'
 ];
 
+// The values of the option "enabled" of a link that switch it on (as
+// convert.uc reads them; an empty value is on).
+const LINK_ON = [ '', '1', 'true', 'yes', 'on' ];
+
 // The key in the session storage for the data limit of the running
 // session and the data that the load used. Thus, a reload of the page
 // keeps the limit.
@@ -671,10 +675,12 @@ return baseclass.extend({
 		});
 	},
 
-	// Returns the UCI section of the link with the name name: the option
-	// "name", else the section name.
+	// Returns the UCI section of the enabled link with the name name: the
+	// option "name", else the section name. A disabled section can have
+	// the same name (the service skips it, convert.uc).
 	sectionOf: function(name) {
-		const s = uci.sections('cake-autorate', 'link').find((s) => (s.name || s['.name']) == name);
+		const s = uci.sections('cake-autorate', 'link').find((s) =>
+			LINK_ON.indexOf(s.enabled == null ? '1' : String(s.enabled)) >= 0 && (s.name || s['.name']) == name);
 		return s ? s['.name'] : null;
 	},
 

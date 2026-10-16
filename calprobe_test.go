@@ -285,3 +285,24 @@ func TestCalProbeEnough(t *testing.T) {
 		}
 	}
 }
+
+// With a long deadline, the lost requests have no timeout result at the
+// end of the probe. They count as lost: a reflector with replies to half
+// of its requests is not selected.
+func TestSummarizeProbeCountsLostRequests(t *testing.T) {
+	var results []PingResult
+	for i := range 30 {
+		results = append(results, PingResult{Reflector: "a", OWD: true,
+			UlOWD: time.Duration(10+i%3) * time.Millisecond, DlOWD: 10 * time.Millisecond})
+	}
+	probes := summarizeProbe([]string{"a", "b"}, map[string]int{"a": 60}, results)
+	if probes[0].Sent != 60 || probes[0].Replies != 30 || probes[0].OWD != 30 {
+		t.Errorf("a: %+v", probes[0])
+	}
+	if probes[1].Sent != 0 {
+		t.Errorf("b: %+v", probes[1])
+	}
+	if _, refl, _ := proposeFromProbe(append(probes, goodProbe("c", 1), goodProbe("d", 1), goodProbe("e", 1)), 2, 15*time.Second); slices.Contains(refl, "a") {
+		t.Errorf("a reflector with 50 %% loss is selected: %v", refl)
+	}
+}

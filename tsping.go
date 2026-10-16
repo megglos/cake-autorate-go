@@ -250,6 +250,8 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 				return nil
 			}
 			pm.logger.Debugf("timestamp ping %s: %v", reflector, err)
+		} else if pm.onSend != nil {
+			pm.onSend(reflector)
 		}
 
 		select {

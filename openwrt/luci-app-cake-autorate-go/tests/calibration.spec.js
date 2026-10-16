@@ -290,6 +290,36 @@ test('the result shows the proposal and applies the selected values', async ({ p
 	}
 });
 
+test('the result uses the enabled link, not a disabled section with the same name', async ({ page }) => {
+	// A disabled section before the link, with the same name: the service
+	// skips it.
+	vm(`uci set cake-autorate.old_wan=link
+		uci set cake-autorate.old_wan.name=wan
+		uci set cake-autorate.old_wan.enabled=0
+		uci set cake-autorate.old_wan.dl_max_rate_kbps=1000
+		uci reorder cake-autorate.old_wan=1
+		uci commit cake-autorate`);
+	const session = fakeSession([ { state: 'done', session: 's1', link: 'wan', load: '', result: RESULT } ]);
+	await routeSession(page, session);
+	await routeLoad(page);
+	try {
+		await page.goto(PAGE);
+		await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+		await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+		const table = page.locator('.modal table.cake-autorate-result');
+		await expect(table).toBeVisible({ timeout: 10000 });
+		await expect(table.locator('tr[data-key="dl_max_rate_kbps"]')).toContainText('80000');
+		for (const key of [ 'ping_method', 'reflectors' ])
+			await table.locator(`tr[data-key="${key}"] input[type=checkbox]`).uncheck();
+		await page.locator('.modal').getByRole('button', { name: 'Apply the selected values' }).click();
+		await expect.poll(() => vm('uci -q get cake-autorate.wan.dl_max_rate_kbps || true').trim(), { timeout: 30000 }).toBe('33000');
+		expect(vm('uci -q get cake-autorate.old_wan.dl_max_rate_kbps').trim()).toBe('1000');
+	}
+	finally {
+		resetConfig();
+	}
+});
+
 test('Apply refuses rates that are not in the order minimum, base, maximum', async ({ page }) => {
 	const result = JSON.parse(JSON.stringify(RESULT));
 	result.download.max_rate_kbps = 15000; // below the base rate of the link (20000)

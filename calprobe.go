@@ -84,15 +84,16 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 		deadline = time.Second
 	}
 	pm := NewPingerManager(link, cfg, logger)
+	// Count the sent requests: with a long deadline, a lost request has
+	// no timeout result before the end of the probe.
+	var sentMu sync.Mutex
+	sent := make(map[string]int, len(candidates))
+	pm.onSend = func(r string) {
+		sentMu.Lock()
+		sent[r]++
+		sentMu.Unlock()
+	}
 
-	type samples struct {
-		sent, replies int
-		ul, dl        []float64
-	}
-	data := make(map[string]*samples, len(candidates))
-	for _, r := range candidates {
-		data[r] = &samples{}
-	}
 	resultCh := make(chan PingResult, 64)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -112,10 +113,35 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 		wg.Wait()
 		close(resultCh)
 	}()
+	var results []PingResult
 	for res := range resultCh {
+		results = append(results, res)
+	}
+	if len(errs) == len(candidates) {
+		return nil, errs[0]
+	}
+	for _, err := range errs {
+		logger.Debugf("timestamp probe: %v", err)
+	}
+	// All pingers have stopped: no more calls of onSend.
+	return summarizeProbe(candidates, sent, results), nil
+}
+
+// summarizeProbe returns the result of each candidate from the number of
+// sent requests and the ping results. A request without a reply counts as
+// lost, also without a timeout result.
+func summarizeProbe(candidates []string, sent map[string]int, results []PingResult) []tsProbe {
+	type samples struct {
+		replies int
+		ul, dl  []float64
+	}
+	data := make(map[string]*samples, len(candidates))
+	for _, r := range candidates {
+		data[r] = &samples{}
+	}
+	for _, res := range results {
 		s := data[res.Reflector]
-		s.sent++
-		if res.Timeout {
+		if s == nil || res.Timeout {
 			continue
 		}
 		s.replies++
@@ -124,19 +150,13 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 			s.dl = append(s.dl, float64(res.DlOWD)/float64(time.Millisecond))
 		}
 	}
-	if len(errs) == len(candidates) {
-		return nil, errs[0]
-	}
-	for _, err := range errs {
-		logger.Debugf("timestamp probe: %v", err)
-	}
 	out := make([]tsProbe, 0, len(candidates))
 	for _, r := range candidates {
 		s := data[r]
-		out = append(out, tsProbe{Addr: r, Sent: s.sent, Replies: s.replies, OWD: len(s.ul),
+		out = append(out, tsProbe{Addr: r, Sent: max(sent[r], s.replies), Replies: s.replies, OWD: len(s.ul),
 			JitterP95Ms: pairedJitterP95(s.ul, s.dl)})
 	}
-	return out, nil
+	return out
 }
 
 // pairedJitterP95 returns the jitter of a reflector: for each reply, the
