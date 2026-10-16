@@ -38,6 +38,7 @@
 		"shaper_rate_min_adjust_up_load_high": "float",
 		"stall_detection_thr": "int",
 		"startup_wait_s": "float",
+		"status_history": "bool",
 		"sustained_idle_sleep_thr_s": "float"
 	},
 	"global_direction": {

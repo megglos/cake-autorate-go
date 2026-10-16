@@ -27,8 +27,10 @@ const DIRECTIONS = [
 	[ 'upload', 'ul', _('Upload') ]
 ];
 
-// The graphs keep the samples only in the browser, for this time. A reload
-// of the page starts with empty graphs.
+// The graphs keep the samples for this time. When the page opens, it gets
+// the samples of this time from the program (method "history"), if the
+// history is on (status_history). Then it adds a sample at each read of
+// the status file.
 const HISTORY_SECONDS = 900;
 
 // The periods that the graphs can show, in seconds.
@@ -65,6 +67,11 @@ const callPause = rpc.declare({
 	object: 'cake-autorate',
 	method: 'pause',
 	params: [ 'link', 'dir' ]
+});
+
+const callHistory = rpc.declare({
+	object: 'cake-autorate',
+	method: 'history'
 });
 
 const callQdisc = rpc.declare({
@@ -150,6 +157,57 @@ function sample(ls, t, at) {
 	return s;
 }
 
+// Returns the history of the program (the answer of the method "history")
+// as an object, or null if the answer is not valid. A program without the
+// command "history" (an old version) gives an error: then the graphs start
+// empty.
+function parseHistory(res) {
+	if (!res || typeof res.data != 'string')
+		return null;
+	try {
+		const h = JSON.parse(res.data);
+		return (h && h.schema == 1 && Array.isArray(h.fields) && Array.isArray(h.links)) ? h : null;
+	}
+	catch (e) {
+		return null;
+	}
+}
+
+// Returns a Map with the samples of each link from the history of the
+// program. "now" is the time of the browser (performance.now()) for the
+// status at the time "at" of the router. Thus, the difference of the two
+// clocks has no effect. Only the samples before "at" are used: the status
+// at "at" gives the next sample.
+function historySamples(h, now, at) {
+	const out = new Map();
+	if (at == null)
+		return out;
+	const col = {};
+	h.fields.forEach((f, i) => { col[f] = i; });
+	const v = (row, f) => +row[col[f]] || 0;
+	for (const lh of h.links) {
+		if (!lh || typeof lh.name != 'string' || !Array.isArray(lh.samples))
+			continue;
+		const samples = [];
+		for (const row of lh.samples) {
+			const t_ms = Array.isArray(row) ? +row[col.t_ms] : NaN;
+			if (!(t_ms < at) || at - t_ms > HISTORY_SECONDS * 1000)
+				continue;
+			const s = { t: now - (at - t_ms), at: t_ms };
+			for (const [ , dir ] of DIRECTIONS)
+				s[dir] = {
+					shaper: v(row, dir + '_shaper_kbps') / 1000,
+					achieved: v(row, dir + '_achieved_kbps') / 1000,
+					delta: v(row, dir + '_delta_ms'),
+					threshold: v(row, dir + '_threshold_ms')
+				};
+			samples.push(s);
+		}
+		out.set(lh.name, samples);
+	}
+	return out;
+}
+
 function readStatus() {
 	return Promise.all([
 		L.resolveDefault(fs.read(STATUS_FILE), null),
@@ -191,6 +249,8 @@ return view.extend({
 	// "history" is a Map: a link name can be the name of an Object
 	// property, for example "constructor".
 	history: new Map(),
+	// The answer of the method "history" at the load of the page, or null.
+	programHistory: null,
 	period: 300,
 	lastSampled: null,
 	lastData: null,
@@ -227,6 +287,12 @@ return view.extend({
 		const now = performance.now();
 		const at = parseTime(status.updated);
 		const history = new Map();
+		// The first status: start with the history of the program. Use it
+		// only once.
+		if (this.programHistory) {
+			this.history = historySamples(this.programHistory, now, at);
+			this.programHistory = null;
+		}
 		for (const ls of status.links) {
 			const samples = (this.history.get(ls.name) || []).filter((s) => now - s.t <= HISTORY_SECONDS * 1000);
 			samples.push(sample(ls, now, at));
@@ -495,8 +561,10 @@ return view.extend({
 		return Promise.all([
 			readStatus(),
 			L.resolveDefault(callAccess('ubus', 'cake-autorate', 'pause'), false),
-			L.resolveDefault(ui.menu.load(), null)
+			L.resolveDefault(ui.menu.load(), null),
+			L.resolveDefault(callHistory(), null)
 		]).then(L.bind(function(data) {
+			this.programHistory = parseHistory(data[3]);
 			const network = data[2] && data[2].children && data[2].children.admin &&
 				data[2].children.admin.children && data[2].children.admin.children.network;
 			this.hasSqm = !!(network && network.children && network.children.sqm);
@@ -722,7 +790,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. The graphs show only the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

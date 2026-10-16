@@ -23,7 +23,7 @@ function sec(t, name, index, opts) {
 let r = convert({
 	global: sec('global', 'global', 0, {
 		enabled: '1', ping_interface: 'wan', pinger_count: '', debug: '0',
-		dl_owd_delta_delay_thr_ms: '30',
+		dl_owd_delta_delay_thr_ms: '30', status_history: '1',
 	}),
 	wan: sec('link', 'wan', 1, {
 		name: 'wan', dl_interface: 'ifb4wan', dl_min_rate_kbps: '5000',
