@@ -350,8 +350,11 @@ test('the labels show the state, the rate control and a high delay in color', as
 	await mockStatus(page, (s) => {
 		const ls = s.links[0];
 		ls.state = state;
-		Object.assign(ls.download, { adjust: true, paused: false, delta_ms: 40, threshold_ms: 15 });
-		Object.assign(ls.upload, { adjust: true, paused: true, delta_ms: 2, threshold_ms: 15 });
+		Object.assign(ls.download, { adjust: true, paused: false, delta_ms: 40, threshold_ms: 15, high_delay: true });
+		// Above the configured threshold, but below the threshold of the
+		// program: at a low rate, the program adds the time to send one
+		// packet.
+		Object.assign(ls.upload, { adjust: true, paused: true, delta_ms: 20, threshold_ms: 15, high_delay: false });
 	});
 	await page.goto(PAGE);
 	const link = page.locator('.cbi-section[data-link="wan"]');
@@ -366,11 +369,11 @@ test('the labels show the state, the rate control and a high delay in color', as
 	await expect(ul.locator('[data-control]')).toHaveText('Paused');
 	await expect(ul.locator('[data-control]')).toHaveClass('label notice');
 
-	// Only a delay delta above the threshold is orange.
+	// Only a high delay is orange.
 	await expect(dl.locator('[data-over]')).toHaveText('40.0 ms');
 	await expect(dl.locator('[data-over]')).toHaveClass('label warning');
 	await expect(ul.locator('[data-over]')).toHaveCount(0);
-	await expect(ul).toContainText('2.0 ms / 15.0 ms');
+	await expect(ul).toContainText('20.0 ms / 15.0 ms');
 
 	// Stall is orange, Idle has no color.
 	state = 'STALL';
@@ -750,6 +753,20 @@ test('Overview shows the link and a pause', async ({ page }) => {
 		resetConfig();
 		await waitForStatus();
 	}
+});
+
+test('without "high_delay" (an older program), a delta above the threshold is orange', async ({ page }) => {
+	await mockStatus(page, (s) => {
+		const ls = s.links[0];
+		Object.assign(ls.download, { delta_ms: 40, threshold_ms: 15 });
+		Object.assign(ls.upload, { delta_ms: 2, threshold_ms: 15 });
+		delete ls.download.high_delay;
+		delete ls.upload.high_delay;
+	});
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	await expect(link.locator('tr[data-dir="dl"] [data-over]')).toHaveText('40.0 ms');
+	await expect(link.locator('tr[data-dir="ul"] [data-over]')).toHaveCount(0);
 });
 
 test('Overview shows the state with the same label as the status page', async ({ page }) => {

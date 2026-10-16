@@ -587,8 +587,12 @@ return view.extend({
 		];
 		for (const [ key, dir, title ] of DIRECTIONS) {
 			const st = ls[key] || {};
-			// A delta above the threshold is bufferbloat now: orange.
-			const over = +st.threshold_ms > 0 && +st.delta_ms > +st.threshold_ms;
+			// A high delay is bufferbloat now: orange. The program adds the
+			// time to send one packet at the shaper rate to the threshold,
+			// thus use its "high_delay". An older program does not have it.
+			const over = (typeof st.high_delay == 'boolean')
+				? st.high_delay
+				: (+st.threshold_ms > 0 && +st.delta_ms > +st.threshold_ms);
 			const delta = [
 				over ? E('span', { 'class': 'label warning', 'data-over': '' }, text(ms(st.delta_ms))) : text(ms(st.delta_ms)),
 				text(' / ' + ms(st.threshold_ms))
