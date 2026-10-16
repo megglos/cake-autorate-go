@@ -210,7 +210,7 @@ func TestCalibrationProbeTooFewRequests(t *testing.T) {
 	if r == nil || r.PingMethod != PingMethodTimestamp || len(r.Reflectors) != 4 {
 		t.Fatalf("result: %+v", r)
 	}
-	if !strings.Contains(strings.Join(r.Notes, "\n"), "probe did not run: fewer than 20 requests") {
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "probe did not run: fewer than 20 requests to a reflector") {
 		t.Errorf("notes: %v", r.Notes)
 	}
 }
@@ -259,5 +259,29 @@ func TestPairedJitterP95(t *testing.T) {
 	}
 	if got := pairedJitterP95(nil, nil); got != 0 {
 		t.Errorf("jitter without samples: %v", got)
+	}
+}
+
+// Each reflector with requests needs calMinIdleSamples of them: if some
+// pingers started late (slow DNS), the probe has no result. A reflector
+// without requests (no address) does not count.
+func TestCalProbeEnough(t *testing.T) {
+	for _, tc := range []struct {
+		sent []int
+		want bool
+	}{
+		{[]int{40, 40}, true},
+		{[]int{40, 0}, true},
+		{[]int{40, 15, 15}, false},
+		{[]int{15}, false},
+		{[]int{0, 0}, false},
+	} {
+		p := &calProbe{}
+		for i, n := range tc.sent {
+			p.Reflectors = append(p.Reflectors, tsProbe{Addr: fmt.Sprint(i), Sent: n})
+		}
+		if got := p.enough(); got != tc.want {
+			t.Errorf("sent %v: enough %v, want %v", tc.sent, got, tc.want)
+		}
 	}
 }

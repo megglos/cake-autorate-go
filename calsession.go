@@ -130,7 +130,7 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config, 
 		probed = map[string]bool{}
 	}
 	if probe != nil && probe.Err == nil && !probe.enough() {
-		probe.Err = fmt.Errorf("fewer than %d requests to each reflector in %v", calMinIdleSamples, probe.Duration.Round(time.Second))
+		probe.Err = fmt.Errorf("fewer than %d requests to a reflector in %v", calMinIdleSamples, probe.Duration.Round(time.Second))
 	}
 	switch {
 	case probe != nil && probe.Err == nil:

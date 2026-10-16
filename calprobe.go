@@ -156,11 +156,23 @@ func pairedJitterP95(ul, dl []float64) float64 {
 	return newCalDist(d).P95
 }
 
-// enough reports whether the probe sent sufficient requests to a reflector
-// for a result (calMinIdleSamples). A probe that stopped early has no
-// result.
+// enough reports whether the probe sent sufficient requests to each
+// reflector for a result (calMinIdleSamples). A reflector that got no
+// request (its address did not resolve) does not count. A probe that
+// stopped early, or that started some pingers late (slow DNS), has no
+// result: then a reflector can fail only for too few requests.
 func (p *calProbe) enough() bool {
-	return slices.ContainsFunc(p.Reflectors, func(r tsProbe) bool { return r.Sent >= calMinIdleSamples })
+	n := 0
+	for _, r := range p.Reflectors {
+		if r.Sent == 0 {
+			continue
+		}
+		if r.Sent < calMinIdleSamples {
+			return false
+		}
+		n++
+	}
+	return n > 0
 }
 
 // proposeFromProbe returns the ping method and the reflectors from the
