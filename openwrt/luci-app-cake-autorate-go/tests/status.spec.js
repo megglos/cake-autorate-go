@@ -473,9 +473,16 @@ test('the cursor shows the values of a sample and stays after a refresh', async 
 		const delayTip = delay.locator('.graph-tip');
 		await expect(delayTip).toBeVisible();
 		await expect(delayTip).toContainText('Upload threshold');
-		expect(await sampleTime(delayTip)).toBe(await sampleTime(tip));
-		const lineX = (g) => g.locator('svg line[visibility="visible"]').getAttribute('x1');
-		expect(await lineX(delay)).toBe(await lineX(rate));
+		// Read both graphs in one evaluation, thus from the same render: the
+		// pointer is on the newest sample, and a refresh moves both cursors.
+		const both = await page.evaluate(() => [ 'rate', 'delay' ].map((g) => {
+			const graph = document.querySelector(`.cbi-section[data-link="wan"] [data-graph="${g}"]`);
+			return {
+				time: graph.querySelector('.graph-time').textContent,
+				x: graph.querySelector('svg line[visibility="visible"]').getAttribute('x1')
+			};
+		}));
+		expect(both[1]).toEqual(both[0]);
 		await expect(rate.locator('svg line[visibility="visible"]')).toHaveAttribute('stroke-dasharray', 'none');
 		await expect(delay.locator('svg line[visibility="visible"]')).toHaveAttribute('stroke-dasharray', '3 3');
 		await expect(tip).toHaveAttribute('aria-live', 'polite');
