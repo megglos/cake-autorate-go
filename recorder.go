@@ -50,6 +50,7 @@ const (
 	recPause          = "pause"
 	recCalibrating    = "calibrating"
 	recFixedRate      = "fixed_rate"
+	recUnshaped       = "unshaped"
 )
 
 type recHeaderEvent struct {
@@ -111,6 +112,14 @@ type recPauseEvent struct {
 
 // recCalibratingEvent is the start or the end of the calibration mode.
 type recCalibratingEvent struct {
+	T    int64  `json:"t"`
+	Type string `json:"type"`
+	Link string `json:"link"`
+	On   bool   `json:"on"`
+}
+
+// recUnshapedEvent is the start or the end of the unshaped mode.
+type recUnshapedEvent struct {
 	T    int64  `json:"t"`
 	Type string `json:"type"`
 	Link string `json:"link"`
@@ -392,6 +401,15 @@ func (r *Recorder) Calibrating(link string, on bool, ts time.Time) {
 	r.write(recCalibratingEvent{T: r.since(ts), Type: recCalibrating, Link: link, On: on})
 }
 
+// Unshaped records the start or the end of the unshaped mode. It is an
+// input of Core.
+func (r *Recorder) Unshaped(link string, on bool, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recUnshapedEvent{T: r.since(ts), Type: recUnshaped, Link: link, On: on})
+}
+
 // FixedRate records a fixed shaper rate of a calibration block. It is an
 // input of Core.
 func (r *Recorder) FixedRate(link string, dir Direction, rateKbps int, ts time.Time) {
@@ -456,6 +474,12 @@ func (rc *RecordingCore) SetCalRecorder(rec *Recorder, ts time.Time) {
 func (rc *RecordingCore) SetCalibrating(on bool, ts time.Time) {
 	rc.record(func(r *Recorder) { r.Calibrating(rc.name, on, ts) })
 	rc.process(ts, func() { rc.core.SetCalibrating(on, ts) })
+}
+
+// SetUnshaped starts or ends the unshaped mode of the Core.
+func (rc *RecordingCore) SetUnshaped(on bool, ts time.Time) {
+	rc.record(func(r *Recorder) { r.Unshaped(rc.name, on, ts) })
+	rc.process(ts, func() { rc.core.SetUnshaped(on, ts) })
 }
 
 // SetFixedRate sets a fixed shaper rate and pauses the rate control of a

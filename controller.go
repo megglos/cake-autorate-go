@@ -36,10 +36,8 @@ type LinkController struct {
 	// calPaused are the pause states of the directions before a
 	// calibration session. Only the goroutine of Run uses it.
 	calPaused map[Direction]bool
-	// unshaped is true while a user turned the shaping off (command
-	// "unshape"). unshapePaused are the pause states of the directions
-	// before. Only the goroutine of Run uses them.
-	unshaped      bool
+	// unshapePaused are the pause states of the directions before the
+	// command "unshape". Only the goroutine of Run uses it.
 	unshapePaused map[Direction]bool
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
@@ -155,7 +153,6 @@ func (c *LinkController) Run(ctx context.Context) error {
 // goroutine of Run calls it, thus it can read the Core.
 func (c *LinkController) publishStatus() {
 	st := c.core.Core().Snapshot()
-	st.Unshaped = c.unshaped
 	baselines := c.core.Core().ReflectorBaselinesUs()
 	for _, r := range c.pingerMgr.Snapshot() {
 		st.Reflectors = append(st.Reflectors, ReflectorDelayStatus{ReflectorStatus: r, BaselineMs: roundMs(baselines[r.Address])})
@@ -218,7 +215,7 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 		if c.core.Core().Calibrating() {
 			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
 		}
-		if c.unshaped {
+		if c.core.Core().Unshaped() {
 			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
 		}
 		var err error
@@ -248,7 +245,7 @@ func (c *LinkController) SetUnshaped(on bool) error {
 		if c.core.Core().Calibrating() {
 			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
 		}
-		if on == c.unshaped {
+		if on == c.core.Core().Unshaped() {
 			return nil
 		}
 		if !on {
@@ -259,10 +256,11 @@ func (c *LinkController) SetUnshaped(on bool) error {
 		}
 		core := c.core.Core()
 		c.unshapePaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
-		// Set the state before the rates: after a failed rate change, the
-		// user can turn the shaping on again.
-		c.unshaped = true
+		// Set the mode before the rates: after a failed rate change, the
+		// user can turn the shaping on again. The mode also wakes an idle
+		// link: the delay measurement continues without load.
 		c.rateErr = nil
+		c.core.SetUnshaped(true, now)
 		for _, dir := range Directions() {
 			if c.link.DirConfig(dir).Adjust {
 				c.core.SetFixedRate(dir, unshapedKbps, now)
@@ -276,7 +274,7 @@ func (c *LinkController) SetUnshaped(on bool) error {
 // shapeAgain ends the unshaped state, if set: each direction gets its
 // pause state from before. Only the goroutine of Run calls it.
 func (c *LinkController) shapeAgain(now time.Time) error {
-	if !c.unshaped {
+	if !c.core.Core().Unshaped() {
 		return nil
 	}
 	c.rateErr = nil
@@ -288,7 +286,7 @@ func (c *LinkController) shapeAgain(now time.Time) error {
 	if c.rateErr != nil {
 		return c.rateErr
 	}
-	c.unshaped = false
+	c.core.SetUnshaped(false, now)
 	c.logger.Infof("[%s] shaping on", c.name)
 	return nil
 }
@@ -388,7 +386,7 @@ func (c *LinkController) CalStart() error {
 		if !c.link.Download.Adjust || !c.link.Upload.Adjust {
 			return fmt.Errorf("link %q: the calibration needs the rate control (adjust) in both directions", c.name)
 		}
-		if c.unshaped {
+		if c.core.Core().Unshaped() {
 			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
 		}
 		core := c.core.Core()

@@ -1222,3 +1222,33 @@ func TestCalibratingLeavesStall(t *testing.T) {
 		t.Errorf("state %s, pinger starts %d, shaper invalidations %d", c.state, act.starts-starts, act.invalidates-invalidates)
 	}
 }
+
+// The unshaped mode keeps the delay measurement: it leaves IDLE at once,
+// and a link with low traffic does not go to IDLE. After the mode, the
+// normal idle detection applies again.
+func TestUnshapedPreventsIdle(t *testing.T) {
+	c, act := newTestCore(t)
+	c.cfg.EnableSleepFunction = true
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.cfg.SustainedIdleSleepThrS = 0.001
+	c.state = StateIdle
+	starts := act.starts
+	now := time.Now()
+	c.SetUnshaped(true, now)
+	if c.state != StateRunning || act.starts != starts+1 || !c.Unshaped() || !c.Snapshot().Unshaped {
+		t.Fatalf("state %s, pinger starts %d, status %+v", c.state, act.starts-starts, c.Snapshot())
+	}
+	for i := range 3 {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateRunning {
+		t.Errorf("unshaped with low traffic: got %s, want RUNNING", c.state)
+	}
+	c.SetUnshaped(false, now.Add(3*time.Second))
+	for i := 4; i < 6; i++ {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateIdle || c.Snapshot().Unshaped {
+		t.Errorf("after the unshaped mode: got %s, status %+v", c.state, c.Snapshot())
+	}
+}

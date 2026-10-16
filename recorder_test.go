@@ -248,6 +248,8 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			core.SetCalibrating(ev.On, ts)
 		case recFixedRate:
 			core.SetFixedRate(ev.Dir, ev.RateKbps)
+		case recUnshaped:
+			core.SetUnshaped(ev.On, ts)
 		case recShaper:
 			recorded = append(recorded, recDecision{ev.T, "shaper " + string(ev.Dir), fmt.Sprint(ev.RateKbps)})
 		case recState:
@@ -498,5 +500,53 @@ func TestRecording_ReplayCalibration(t *testing.T) {
 	}
 	if !fixed {
 		t.Errorf("no fixed rate in the recording: %v", recorded)
+	}
+}
+
+// A recording with the unshaped mode gives the same decisions in a replay:
+// the wake-up from IDLE, no IDLE with low traffic, the fixed rates and
+// the shaping again.
+func TestRecording_ReplayUnshaped(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Adjust = true
+	cfg.EnableSleepFunction = true
+	cfg.SustainedIdleSleepThrS = 1
+	path := filepath.Join(t.TempDir(), "rec.jsonl")
+	start := time.Now()
+	rec, err := newRecorderAt(path, 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, rec, testLogger(t))
+	rc.Start(start)
+	at := func(s int) time.Time { return start.Add(time.Duration(s) * time.Second) }
+	for s := 1; s <= 3; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	if rc.Core().State() != StateIdle {
+		t.Fatalf("state %s, want IDLE", rc.Core().State())
+	}
+	rc.SetUnshaped(true, at(4))
+	rc.SetFixedRate(DL, unshapedKbps, at(4))
+	rc.SetFixedRate(UL, unshapedKbps, at(4))
+	for s := 5; s <= 8; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	if rc.Core().State() != StateRunning {
+		t.Fatalf("unshaped: state %s, want RUNNING", rc.Core().State())
+	}
+	rc.SetPaused(DL, false, at(9))
+	rc.SetPaused(UL, false, at(9))
+	rc.SetUnshaped(false, at(9))
+	for s := 10; s <= 13; s++ {
+		rc.HandleRate(RateStats{Timestamp: at(s)})
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorded, replayed := replayRecording(t, path)
+	if len(recorded) == 0 || !slices.Equal(recorded, replayed) {
+		t.Errorf("recorded:\n%v\nreplay:\n%v", recorded, replayed)
 	}
 }

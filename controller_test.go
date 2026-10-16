@@ -322,7 +322,7 @@ func TestUnshapedRefusesOtherCommands(t *testing.T) {
 	if err := c.SetUnshaped(true); err == nil || !strings.Contains(err.Error(), "calibration runs") {
 		t.Errorf("unshape during a calibration: %v", err)
 	}
-	if c.unshaped {
+	if c.core.Core().Unshaped() {
 		t.Error("the link must stay shaped")
 	}
 }
@@ -338,7 +338,7 @@ func TestSetUnshapedOnlyAdjustedDirections(t *testing.T) {
 		t.Errorf("rates: %v", act.rates)
 	}
 	c.link.Download.Adjust = false
-	c.unshaped = false
+	c.core.SetUnshaped(false, time.Now())
 	if err := c.SetUnshaped(true); err == nil {
 		t.Error("a link without rate control cannot be unshaped")
 	}
@@ -351,7 +351,20 @@ func TestStopShapesAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.stop(time.Now())
-	if c.unshaped || lastRate(act, DL) != c.link.Download.BaseRateKbps || lastRate(act, UL) != c.link.Upload.BaseRateKbps {
-		t.Errorf("after the stop: unshaped %v, rates %v", c.unshaped, act.rates)
+	if c.core.Core().Unshaped() || lastRate(act, DL) != c.link.Download.BaseRateKbps || lastRate(act, UL) != c.link.Upload.BaseRateKbps {
+		t.Errorf("after the stop: unshaped %v, rates %v", c.core.Core().Unshaped(), act.rates)
+	}
+}
+
+// "unshape" on an idle link starts the pings at once.
+func TestSetUnshapedWakesIdleLink(t *testing.T) {
+	c, act := testUnshapeController(t)
+	c.core.Core().state = StateIdle
+	starts := act.starts
+	if err := c.SetUnshaped(true); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.core.Core().State(); st != StateRunning || act.starts != starts+1 {
+		t.Errorf("state %s, pinger starts %d", st, act.starts-starts)
 	}
 }

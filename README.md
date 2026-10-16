@@ -567,7 +567,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
 
-Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`). A recording contains the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
+Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue: an idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`). A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

@@ -89,7 +89,7 @@ type StatusFile struct {
 // Snapshot returns the status of a link. Call it from the goroutine that
 // uses the Core. It does not change the Core.
 func (c *Core) Snapshot() LinkStatus {
-	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating}
+	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating, Unshaped: c.unshaped}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
 		out := DirStatus{
