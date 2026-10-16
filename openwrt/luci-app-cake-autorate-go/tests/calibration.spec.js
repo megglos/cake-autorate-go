@@ -41,8 +41,8 @@ function fakeSession(steps, started) {
 }
 
 // A running status in a block and phase.
-function running(block, mode, policy, phase, load) {
-	return { state: 'running', link: 'wan', block: block, blocks: 5, mode: mode, policy: policy, phase: phase, load: load,
+function running(block, mode, policy, phase, load, session) {
+	return { state: 'running', session: session || 's1', link: 'wan', block: block, blocks: 5, mode: mode, policy: policy, phase: phase, load: load,
 		phase_left_s: 10, left_s: 100, load_s: 40 };
 }
 
@@ -342,6 +342,39 @@ test('a session that this page did not start makes no load before the user sets 
 	await modal.getByRole('button', { name: 'Continue the load' }).click();
 	await expect(modal.locator('.cake-autorate-used')).toContainText('of 5.0 GB', { timeout: 10000 });
 	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(0);
+});
+
+test('the saved data limit of an older session does not start the load of a new session', async ({ page }) => {
+	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul', 'A') ]);
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal #cake-autorate-calibrate-limit').fill('100000');
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
+	// Session A ends, and another client starts session B of the link.
+	session.steps = [ running(1, 'dl', 'unshaped', 'load', 'dl', 'B') ];
+	await page.reload();
+	const modal = page.locator('.modal');
+	await expect(modal).toContainText('this page did not start it', { timeout: 10000 });
+	const down = load.down;
+	await page.waitForTimeout(2000);
+	expect(load.down).toBe(down);
+});
+
+test('the Stop button keeps the keyboard focus during the refreshes', async ({ page }) => {
+	const session = fakeSession([ running(1, 'dl', 'unshaped', 'idle', '') ]);
+	await routeSession(page, session);
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	const stop = page.locator('.modal').getByRole('button', { name: 'Stop' });
+	await stop.focus();
+	const polls = session.polls;
+	await expect.poll(() => session.polls, { timeout: 10000 }).toBeGreaterThan(polls + 2);
+	await expect(stop).toBeFocused();
 });
 
 test('a failed stop ends the load and the status requests', async ({ page }) => {

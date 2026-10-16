@@ -30,12 +30,15 @@ func TestProposeFromProbe(t *testing.T) {
 		goodProbe("noisy", 20), // more than 2 x the median jitter
 		goodProbe("d", 4),
 		{Addr: "silent", Sent: 40},
+		// One third of the replies have standard times: the others give
+		// RTT/2 in the program.
+		{Addr: "mixed", Sent: 60, Replies: 60, OWD: 20, JitterP95Ms: 1},
 	}
 	method, refl, why := proposeFromProbe(probes, 2, 14*time.Second)
 	if method != PingMethodTimestamp || !slices.Equal(refl, []string{"b", "c", "a", "d"}) {
 		t.Errorf("method %q, reflectors %v", method, refl)
 	}
-	if !strings.Contains(why, "probe of 14 s: 4 of 9 reflectors") {
+	if !strings.Contains(why, "probe of 14 s: 4 of 10 reflectors") {
 		t.Errorf("why: %s", why)
 	}
 
@@ -238,5 +241,23 @@ func TestProbeStopsDuringDNSLookup(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the probe waits for the DNS lookups after the end of the context")
+	}
+}
+
+// The jitter is the p95 of the larger direction of each reply. Spikes in
+// different replies of the two directions count: 4 of 60 replies with a
+// spike are more than 5 %.
+func TestPairedJitterP95(t *testing.T) {
+	ul, dl := make([]float64, 60), make([]float64, 60)
+	for i := range ul {
+		ul[i], dl[i] = 10, 20 // the clock offset is in the minimum
+	}
+	ul[5], ul[15] = 110, 110
+	dl[25], dl[35] = 120, 120
+	if got := pairedJitterP95(ul, dl); got != 100 {
+		t.Errorf("jitter %v ms, want 100", got)
+	}
+	if got := pairedJitterP95(nil, nil); got != 0 {
+		t.Errorf("jitter without samples: %v", got)
 	}
 }

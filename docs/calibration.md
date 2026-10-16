@@ -211,6 +211,7 @@ The program that makes the load reads `calibrate status` each second:
 |---|---|
 | `state` | `none` (no session since the start of the daemon), `running`, `done`, `failed` or `stopped` |
 | `block`, `blocks`, `mode`, `policy` | the current block |
+| `session` | the identifier of the session: each start gives a new value |
 | `phase` | `idle`, `load` or `tail` |
 | `load` | the load that the program must make now: `dl`, `ul`, `both`, or empty (no load) |
 | `phase_left_s`, `left_s` | the time left in the phase and in the session |

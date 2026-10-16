@@ -320,25 +320,31 @@ return baseclass.extend({
 		return callStart(link, loadS).then((res) => {
 			if (!res || res.error)
 				throw new Error((res && res.error) || _('No answer from the service'));
-			this.saveLimit({ link: link, limit: limit, dl: 0, ul: 0 });
-			this.attach(link);
+			// The first status gives the identifier of the session.
+			this.saveLimit({ link: link, session: null, limit: limit, dl: 0, ul: 0 });
+			this.attach(link, null, true);
 		}).catch((e) => {
 			ui.addNotification(null, E('p', {}, text(_('The calibration did not start: %s').format(e.message || e))), 'danger');
 		});
 	},
 
 	// Shows the progress dialog of the running session of the link and
-	// starts the status requests.
-	attach: function(link) {
+	// starts the status requests. session is the identifier of the
+	// session; own is true if this page started it.
+	attach: function(link, session, own) {
 		this.link = link;
+		this.session = session;
 		this.lastBytes = null;
 		this.limitReached = false;
+		this.runningView = null;
 		// A new load for each session. After a reload, the load continues
-		// with the limit and the used data of the session.
+		// with the limit and the used data of the same session (not of an
+		// older session of the link).
 		const saved = this.readLimit();
 		this.load.stop();
 		this.load = new Load();
-		if (saved && saved.link == link) {
+		const same = saved && saved.link == link && (own || (saved.session && saved.session == session));
+		if (same) {
 			this.load.limit = saved.limit;
 			this.load.bytes = { dl: saved.dl, ul: saved.ul };
 		}
@@ -351,7 +357,7 @@ return baseclass.extend({
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
 		// Without the data limit of this session (another page or browser
 		// started it), the load waits for the decision of the user.
-		if (!(saved && saved.link == link))
+		if (!same)
 			return this.renderTakeover(link);
 		this.active = true;
 		window.addEventListener('beforeunload', this.onUnload);
@@ -387,7 +393,7 @@ return baseclass.extend({
 						if (!(mb >= 1))
 							return;
 						this.load.limit = mb * 1e6;
-						this.saveLimit({ link: link, limit: this.load.limit, dl: 0, ul: 0 });
+						this.saveLimit({ link: link, session: this.session, limit: this.load.limit, dl: 0, ul: 0 });
 						this.active = true;
 						window.addEventListener('beforeunload', this.onUnload);
 						return this.poll();
@@ -402,7 +408,7 @@ return baseclass.extend({
 		return L.resolveDefault(callStatus(), null).then((res) => {
 			const st = parseStatus(res);
 			if (st.state == 'running')
-				this.attach(st.link);
+				this.attach(st.link, st.session, false);
 		});
 	},
 
@@ -413,13 +419,24 @@ return baseclass.extend({
 			if (!this.active)
 				return;
 			const st = parseStatus(res);
+			if (this.session == null && st.session)
+				this.session = st.session;
+			// Another session runs now (for example, the service stopped
+			// this one, and another client started a new one).
+			if (st.session && st.session != this.session) {
+				this.finish();
+				this.node.replaceChildren(
+					E('p', { 'class': 'alert-message warning' }, text(_('The calibration of this page ended. Another calibration runs now.'))),
+					E('div', { 'class': 'right' }, E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Close'))));
+				return;
+			}
 			if (st.state == 'running') {
 				// After a stop, an answer cannot start the load again.
 				if (!this.stopping)
 					this.load.set(st.load);
 				this.measure();
 				if (this.load.limit < Infinity)
-					this.saveLimit({ link: this.link, limit: this.load.limit, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
+					this.saveLimit({ link: this.link, session: this.session, limit: this.load.limit, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
 				this.renderRunning(st);
 				if (!this.stopping)
 					this.timer = setTimeout(() => this.poll(), POLL_MS);
@@ -465,7 +482,8 @@ return baseclass.extend({
 	readLimit: function() {
 		try {
 			const v = JSON.parse(sessionStorage.getItem(LIMIT_KEY));
-			return (v && typeof v.link == 'string' && v.limit > 0 && v.dl >= 0 && v.ul >= 0) ? v : null;
+			return (v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
+				v.limit > 0 && v.dl >= 0 && v.ul >= 0) ? v : null;
 		}
 		catch (e) {
 			return null;
@@ -528,11 +546,19 @@ return baseclass.extend({
 		if (this.load.errors > 0)
 			nodes.push(E('p', { 'class': 'alert-message warning' },
 				text(_('The load had %d errors (last: %s). The result can be too low.').format(this.load.errors, this.load.lastError))));
-		nodes.push(E('div', { 'class': 'right' }, E('button', {
-			'class': 'cbi-button cbi-button-negative',
-			'click': ui.createHandlerFn(this, 'stop')
-		}, _('Stop'))));
-		this.node.replaceChildren(...nodes);
+		// The Stop button stays in the page: then it keeps the keyboard
+		// focus during the refreshes.
+		if (!this.runningView || !this.node.contains(this.runningView.info)) {
+			this.runningView = {
+				info: E('div', { 'class': 'cake-autorate-progress' }),
+				actions: E('div', { 'class': 'right' }, E('button', {
+					'class': 'cbi-button cbi-button-negative',
+					'click': ui.createHandlerFn(this, 'stop')
+				}, _('Stop')))
+			};
+			this.node.replaceChildren(this.runningView.info, this.runningView.actions);
+		}
+		this.runningView.info.replaceChildren(...nodes);
 	},
 
 	renderEnd: function(st) {

@@ -720,3 +720,27 @@ func TestCalibrationReleasesContext(t *testing.T) {
 		t.Error("the context of the session is not canceled after its end")
 	}
 }
+
+// Each session has its own identifier in the status, also in its final
+// state.
+func TestCalibrationSessionIdentifier(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, _ := newTestCalibrator(t, times)
+	var ids []string
+	for range 2 {
+		target.blocks = 0 // the fake target has the data of one session
+		if err := k.Start("wan", times); err != nil {
+			t.Fatal(err)
+		}
+		running := k.Status().Session
+		k.Wait()
+		st := k.Status()
+		if running == "" || st.Session != running {
+			t.Fatalf("session %q, at the end %q", running, st.Session)
+		}
+		ids = append(ids, running)
+	}
+	if ids[0] == ids[1] {
+		t.Errorf("two sessions with the identifier %q", ids[0])
+	}
+}

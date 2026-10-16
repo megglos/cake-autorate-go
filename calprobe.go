@@ -134,21 +134,24 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 	for _, r := range candidates {
 		s := data[r]
 		out = append(out, tsProbe{Addr: r, Sent: s.sent, Replies: s.replies, OWD: len(s.ul),
-			JitterP95Ms: math.Max(aboveMinP95(s.ul), aboveMinP95(s.dl))})
+			JitterP95Ms: pairedJitterP95(s.ul, s.dl)})
 	}
 	return out, nil
 }
 
-// aboveMinP95 returns the p95 of the values above their minimum. The
-// minimum removes the clock offset of the reflector.
-func aboveMinP95(v []float64) float64 {
-	if len(v) == 0 {
+// pairedJitterP95 returns the jitter of a reflector: for each reply, the
+// larger delay above the minimum of the two directions (the minimum
+// removes the clock offset), then the p95 of these values. ul[i] and dl[i]
+// are of the same reply. This is the rule of the analysis of the
+// recordings.
+func pairedJitterP95(ul, dl []float64) float64 {
+	if len(ul) == 0 || len(ul) != len(dl) {
 		return 0
 	}
-	m := slices.Min(v)
-	d := make([]float64, len(v))
-	for i, x := range v {
-		d[i] = x - m
+	minUl, minDl := slices.Min(ul), slices.Min(dl)
+	d := make([]float64, len(ul))
+	for i := range ul {
+		d[i] = math.Max(ul[i]-minUl, dl[i]-minDl)
 	}
 	return newCalDist(d).P95
 }
@@ -171,7 +174,9 @@ func (p *calProbe) enough() bool {
 func proposeFromProbe(probes []tsProbe, pingerCount int, dur time.Duration) (method string, reflectors []string, why string) {
 	var good []tsProbe
 	for _, p := range probes {
-		if p.OWD >= calMinIdleSamples && p.Sent > 0 && float64(p.Replies) >= calMinReplyRatio*float64(p.Sent) {
+		// Only replies with one-way delays count: the program uses RTT/2
+		// for the others.
+		if p.OWD >= calMinIdleSamples && p.Sent > 0 && float64(p.OWD) >= calMinReplyRatio*float64(p.Sent) {
 			good = append(good, p)
 		}
 	}

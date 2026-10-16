@@ -217,12 +217,15 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config, 
 type CalStatus struct {
 	// State is none (no session since the start), running, done, failed
 	// or stopped.
-	State  string `json:"state"`
-	Link   string `json:"link,omitempty"`
-	Block  int    `json:"block,omitempty"`
-	Blocks int    `json:"blocks,omitempty"`
-	Mode   string `json:"mode,omitempty"`
-	Policy string `json:"policy,omitempty"`
+	State string `json:"state"`
+	// Session identifies the session: each start gives a new value. A
+	// program that makes the load can check that it is the same session.
+	Session string `json:"session,omitempty"`
+	Link    string `json:"link,omitempty"`
+	Block   int    `json:"block,omitempty"`
+	Blocks  int    `json:"blocks,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Policy  string `json:"policy,omitempty"`
 	// Phase is idle, load or tail.
 	Phase string `json:"phase,omitempty"`
 	// Load is the load that the other program must make now: dl, ul,
@@ -267,6 +270,9 @@ type Calibrator struct {
 	done     chan struct{}
 	// sessionCtx is the context of the last session.
 	sessionCtx context.Context
+	// sessions is the number of started sessions (for the session
+	// identifier).
+	sessions int
 }
 
 // NewCalibrator creates a calibrator. The sessions end when ctx ends. dir
@@ -304,7 +310,9 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	ctx, cancel := context.WithCancel(k.ctx)
 	now := k.now()
 	block := times.Idle + times.Load + times.Tail
-	k.status = CalStatus{State: "running", Link: link, Blocks: len(calSessionBlocks), LoadS: times.Load.Seconds()}
+	k.sessions++
+	k.status = CalStatus{State: "running", Session: fmt.Sprintf("%d-%d", now.Unix(), k.sessions), Link: link,
+		Blocks: len(calSessionBlocks), LoadS: times.Load.Seconds()}
 	k.end = now.Add(time.Duration(len(calSessionBlocks)) * block)
 	k.lastPoll = now
 	k.cancel = cancel
