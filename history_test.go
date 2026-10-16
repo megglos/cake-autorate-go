@@ -174,7 +174,9 @@ func TestControlSocketHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- RunControlSocket(ctx, path, &ControlHandler{Names: []string{"a"}, History: historySource(b)}, NewDiscardLogger()) }()
+	go func() {
+		done <- RunControlSocket(ctx, path, &ControlHandler{Names: []string{"a"}, History: historySource(b)}, NewDiscardLogger())
+	}()
 	t.Cleanup(func() {
 		cancel()
 		<-done

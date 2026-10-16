@@ -145,9 +145,11 @@ type Recorder struct {
 	buf      *bufio.Writer
 	maxBytes int64
 	stopped  bool
-	logger   *Logger
-	done     chan struct{}
-	closed   sync.WaitGroup
+	// stopReason is the reason of a stop before Close, or empty.
+	stopReason string
+	logger     *Logger
+	done       chan struct{}
+	closed     sync.WaitGroup
 }
 
 // countingWriter counts the bytes that go to the file.
@@ -242,7 +244,22 @@ func (r *Recorder) flushLocked() {
 // hold r.mu.
 func (r *Recorder) stopLocked(reason string) {
 	r.stopped = true
+	r.stopReason = reason
 	r.logger.Errorf("recording stopped: %s", reason)
+}
+
+// EarlyStop returns an error if the recorder stopped before Close (a write
+// error or the size limit): then the recording is not complete.
+func (r *Recorder) EarlyStop() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopReason == "" {
+		return nil
+	}
+	return fmt.Errorf("recording stopped: %s", r.stopReason)
 }
 
 // Close writes all buffered events and closes the file.

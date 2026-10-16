@@ -49,6 +49,8 @@ type fakeCalTarget struct {
 	startErr  error
 	finishErr error
 	onFinish  func()
+	// reflectors is the number of reflectors that reply (default 4).
+	reflectors int
 }
 
 func newFakeCalTarget(clock *fakeClock, times calTimes) *fakeCalTarget {
@@ -88,7 +90,11 @@ func (f *fakeCalTarget) CalBlock(rec *Recorder, unshaped bool) error {
 	loadFrom, loadTo := start.Add(f.times.Idle), start.Add(f.times.Idle+f.times.Load)
 	end := loadTo.Add(f.times.Tail)
 	for i, t := 0, start; t.Before(end); i, t = i+1, t.Add(250*time.Millisecond) {
-		r := fmt.Sprintf("10.0.0.%d", i%4+1)
+		n := f.reflectors
+		if n == 0 {
+			n = 4
+		}
+		r := fmt.Sprintf("10.0.0.%d", i%n+1)
 		jitter := time.Duration(i%3) * time.Millisecond
 		rec.Ping("wan", PingResult{Reflector: r, RTT: 20 * time.Millisecond, Timestamp: t,
 			OWD: true, DlOWD: 10*time.Millisecond + jitter, UlOWD: 10*time.Millisecond + jitter})
@@ -609,5 +615,56 @@ func TestCalibrationDirectoryMustBePrivate(t *testing.T) {
 		if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "other users cannot write") {
 			t.Errorf("%s: status %+v", tc.name, st)
 		}
+	}
+}
+
+// A recording that stops early (size limit) does not cover the block: the
+// session fails.
+// flushCalTarget waits after the events of a block until the recorder
+// writes them to the file (each second) and checks its size limit.
+type flushCalTarget struct{ *fakeCalTarget }
+
+func (f flushCalTarget) CalBlock(rec *Recorder, unshaped bool) error {
+	err := f.fakeCalTarget.CalBlock(rec, unshaped)
+	time.Sleep(recordFlushInterval + 200*time.Millisecond)
+	return err
+}
+
+func TestCalibrationTruncatedRecording(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, _ := newTestCalibrator(t, times)
+	k.targets["wan"] = flushCalTarget{target}
+	k.recMaxBytes = 4096
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "recording stopped") || st.Result != nil {
+		t.Errorf("status: %+v", st)
+	}
+}
+
+// With fewer reflectors than the analysis needs (a small pinger_count),
+// the proposal keeps the ping method and the reflectors of the config.
+func TestCalibrationFewReflectors(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, _ := newTestCalibrator(t, times)
+	target.reflectors = 2
+	target.cfg.PingMethod = PingMethodTimestamp
+	target.cfg.PingerCount = 2
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	st := k.Status()
+	if st.State != "done" {
+		t.Fatalf("status: %+v", st)
+	}
+	r := st.Result
+	if r.PingMethod != PingMethodTimestamp || len(r.Reflectors) != 0 {
+		t.Errorf("ping method %q, reflectors %v: must keep the config", r.PingMethod, r.Reflectors)
+	}
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "pinged only 2 reflectors") {
+		t.Errorf("notes: %v", r.Notes)
 	}
 }

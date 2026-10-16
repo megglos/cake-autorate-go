@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -122,6 +123,16 @@ type CalOutput struct {
 // newCalOutput makes the output from the result of the analysis.
 func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) *CalOutput {
 	p := res.propose(cfg)
+	// The session pings only the active reflectors (pinger_count). With
+	// fewer than calMinReflectors, the analysis cannot select the ping
+	// method and the reflectors: keep the values of the config.
+	var notes []string
+	if len(res.Reflectors) < calMinReflectors {
+		p.PingMethod, p.Reflectors = cfg.PingMethod, nil
+		delete(p.Why, "ping_method")
+		delete(p.Why, "reflectors")
+		notes = append(notes, fmt.Sprintf("the session pinged only %d reflectors (pinger_count %d): ping_method and reflectors keep the values of the config", len(res.Reflectors), cfg.PingerCount))
+	}
 	out := &CalOutput{
 		Link:                    link,
 		Finished:                finished,
@@ -132,7 +143,7 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) 
 		Reflectors:              p.Reflectors,
 		ConnectionActiveThrKbps: activeThrKbps(cfg, p),
 		Why:                     p.Why,
-		Notes:                   res.Notes,
+		Notes:                   append(slices.Clone(res.Notes), notes...),
 		Measured: map[string]calDist{
 			"dl_capacity_kbps":      res.DlCapacity,
 			"ul_capacity_kbps":      res.UlCapacity,
@@ -190,6 +201,8 @@ type Calibrator struct {
 	// onPhase, if set, gets the status at the start of each phase (for
 	// the tests).
 	onPhase func(CalStatus)
+	// recMaxBytes is the size limit of the recording of a block.
+	recMaxBytes int64
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -204,7 +217,8 @@ type Calibrator struct {
 // is the directory for the session files and the result files.
 func NewCalibrator(ctx context.Context, dir string, targets map[string]CalTarget, logger *Logger) *Calibrator {
 	return &Calibrator{ctx: ctx, dir: dir, targets: targets, logger: logger,
-		now: time.Now, tick: 100 * time.Millisecond, heartbeat: calHeartbeat, status: CalStatus{State: "none"}}
+		now: time.Now, tick: 100 * time.Millisecond, heartbeat: calHeartbeat, recMaxBytes: calRecordingMaxBytes,
+		status: CalStatus{State: "none"}}
 }
 
 // Start starts a session for a link with the given times.
@@ -378,7 +392,7 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 
 	for i, b := range calSessionBlocks {
 		name := fmt.Sprintf("%02d-%s-%s.jsonl", i+1, b.mode, b.policy)
-		rec, err := newRecorderAt(filepath.Join(dir, name), calRecordingMaxBytes, target.CalConfig(), k.now(), k.logger)
+		rec, err := newRecorderAt(filepath.Join(dir, name), k.recMaxBytes, target.CalConfig(), k.now(), k.logger)
 		if err != nil {
 			return nil, err
 		}
@@ -408,6 +422,10 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		}
 		if cerr := rec.Close(); cerr != nil && err == nil {
 			err = cerr
+		}
+		// A recording that stopped early does not cover the block.
+		if serr := rec.EarlyStop(); serr != nil && err == nil {
+			err = fmt.Errorf("block %d: %w", i+1, serr)
 		}
 		if err != nil {
 			return nil, err
