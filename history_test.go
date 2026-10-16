@@ -34,6 +34,7 @@ func decodeHistory(t *testing.T, data []byte) (h struct {
 func TestHistoryRecord(t *testing.T) {
 	start := time.UnixMilli(1_700_000_000_000)
 	b := NewStatusBoard("v1", start, []string{"a", "b"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a",
 		Download: DirStatus{ShaperKbps: 20000.4, AchievedKbps: 1234.6, DeltaMs: 3.14, ThresholdMs: 15},
 		Upload:   DirStatus{ShaperKbps: 12000, AchievedKbps: 99.5, DeltaMs: 0.05, ThresholdMs: 10}})
@@ -67,6 +68,7 @@ func TestHistoryRecord(t *testing.T) {
 func TestHistoryKeepsOnlyTheLastSeconds(t *testing.T) {
 	start := time.UnixMilli(1_700_000_000_000)
 	b := NewStatusBoard("v1", start, []string{"a"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a"})
 	for i := range historyLen + 50 {
 		b.Record(start.Add(time.Duration(i) * statusInterval))
@@ -93,6 +95,7 @@ func TestHistoryKeepsOnlyTheLastSeconds(t *testing.T) {
 func TestHistoryClockStepBack(t *testing.T) {
 	start := time.UnixMilli(1_700_000_000_000)
 	b := NewStatusBoard("v1", start, []string{"a"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a"})
 	for i := range 5 {
 		b.Record(start.Add(time.Duration(i) * time.Second))
@@ -112,6 +115,7 @@ func TestHistoryClockStepBack(t *testing.T) {
 func TestHistoryRemovesLinkWithoutStatus(t *testing.T) {
 	start := time.Now()
 	b := NewStatusBoard("v1", start, []string{"a"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a"})
 	b.Record(start)
 	b.mu.Lock()
@@ -162,6 +166,7 @@ func TestHandleHistoryCommand(t *testing.T) {
 func TestControlSocketHistory(t *testing.T) {
 	start := time.Now()
 	b := NewStatusBoard("v1", start, []string{"a"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a", Download: DirStatus{ShaperKbps: 20000}})
 	for i := range historyLen {
 		b.Record(start.Add(time.Duration(i) * statusInterval))
@@ -194,5 +199,36 @@ func TestControlSocketHistory(t *testing.T) {
 	}
 	if h := decodeHistory(t, []byte(strings.TrimSpace(answer))); len(h.Links) != 1 || len(h.Links[0].Samples) != historyLen {
 		t.Errorf("got %d bytes, links %d", len(answer), len(h.Links))
+	}
+}
+
+// Without status_history, the board keeps no samples.
+func TestHistoryOff(t *testing.T) {
+	start := time.Now()
+	b := NewStatusBoard("v1", start, []string{"a"})
+	b.Set(LinkStatus{Name: "a"})
+	b.Record(start)
+	if len(b.history) != 0 {
+		t.Errorf("history without status_history: %v", b.history)
+	}
+	if _, err := b.HistoryJSON(); err == nil || !strings.Contains(err.Error(), "status_history") {
+		t.Errorf("error: %v", err)
+	}
+	b.KeepHistory()
+	b.Record(start.Add(time.Second))
+	if data, err := b.HistoryJSON(); err != nil || len(decodeHistory(t, data).Links) != 1 {
+		t.Errorf("history after KeepHistory: %v %s", err, data)
+	}
+}
+
+func TestStatusHistoryNeedsStatusFile(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StatusHistory = true
+	if w := strings.Join(cfg.Warnings(), "\n"); !strings.Contains(w, "status_history needs status_file") {
+		t.Errorf("warnings: %q", w)
+	}
+	cfg.StatusFile = "/run/s.json"
+	if w := strings.Join(cfg.Warnings(), "\n"); strings.Contains(w, "status_history") {
+		t.Errorf("warnings with a status file: %q", w)
 	}
 }

@@ -131,6 +131,9 @@ func main() {
 	var wg sync.WaitGroup
 	if cfg.StatusFile != "" {
 		board = NewStatusBoard(version, time.Now(), names)
+		if cfg.StatusHistory {
+			board.KeepHistory()
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
