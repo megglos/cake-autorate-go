@@ -159,7 +159,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RunControlSocket(ctx, cfg.ControlSocket, names, controls, logger); err != nil {
+			if err := RunControlSocket(ctx, cfg.ControlSocket, names, controls, historySource(board), logger); err != nil {
 				logger.Errorf("control socket: %v", err)
 			}
 		}()

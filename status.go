@@ -118,6 +118,10 @@ type StatusBoard struct {
 	started time.Time
 	order   []string
 	links   map[string]LinkStatus
+	// history has the samples of each link, the oldest first. recorded
+	// is the time of the last Record.
+	history  map[string][]historySample
+	recorded time.Time
 }
 
 // NewStatusBoard creates a board for the links in the given order.
@@ -197,6 +201,7 @@ func RunStatusWriter(ctx context.Context, b *StatusBoard, path string, logger *L
 			return
 		case now := <-ticker.C:
 			write(now)
+			b.Record(now)
 		}
 	}
 }
