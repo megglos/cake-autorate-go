@@ -17,8 +17,9 @@ const PHASES = [
 	{ key: 'both', load: 'both', seconds: 2 }
 ];
 
-// Answers the speed test endpoints locally and counts the requests.
-async function routeLoad(page) {
+// Answers the speed test endpoints locally and counts the requests. With
+// status, each answer has this HTTP status.
+async function routeLoad(page, status) {
 	const load = { down: 0, up: 0 };
 	await page.route('https://speed.cloudflare.com/**', async (route) => {
 		const req = route.request();
@@ -30,7 +31,7 @@ async function routeLoad(page) {
 			load.up++;
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		try {
-			await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: 'x'.repeat(100000) });
+			await route.fulfill({ status: status || 200, headers: { 'access-control-allow-origin': '*' }, body: 'x'.repeat(100000) });
 		}
 		catch (e) {
 			// The page aborted the request.
@@ -41,7 +42,7 @@ async function routeLoad(page) {
 
 // Changes the status file that the page reads (the file on the router
 // does not change), and records the calls of unshape and shape.
-async function routeUbus(page, mutate) {
+async function routeUbus(page, mutate, failShape) {
 	const calls = [];
 	await page.route('**/ubus/**', async (route) => {
 		const request = route.request().postDataJSON();
@@ -49,6 +50,12 @@ async function routeUbus(page, mutate) {
 		for (const q of requests)
 			if (q && q.params && q.params[1] == 'cake-autorate' && /^(un)?shape$/.test(q.params[2]))
 				calls.push([ q.params[2], q.params[3] ]);
+		// "shape" fails: an answer with an error, the router gets nothing.
+		const shape = requests.find((q) => q && q.params && q.params[2] == 'shape');
+		if (failShape && shape && requests.length == 1) {
+			const answer = { jsonrpc: '2.0', id: shape.id, result: [ 0, { error: 'tc failed' } ] };
+			return route.fulfill({ json: Array.isArray(request) ? [ answer ] : answer });
+		}
 		let response;
 		try {
 			response = await route.fetch();
@@ -214,4 +221,92 @@ test('the button is disabled while the shaping is off', async ({ page }) => {
 	await routeUbus(page, (s) => { s.links[0].unshaped = true; });
 	await page.goto(PAGE);
 	await expect(page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat')).toBeDisabled();
+});
+
+test('Stop in the pause between the runs does not change the shaping', async ({ page }) => {
+	const calls = await routeUbus(page);
+	await routeLoad(page);
+	const modal = await openDialog(page);
+	await modal.locator('#cake-autorate-bufferbloat-compare').check();
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal.locator('.cake-autorate-phase')).toContainText('Pause between the runs', { timeout: 20000 });
+	await modal.getByRole('button', { name: 'Stop' }).click();
+	await expect(modal).toContainText('The test stopped.', { timeout: 10000 });
+	expect(calls).toEqual([]);
+});
+
+test('a failed "shape" after the test shows an error', async ({ page }) => {
+	await routeUbus(page, null, true);
+	await routeLoad(page);
+	try {
+		const modal = await openDialog(page);
+		await modal.locator('#cake-autorate-bufferbloat-compare').check();
+		await noLimit(modal);
+		await modal.getByRole('button', { name: 'Start' }).click();
+		await expect(modal.locator('[data-shape-error]')).toContainText('The shaping did not come back: tc failed', { timeout: 30000 });
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('a failed load stops the test without grades', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; });
+	await routeLoad(page, 403);
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The test stopped with an error: The load failed: HTTP 403', { timeout: 20000 });
+	await expect(modal.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('the upload rate counts the uploads while they run', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; });
+	await routeLoad(page);
+	// A request to the upload endpoint gets its answer after 20 s (this
+	// route comes after the other one: Playwright uses it first).
+	await page.route('https://speed.cloudflare.com/__up', async (route) => {
+		if (route.request().method() == 'OPTIONS')
+			return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type' } });
+		await new Promise((resolve) => setTimeout(resolve, 20000));
+		await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' }).catch(() => {});
+	});
+	// A slow uplink: an upload takes 20 s, longer than the phase. Chromium
+	// sends no upload progress for a request that Playwright answers, thus
+	// a fake XMLHttpRequest for the upload endpoint reports the progress
+	// (100 kB each 100 ms). The other requests (LuCI) use the real one.
+	await page.addInitScript(() => {
+		const proto = XMLHttpRequest.prototype;
+		const open = proto.open, send = proto.send, abort = proto.abort;
+		proto.open = function(method, url, ...rest) {
+			this.fakeUpload = String(url).includes('speed.cloudflare.com/__up');
+			if (!this.fakeUpload)
+				return open.call(this, method, url, ...rest);
+		};
+		proto.send = function(body) {
+			if (!this.fakeUpload)
+				return send.call(this, body);
+			let loaded = 0;
+			this.fakeTimer = setInterval(() => {
+				loaded = Math.min(body.size, loaded + 100000);
+				if (this.upload.onprogress)
+					this.upload.onprogress({ loaded: loaded });
+			}, 100);
+		};
+		proto.abort = function() {
+			if (!this.fakeUpload)
+				return abort.call(this);
+			clearInterval(this.fakeTimer);
+			if (this.onabort)
+				this.onabort();
+		};
+	});
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const ul = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="ul"] td').nth(2);
+	await expect(ul).toContainText('Mbit/s', { timeout: 30000 });
+	// 4 uploads with 1 MB/s each: approximately 32 Mbit/s.
+	expect(parseFloat(await ul.textContent())).toBeGreaterThan(10);
 });
