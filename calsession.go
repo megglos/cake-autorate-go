@@ -133,6 +133,24 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) 
 		delete(p.Why, "reflectors")
 		notes = append(notes, fmt.Sprintf("the session pinged only %d reflectors (pinger_count %d): ping_method and reflectors keep the values of the config", len(res.Reflectors), cfg.PingerCount))
 	}
+	// The session has no data of the configured reflectors that it did
+	// not ping (spares). Keep them after the measured ones.
+	if len(p.Reflectors) > 0 {
+		seen := map[string]bool{}
+		for _, r := range res.Reflectors {
+			seen[r.Addr] = true
+		}
+		var kept []string
+		for _, r := range cfg.Links[0].Reflectors {
+			if !seen[r] && !slices.Contains(p.Reflectors, r) {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) > 0 {
+			p.Reflectors = append(slices.Clone(p.Reflectors), kept...)
+			notes = append(notes, fmt.Sprintf("the session did not ping the reflectors %v: they stay in the list", kept))
+		}
+	}
 	out := &CalOutput{
 		Link:                    link,
 		Finished:                finished,

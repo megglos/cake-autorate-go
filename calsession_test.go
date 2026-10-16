@@ -58,6 +58,7 @@ func newFakeCalTarget(clock *fakeClock, times calTimes) *fakeCalTarget {
 	cfg.migrateLinks()
 	cfg.Links = cfg.Links[:1]
 	cfg.Links[0].Name = "wan"
+	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"}
 	return &fakeCalTarget{clock: clock, times: times, cfg: cfg}
 }
 
@@ -665,6 +666,29 @@ func TestCalibrationFewReflectors(t *testing.T) {
 		t.Errorf("ping method %q, reflectors %v: must keep the config", r.PingMethod, r.Reflectors)
 	}
 	if !strings.Contains(strings.Join(r.Notes, "\n"), "pinged only 2 reflectors") {
+		t.Errorf("notes: %v", r.Notes)
+	}
+}
+
+// The configured reflectors that the session did not ping (spares) stay in
+// the proposed list, after the measured ones.
+func TestCalibrationKeepsSpareReflectors(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, _ := newTestCalibrator(t, times)
+	target.cfg.Links[0].Reflectors = append(target.cfg.Links[0].Reflectors, "10.0.0.8", "10.0.0.9")
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	st := k.Status()
+	if st.State != "done" {
+		t.Fatalf("status: %+v", st)
+	}
+	r := st.Result
+	if len(r.Reflectors) != 6 || r.Reflectors[4] != "10.0.0.8" || r.Reflectors[5] != "10.0.0.9" {
+		t.Errorf("reflectors: %v", r.Reflectors)
+	}
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "did not ping the reflectors [10.0.0.8 10.0.0.9]") {
 		t.Errorf("notes: %v", r.Notes)
 	}
 }
