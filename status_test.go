@@ -101,6 +101,11 @@ func TestRunStatusWriter(t *testing.T) {
 	if err := json.Unmarshal(data, &f); err != nil || len(f.Links) != 1 {
 		t.Fatalf("status file not valid: %v %q", err, data)
 	}
+	// The writer also adds a sample to the history.
+	hist, _ := b.HistoryJSON()
+	if h := decodeHistory(t, hist); len(h.Links) != 1 || len(h.Links[0].Samples) == 0 {
+		t.Errorf("history after a write: %s", hist)
+	}
 	// Stop the writer first: a write in progress has a temporary file.
 	stop()
 	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {

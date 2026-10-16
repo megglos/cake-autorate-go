@@ -27,6 +27,8 @@ import (
 //	pause LINK [dl|ul]    pause the rate control (both directions if not set)
 //	resume LINK [dl|ul]   resume the rate control
 //	list                  answer: the link names, separated by spaces
+//	history               answer: the samples of the last 15 minutes of
+//	                      each link as one line of JSON (see History)
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
@@ -48,7 +50,7 @@ type LinkControl interface {
 }
 
 // handleControlCommand runs one command and returns the answer line.
-func handleControlCommand(line string, names []string, links map[string]LinkControl) string {
+func handleControlCommand(line string, names []string, links map[string]LinkControl, history HistorySource) string {
 	f := strings.Fields(line)
 	if len(f) == 0 {
 		return "error: empty command"
@@ -56,6 +58,18 @@ func handleControlCommand(line string, names []string, links map[string]LinkCont
 	switch f[0] {
 	case "list":
 		return strings.Join(names, " ")
+	case "history":
+		if len(f) != 1 {
+			return "error: usage: history"
+		}
+		if history == nil {
+			return "error: no history"
+		}
+		data, err := history.HistoryJSON()
+		if err != nil {
+			return "error: " + oneLine.Replace(err.Error())
+		}
+		return string(data)
 	case "pause", "resume":
 		if len(f) < 2 || len(f) > 3 {
 			return fmt.Sprintf("error: usage: %s LINK [dl|ul]", f[0])
@@ -152,8 +166,9 @@ func listenPrivate(path string) (net.Listener, os.FileInfo, error) {
 
 // RunControlSocket listens on the Unix socket at path until ctx ends. Then
 // it removes the socket, but only if it is still the socket that this
-// function created. Only the owner of the socket can connect.
-func RunControlSocket(ctx context.Context, path string, names []string, links map[string]LinkControl, logger *Logger) error {
+// function created. Only the owner of the socket can connect. history can
+// be nil.
+func RunControlSocket(ctx context.Context, path string, names []string, links map[string]LinkControl, history HistorySource, logger *Logger) error {
 	if err := removeStaleSocket(path); err != nil {
 		return err
 	}
@@ -186,13 +201,13 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 			logger.Errorf("control socket: %v", err)
 			return err
 		}
-		go serveControlConn(conn, names, links, logger)
+		go serveControlConn(conn, names, links, history, logger)
 	}
 }
 
 // serveControlConn reads one command from conn and writes the answer. It
 // runs the command only if the client sent a complete line.
-func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, logger *Logger) {
+func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, history HistorySource, logger *Logger) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(controlTimeout))
 	// Read not more than maxControlLine bytes. A longer line gives an
@@ -203,9 +218,15 @@ func serveControlConn(conn net.Conn, names []string, links map[string]LinkContro
 		fmt.Fprintln(conn, "error: no complete command")
 		return
 	}
-	answer := handleControlCommand(line, names, links)
+	answer := handleControlCommand(line, names, links, history)
 	// The answer has its own time. The command can use the read time.
 	conn.SetWriteDeadline(time.Now().Add(controlTimeout))
-	logger.Infof("control: %q: %s", strings.TrimSpace(line), answer)
+	// The history is long and a page reads it at each load: log only
+	// its size, and only as debug.
+	if cmd := strings.TrimSpace(line); cmd == "history" && !strings.HasPrefix(answer, "error: ") {
+		logger.Debugf("control: %q: %d bytes", cmd, len(answer))
+	} else {
+		logger.Infof("control: %q: %s", cmd, answer)
+	}
 	fmt.Fprintln(conn, answer)
 }
