@@ -204,22 +204,46 @@ New option `status_file` (default on OpenWrt: `/var/run/cake-autorate/status.jso
 
 Alternative: a ubus object (`ubus call cake-autorate status`). Needs libubus (cgo) or a ubus protocol in Go. Not now; the JSON file is enough.
 
-## 7. Calibration button
+## 7. Calibration from LuCI (issue #56)
 
-Depends on roadmap step 6b (`cake-autorate-go calibrate`). The UI part:
+Decision (2026-10-16): the first version uses option 2 of #56. The router controls the calibration session. The browser on the LuCI page makes the load (Cloudflare speed test endpoints, CORS `*` on `__down` and `__up`, checked 2026-10-16). Passive learning and continuous calibration: #57, later.
 
-1. Grid row button "Calibrate" (also on the link edit modal).
-2. Dialog: warning text: "The calibration saturates the link for approximately N minutes and uses approximately X GB (5G: 3 to 5 GB). The shaping of this link is off during the calibration." Fields: duration (short / normal), and "measure the upload delay from download activity" (default on).
-3. Start: rpc `cake-autorate.calibrate_start {link}`. The ucode plugin starts `cake-autorate-go calibrate -link NAME -out /var/run/cake-autorate/calibrate-NAME.json` in the background (procd instance `calibrate`, so that it does not stop on browser close). The main daemon stops shaping this link during the run (signal or a control file), or the service stops (simpler, first version).
-4. Progress: rpc `calibrate_status {link}` every 2 s: phase (idle RTT, saturation DL, saturation UL, both, cross delay), percent, partial results. Cancel button → `calibrate_cancel`.
-5. Result: table "current value | proposed value | measured data" for each key (rates, thresholds, reflectors, ping method, learn_cross_delay). A checkbox for each row (default: all on).
-6. Apply: write the selected values to UCI for this link (`uci.set` in the view, then `ui.changes.apply`). The usual LuCI changes flow: the user sees the diff and can revert.
-7. Keep the last result file. The dialog can show it again ("last calibration: date").
+### 7.1 Core: calibration session in the daemon
 
-Safety:
-- Only one calibration at a time (lock file).
-- Hard limit for the duration and the data volume. Stop on a stall.
-- The calibration needs load servers. Default: the same servers as `load-gen.sh`. Configurable in the global section (`calibration_servers`).
+The daemon runs the session for one link. It writes a session directory in the format of `scripts/record-session.sh` (`blocks.tsv`, one recording for each block). At the end, it runs the existing analysis (`calibrateSession`, `propose`) on this directory. Thus, the rules of the offline calibration apply without a second implementation.
+
+- Control commands:
+  - `calibrate start LINK [LOAD_S]`: start a session (one at a time for the daemon). LOAD_S: load time of each block (default 40 s, 20 to 120 s).
+  - `calibrate status`: one line of JSON: link, state (`running`, `done`, `failed`, `stopped`), block number and count, mode (`dl`, `ul`, `both`), policy (`unshaped`, `autorate`), phase (`idle`, `load`, `tail`), `load` (the load that the browser must make now: `dl`, `ul`, `both` or empty), seconds left in the phase and in the session, the current achieved rates, an error text, and at the end the result.
+  - `calibrate stop`: stop the session.
+- Blocks: unshaped dl, autorate dl, unshaped ul, autorate ul, unshaped both. Each block: idle 15 s (no load: idle jitter), load LOAD_S, tail 3 s. With 40 s: 5 × 58 s, about 5 minutes.
+- Unshaped block: the rate control of the link stops (as a pause), and the shaper rate goes to the maximum (CAKE without a useful limit). Autorate block: the normal rate control from the base rate.
+- Recordings: the RecordingCore of the link gets a recorder for each block (on the goroutine of the controller). The header has a config with only this link (the analysis needs exactly one link).
+- Pings during the session: the controller must not go to IDLE (it stops the pingers). The session keeps the pingers on.
+- Safety: the session stops if the browser does not ask for the status for 15 s (the load is gone, and an unshaped link must not stay), after a hard maximum time, on a stall, and at a stop of the daemon. At the end, the controller of the link continues as before (paused directions stay paused).
+- Result (JSON): the proposal (min, base, max for each direction, the thresholds, learn_cross_delay, ping_method, reflectors) and the measured data (capacity distributions, jitter, cross delay, grant delay, notes). The daemon also keeps the result file `/var/run/cake-autorate/calibration-LINK.json`.
+
+### 7.2 rpcd and ACL
+
+- Methods `calibrate_start {link, load_s}`, `calibrate_status`, `calibrate_stop`: write ACL (as pause/resume). `calibrate_status` also read? No: only the users that can start it.
+
+### 7.3 LuCI
+
+1. Button "Calibrate" for each link on the status page (only with write permission).
+2. Dialog: what the calibration does, that the shaping of this link is off in the unshaped blocks, the time, and the estimated data volume (from the max rates and LOAD_S; 5G at 300 Mbit/s: several GB). Load time select (short 20 s, normal 40 s, long 80 s). The page must stay open.
+3. Run: the page reads `calibrate_status` each second. If `load` is set, the page runs parallel fetch streams for that direction (download: `__down?bytes=N` in a loop; upload: POST of a blob to `__up` in a loop), and stops them (AbortController) when `load` changes. Progress bar, phase text, the current rates. Stop button. A warning on page close.
+4. Result: a table "current value | proposed value | measured data" for each key, with a checkbox for each row. Apply: write the selected values to UCI for this link (`uci.set`, `uci.save`), then the usual LuCI changes flow (the user can revert).
+
+### 7.4 Tests
+
+- Go: the session runner with short times and a fake controller (blocks, recordings, safety stops), the JSON of the result, the control commands.
+- VM: the 5G simulation (netns `isp`, trace player). A load script in the VM follows the `load` field instead of the browser. The result must be near the trace (max rate near the p95 of the trace).
+- Playwright: a mocked status sequence and mocked Cloudflare endpoints (the load streams start and stop with the phase), stop, the result table, apply to UCI.
+
+### 7.5 PRs
+
+1. Core: the session runner, the commands, the result JSON (+ Go tests).
+2. LuCI: rpcd methods, ACL, dialog, load, result and apply (+ VM test and Playwright tests).
 
 ## 8. Package
 
@@ -281,11 +305,12 @@ Each phase is a PR, with the Copilot review cycles.
 1. Per-link overrides: **yes**, in phase L0, as a separate PR. Keys: ping_method, learn_cross_delay, pinger_count, ping_interval_ms. An empty link value uses the global value.
 2. UCI to YAML in **ucode** (proposal accepted by default).
 3. Status interval **1 s** (proposal accepted by default).
-4. Calibration stops the **whole service** in the first version.
+4. Calibration stops the **whole service** in the first version. Changed (2026-10-16): the daemon runs the session for one link (section 7).
 5. Own CAKE setup: **later**. First version keeps sqm-scripts and shows a check.
 6. Package format: **apk only** (OpenWrt 25.12). Add ipk later on request.
 7. Done: packages `cake-autorate-go` and `luci-app-cake-autorate-go` (user decision 2026-10-11). Menu entry: Services → CAKE Autorate (Go).
-8. Graphs (2026-10-15): data only in the browser (no core change), before L5.
+8. Graphs (2026-10-15): data only in the browser (no core change), before L5. Changed (2026-10-16, #54): the daemon keeps 15 minutes of history, the page loads it.
+9. Calibration (2026-10-16, #56): option 2, the browser makes the load, the router controls the session. Passive and continuous calibration later (#57).
 
 ## 13. Status
 
@@ -300,7 +325,8 @@ Each phase is a PR, with the Copilot review cycles.
 | Fix | 2026-10-16: #51 merged (a014548). A refresh replaced the graph under the pointer without "pointerleave"; the cursor stayed (flaky CI on main). Now a document listener removes the pointer cursor. |
 | L6 (option 1) | Done (2026-10-16): #50 merged (5254887). 2 Copilot cycles. rpcd method `cake-autorate qdisc {interface}` (tc qdisc show, interface names without shell characters, read ACL). The status page warns for each direction with adjust on and no CAKE root qdisc (check on load and each 10 s), with a link to SQM QoS if the menu has it. One focus key for all focusable elements. Option 2 (own CAKE setup, CAKE tab) only if users ask. |
 | L7 | Done (2026-10-16): #52 merged. 2 Copilot cycles (fix: enable the service after the installation). README: install from a release, UCI heading, 4 screenshots in docs/images; tests/screenshots.js makes them again from the VM. The release workflow was already done in L1. |
-| L5 | Blocked: needs the online part of 6b (`calibrate` that runs the load and the saturation steps itself, on the router). Today `calibrate` only reads a session of record-session.sh from a PC. Core work, separate session. |
+| Issues | 2026-10-16: #53 colors (PR #60, with core #61 high_delay), #54 graph history (core PR #59, LuCI PR next), #55 README, #56 calibration from LuCI, #57 passive and continuous calibration. #58: cursor on all graphs of a link and the time of the sample. |
+| L5 | Next (2026-10-16): design in section 7 (option 2 of #56). |
 
 ### L0 decisions and results
 
