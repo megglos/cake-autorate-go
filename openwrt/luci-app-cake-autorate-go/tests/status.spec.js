@@ -696,8 +696,25 @@ function historyLength() {
 	return +n.trim();
 }
 
+// Turns on the history of the program (option status_history).
+async function enableHistory() {
+	vm('uci set cake-autorate.global.status_history=1 && uci commit cake-autorate && /etc/init.d/cake-autorate restart');
+	await waitForStatus();
+}
+
 test('the graphs show the history of the program at the load of the page', async ({ page }) => {
-	await expect.poll(historyLength, { timeout: 40000, intervals: [ 2000 ] }).toBeGreaterThanOrEqual(15);
+	await enableHistory();
+	try {
+		await expect.poll(historyLength, { timeout: 40000, intervals: [ 2000 ] }).toBeGreaterThanOrEqual(15);
+		await historyAtLoad(page);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+async function historyAtLoad(page) {
 	await page.goto(PAGE);
 	// Before the first refresh, the graph has the samples of the history:
 	// one each second.
@@ -717,9 +734,20 @@ test('the graphs show the history of the program at the load of the page', async
 	const ago = +(await tip.textContent()).match(/(\d+) s ago/)[1];
 	expect(ago).toBeGreaterThanOrEqual(13);
 	await expect(tip.locator('.graph-time')).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d:\d{3}$/);
-});
+}
 
 test('the graphs keep the time when the user was on another page', async ({ page }) => {
+	await enableHistory();
+	try {
+		await keepsTimeAway(page);
+	}
+	finally {
+		resetConfig();
+		await waitForStatus();
+	}
+});
+
+async function keepsTimeAway(page) {
 	await page.goto(PAGE);
 	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
 	await page.goto('/cgi-bin/luci/admin/network/cake-autorate/config');
@@ -731,6 +759,15 @@ test('the graphs keep the time when the user was on another page', async ({ page
 	const p = await points(page, 'rate', 'dl-shaper');
 	expect(p.length).toBeGreaterThanOrEqual(12);
 	expect(p.filter((e) => e[0] == 'M').length).toBe(1);
+}
+
+test('without Graph history (the default), the graphs start empty', async ({ page }) => {
+	// The default configuration has no history.
+	expect(vm('ubus call cake-autorate history')).toContain('status_history is off');
+	await page.goto(PAGE);
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	await expect(rate.getByText('Collecting data…')).toBeVisible();
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
 });
 
 test('without the history of the program, the graphs start empty', async ({ page }) => {

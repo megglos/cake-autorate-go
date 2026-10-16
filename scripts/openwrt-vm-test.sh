@@ -79,6 +79,7 @@ vm '/etc/init.d/cake-autorate stop 2>/dev/null
 	uci -q delete cake-autorate.wan
 	uci set cake-autorate.global.enabled=1
 	uci set cake-autorate.global.ping_method=icmp
+	uci set cake-autorate.global.status_history=1
 	uci set cake-autorate.wan=link
 	uci set cake-autorate.wan.dl_interface=br-lan
 	uci set cake-autorate.wan.dl_min_rate_kbps=5000

@@ -28,8 +28,9 @@ const DIRECTIONS = [
 ];
 
 // The graphs keep the samples for this time. When the page opens, it gets
-// the samples of this time from the program (method "history"). Then it
-// adds a sample at each read of the status file.
+// the samples of this time from the program (method "history"), if the
+// history is on (status_history). Then it adds a sample at each read of
+// the status file.
 const HISTORY_SECONDS = 900;
 
 // The periods that the graphs can show, in seconds.
@@ -789,7 +790,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. The graphs show the last 15 minutes. The service keeps this data only in memory: a restart of the service starts with empty graphs.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

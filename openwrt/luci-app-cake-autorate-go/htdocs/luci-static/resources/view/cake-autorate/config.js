@@ -248,6 +248,8 @@ function globalSection(m, sid) {
 
 	flag(s, 'general', 'learn_cross_delay', _('Learn the cross delay'), false,
 		_('Learn the upload delay that download traffic causes (for example on 5G). A link can set a different value.'));
+	flag(s, 'general', 'status_history', _('Graph history'), false,
+		_('Keep the samples of the last 15 minutes in the memory of the router (approximately 36 kB for each link). Then the graphs on the status page also show the time before you opened the page.'));
 	flag(s, 'general', 'refractory_on_decrease', _('Refractory period after a decrease'), false);
 	flag(s, 'general', 'repeat_decrease_on_rise', _('Decrease again when the delay increases'), false);
 
