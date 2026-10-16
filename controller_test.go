@@ -277,9 +277,10 @@ func TestSetUnshaped(t *testing.T) {
 	if !boardStatus(c).Unshaped {
 		t.Error("the status must show the unshaped link")
 	}
-	// A second "unshape" changes nothing.
+	// A second "unshape" sets the rates again (after an error, the user
+	// sends the command again). It keeps the pause states from before.
 	n := len(act.rates[DL])
-	if err := c.SetUnshaped(true, 0); err != nil || len(act.rates[DL]) != n {
+	if err := c.SetUnshaped(true, 0); err != nil || len(act.rates[DL]) != n+1 || lastRate(act, DL) != unshapedKbps {
 		t.Errorf("second unshape: %v, %d rate changes", err, len(act.rates[DL])-n)
 	}
 

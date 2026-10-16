@@ -261,17 +261,19 @@ func (c *LinkController) SetUnshaped(on bool, d time.Duration) error {
 				c.unshapeUntil = now.Add(d)
 			}
 		}
-		if on == c.core.Core().Unshaped() {
-			return nil
-		}
 		if !on {
 			return c.shapeAgain(now)
 		}
 		if !c.link.Download.Adjust && !c.link.Upload.Adjust {
 			return fmt.Errorf("link %q: no direction has rate control (adjust)", c.name)
 		}
+		// A second "unshape" sets the rates again, as "pause" does: after
+		// an error, the user can send the command again. It keeps the
+		// pause states from before the first "unshape".
 		core := c.core.Core()
-		c.unshapePaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		if !core.Unshaped() {
+			c.unshapePaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		}
 		// Set the mode before the rates: after a failed rate change, the
 		// user can turn the shaping on again. The mode also wakes an idle
 		// link: the delay measurement continues without load.
