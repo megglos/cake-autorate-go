@@ -78,8 +78,16 @@ async function routeSession(page, session) {
 				break;
 			case 'calibrate_stop':
 				session.stops++;
+				if (session.stopError) {
+					result = { error: session.stopError };
+					break;
+				}
 				session.stopped = true;
 				result = { result: 'ok' };
+				break;
+			case 'calibrate_status':
+				session.polls = (session.polls || 0) + 1;
+				result = { data: JSON.stringify(session.status()) };
 				break;
 			default:
 				result = { data: JSON.stringify(session.status()) };
@@ -301,14 +309,56 @@ test('Apply refuses rates that are not in the order minimum, base, maximum', asy
 	expect(vm('uci -q get cake-autorate.wan.dl_max_rate_kbps').trim()).toBe('80000');
 });
 
-test('a reload of the page shows the running session again', async ({ page }) => {
-	// A session that runs before the page opens.
+test('a reload of the page shows the running session again and keeps the data limit', async ({ page }) => {
+	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ]);
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal #cake-autorate-calibrate-limit').fill('100000');
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
+	await page.reload();
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
+	await expect(page.locator('.modal .cake-autorate-used')).toContainText('of 100.0 GB');
+	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(0);
+});
+
+test('a session that this page did not start makes no load before the user sets a data limit', async ({ page }) => {
+	// A session that runs before the page opens (for example, from another
+	// browser): no data limit in the session storage.
 	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ], true);
 	await routeSession(page, session);
 	const load = await routeLoad(page);
 	await page.goto(PAGE);
-	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
+	const modal = page.locator('.modal');
+	await expect(modal).toContainText('this page did not start it', { timeout: 10000 });
+	const polls = session.polls || 0;
+	await page.waitForTimeout(2000);
+	expect(load.up).toBe(0);
+	// No status requests: the heartbeat of the session is not from this page.
+	expect(session.polls || 0).toBe(polls);
+	await modal.locator('#cake-autorate-calibrate-takeover-limit').fill('5000');
+	await modal.getByRole('button', { name: 'Continue the load' }).click();
+	await expect(modal.locator('.cake-autorate-used')).toContainText('of 5.0 GB', { timeout: 10000 });
 	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(0);
+});
+
+test('a failed stop ends the load and the status requests', async ({ page }) => {
+	const session = fakeSession([ running(1, 'dl', 'unshaped', 'load', 'dl') ]);
+	session.stopError = 'Command failed';
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect.poll(() => load.down, { timeout: 10000 }).toBeGreaterThan(0);
+	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+	await expect(page.locator('.modal')).toContainText('The stop failed: Command failed.');
+	const polls = session.polls;
+	await page.waitForTimeout(500);
+	expect(await countDuring(page, load, 2000)).toEqual({ down: 0, up: 0 });
+	expect(session.polls).toBe(polls);
 });
 
 test('a session of the program starts and stops from the dialog', async ({ page }) => {

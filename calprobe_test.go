@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"testing"
@@ -208,5 +209,34 @@ func TestCalibrationProbeTooFewRequests(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(r.Notes, "\n"), "probe did not run: fewer than 20 requests") {
 		t.Errorf("notes: %v", r.Notes)
+	}
+}
+
+// The end of the context also ends the DNS lookups of the probe: a stop
+// does not wait for a slow DNS server.
+func TestProbeStopsDuringDNSLookup(t *testing.T) {
+	old := resolveIPv4
+	t.Cleanup(func() { resolveIPv4 = old })
+	resolveIPv4 = func(ctx context.Context, host string) (*net.IPAddr, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Links = cfg.Links[:1]
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := probeTimestamps(ctx, cfg, NewDiscardLogger())
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a probe without addresses must fail")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the probe waits for the DNS lookups after the end of the context")
 	}
 }

@@ -346,10 +346,54 @@ return baseclass.extend({
 			this.limitReached = true;
 			this.stop();
 		};
+		this.stopping = false;
 		this.node = E('div', { 'id': 'cake-autorate-calibration' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
+		// Without the data limit of this session (another page or browser
+		// started it), the load waits for the decision of the user.
+		if (!(saved && saved.link == link))
+			return this.renderTakeover(link);
+		this.active = true;
 		window.addEventListener('beforeunload', this.onUnload);
 		this.poll();
+	},
+
+	// Asks the user for a data limit before this page makes the load of a
+	// session that it did not start.
+	renderTakeover: function(link) {
+		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-calibrate-takeover-limit', 'min': 1, 'step': 1, 'value': 1000 });
+		const problem = E('div', { 'class': 'cake-autorate-problem' });
+		this.node.replaceChildren(
+			E('p', { 'class': 'alert-message notice' }, text(_('A calibration of the link %s runs, but this page did not start it (another page or browser, or a page without session storage). Continue the load from this page with a data limit, or stop the calibration. Close the other pages of the calibration first: each page makes its own load. Without status requests, the service stops the calibration after 15 s.').format(link))),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-calibrate-takeover-limit' }, _('Data limit (MB)')),
+				E('div', { 'class': 'cbi-value-field' }, limit)
+			]),
+			problem,
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-negative',
+					'click': ui.createHandlerFn(this, function() {
+						this.active = true;
+						return this.stop();
+					})
+				}, _('Stop the calibration')),
+				' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'click': ui.createHandlerFn(this, function() {
+						const mb = Math.floor(+limit.value);
+						problem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
+						if (!(mb >= 1))
+							return;
+						this.load.limit = mb * 1e6;
+						this.saveLimit({ link: link, limit: this.load.limit, dl: 0, ul: 0 });
+						this.active = true;
+						window.addEventListener('beforeunload', this.onUnload);
+						return this.poll();
+					})
+				}, _('Continue the load'))
+			]));
 	},
 
 	// Checks if a session runs (for example after a reload of the page).
@@ -365,17 +409,25 @@ return baseclass.extend({
 	poll: function() {
 		this.timer = null;
 		return L.resolveDefault(callStatus(), null).then((res) => {
+			// A late answer after the end of the session (finish).
+			if (!this.active)
+				return;
 			const st = parseStatus(res);
 			if (st.state == 'running') {
-				this.load.set(st.load);
+				// After a stop, an answer cannot start the load again.
+				if (!this.stopping)
+					this.load.set(st.load);
 				this.measure();
 				if (this.load.limit < Infinity)
 					this.saveLimit({ link: this.link, limit: this.load.limit, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
 				this.renderRunning(st);
-				this.timer = setTimeout(() => this.poll(), POLL_MS);
+				if (!this.stopping)
+					this.timer = setTimeout(() => this.poll(), POLL_MS);
 				return;
 			}
-			this.finish();
+			// A failed status request does not end the session: keep the
+			// data limit for a reload of the page.
+			this.finish(st.state == 'error');
 			this.renderEnd(st);
 		});
 	},
@@ -395,14 +447,17 @@ return baseclass.extend({
 		this.lastBytes = { t: now, dl: b.dl, ul: b.ul };
 	},
 
-	// Ends the load and the status requests.
-	finish: function() {
+	// Ends the load and the status requests. keepLimit keeps the data
+	// limit of the session in the session storage.
+	finish: function(keepLimit) {
+		this.active = false;
 		if (this.timer)
 			clearTimeout(this.timer);
 		this.timer = null;
 		this.load.stop();
 		window.removeEventListener('beforeunload', this.onUnload);
-		this.saveLimit(null);
+		if (!keepLimit)
+			this.saveLimit(null);
 	},
 
 	// Reads the data limit of the running session from the session
@@ -430,12 +485,24 @@ return baseclass.extend({
 		}
 	},
 
+	// Stops the load at once and then the session. If the stop fails, the
+	// page sends no more status requests: then the service stops the
+	// session after its heartbeat time.
 	stop: function() {
-		return L.resolveDefault(callStop(), null).then(() => {
-			if (this.timer) {
-				clearTimeout(this.timer);
-				return this.poll();
-			}
+		this.stopping = true;
+		this.load.stop();
+		if (this.timer)
+			clearTimeout(this.timer);
+		this.timer = null;
+		return callStop().then((res) => {
+			if (!res || res.error)
+				throw new Error((res && res.error) || _('No answer from the service'));
+			return this.poll();
+		}).catch((e) => {
+			this.finish();
+			this.node.replaceChildren(
+				E('p', { 'class': 'alert-message warning' }, text(_('The stop failed: %s. This page sends no more status requests: the service stops the calibration after 15 s.').format(e.message || e))),
+				E('div', { 'class': 'right' }, E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Close'))));
 		});
 	},
 
