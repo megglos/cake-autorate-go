@@ -106,6 +106,9 @@ type Core struct {
 	// calibrating is true during a calibration session. Then Core does not
 	// go to IDLE: the session needs the pings also without load.
 	calibrating bool
+	// unshaped is true while a user turned the shaping off. Then Core does
+	// not go to IDLE: the delay measurement continues.
+	unshaped bool
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -166,16 +169,42 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 func (c *Core) SetCalibrating(on bool, now time.Time) {
 	c.calibrating = on
 	c.idleSince = time.Time{}
-	if on && c.state != StateRunning {
-		if c.state == StateStall {
-			c.act.InvalidateShaper()
-		}
-		c.transitionTo(StateRunning)
-		c.consecutiveTimeouts = 0
-		c.lastPingTime = now
-		c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
-		c.act.StartPingers()
+	if on {
+		c.wake(now)
 	}
+}
+
+// SetUnshaped starts or ends the unshaped mode (command "unshape"). In
+// this mode, Core does not go to IDLE, and the start of the mode leaves
+// IDLE and STALL at once: the delay measurement continues without load.
+// The shaper rates do not change here: the controller sets them.
+func (c *Core) SetUnshaped(on bool, now time.Time) {
+	c.unshaped = on
+	c.idleSince = time.Time{}
+	// The low upload load of the unshaped time is not a low load.
+	c.ul.lowLoadSince = time.Time{}
+	if on {
+		c.wake(now)
+	}
+}
+
+// Unshaped reports whether Core is in the unshaped mode.
+func (c *Core) Unshaped() bool { return c.unshaped }
+
+// wake leaves IDLE and STALL at once, with the base rates (of the
+// directions that are not paused) and the pingers on.
+func (c *Core) wake(now time.Time) {
+	if c.state == StateRunning {
+		return
+	}
+	if c.state == StateStall {
+		c.act.InvalidateShaper()
+	}
+	c.transitionTo(StateRunning)
+	c.consecutiveTimeouts = 0
+	c.lastPingTime = now
+	c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
+	c.act.StartPingers()
 }
 
 // Calibrating reports whether Core is in the calibration mode.
@@ -240,7 +269,7 @@ func (c *Core) HandleRate(stats RateStats) {
 	switch c.state {
 	case StateRunning:
 		// Check for transition to idle
-		if c.cfg.EnableSleepFunction && !c.calibrating &&
+		if c.cfg.EnableSleepFunction && !c.calibrating && !c.unshaped &&
 			stats.DlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) &&
 			stats.UlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) {
 			if c.idleSince.IsZero() {
@@ -372,7 +401,9 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 		return ulDeltaUs
 	}
 	ul := &c.ul
-	if !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+	// Without shaping, the load of the upload is against 10 Gbit/s: a
+	// saturated upload has a low load, and its queue is not cross delay.
+	if !c.unshaped && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
 		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
 	}

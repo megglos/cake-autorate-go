@@ -68,10 +68,16 @@ type LinkStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	// Calibrating is true during a calibration session of the link.
-	Calibrating bool                   `json:"calibrating"`
-	Download    DirStatus              `json:"download"`
-	Upload      DirStatus              `json:"upload"`
-	Reflectors  []ReflectorDelayStatus `json:"reflectors"`
+	Calibrating bool `json:"calibrating"`
+	// Unshaped is true while a user turned the shaping of the link off
+	// through the control socket.
+	Unshaped bool `json:"unshaped"`
+	// UnshapedLeftS is the time until the shaping comes back, for
+	// "unshape LINK SECONDS". It is 0 without a time limit.
+	UnshapedLeftS float64                `json:"unshaped_left_s,omitempty"`
+	Download      DirStatus              `json:"download"`
+	Upload        DirStatus              `json:"upload"`
+	Reflectors    []ReflectorDelayStatus `json:"reflectors"`
 }
 
 // StatusFile is the content of the status file.
@@ -86,7 +92,7 @@ type StatusFile struct {
 // Snapshot returns the status of a link. Call it from the goroutine that
 // uses the Core. It does not change the Core.
 func (c *Core) Snapshot() LinkStatus {
-	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating}
+	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating, Unshaped: c.unshaped}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
 		out := DirStatus{

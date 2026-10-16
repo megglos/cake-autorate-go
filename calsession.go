@@ -43,9 +43,10 @@ var calSessionBlocks = []struct{ mode, policy string }{
 	{"both", "unshaped"},
 }
 
-// calUnshapedKbps is the shaper rate in the unshaped blocks: 10 Gbit/s,
+// unshapedKbps is the shaper rate in the unshaped blocks and of an
+// unshaped link (command "unshape"): 10 Gbit/s,
 // more than the capacity of a WAN link.
-const calUnshapedKbps = 10_000_000
+const unshapedKbps = 10_000_000
 
 // calHeartbeat is the maximum time without a status request. The program
 // that makes the load reads the status each second. Without the requests,

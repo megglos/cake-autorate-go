@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -36,6 +37,14 @@ type LinkController struct {
 	// calPaused are the pause states of the directions before a
 	// calibration session. Only the goroutine of Run uses it.
 	calPaused map[Direction]bool
+	// unshapePaused are the pause states of the directions before the
+	// command "unshape". Only the goroutine of Run uses it.
+	unshapePaused map[Direction]bool
+	// unshapeUntil is the end of the time of "unshape LINK SECONDS", or
+	// zero (no time limit). unshapeTimer fires at this time. Only the
+	// goroutine of Run uses them.
+	unshapeUntil time.Time
+	unshapeTimer *time.Timer
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
 	// goroutine of Run.
@@ -116,11 +125,16 @@ func (c *LinkController) Run(ctx context.Context) error {
 		c.link.Download.Interface, c.link.Download.MinRateKbps, c.link.Download.BaseRateKbps, c.link.Download.MaxRateKbps,
 		c.link.Upload.Interface, c.link.Upload.MinRateKbps, c.link.Upload.BaseRateKbps, c.link.Upload.MaxRateKbps)
 
+	return c.loop(ctx, healthTicker.C, statusC)
+}
+
+// loop handles the events of the link until ctx ends. healthC and statusC
+// are the ticks of the health check of the reflectors and of the status.
+func (c *LinkController) loop(ctx context.Context, healthC, statusC <-chan time.Time) error {
 	for {
 		select {
 		case <-ctx.Done():
-			c.StopPingers()
-			c.logger.Infof("[%s] controller stopped", c.name)
+			c.stop(time.Now())
 			return ctx.Err()
 
 		case stats := <-c.rateCh:
@@ -135,7 +149,10 @@ func (c *LinkController) Run(ctx context.Context) error {
 			cmd.err = cmd.fn(time.Now())
 			close(cmd.done)
 
-		case <-healthTicker.C:
+		case <-c.unshapeTimerC():
+			c.checkUnshapeTime(time.Now())
+
+		case <-healthC:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
 				for _, r := range promoted {
@@ -151,6 +168,9 @@ func (c *LinkController) Run(ctx context.Context) error {
 // goroutine of Run calls it, thus it can read the Core.
 func (c *LinkController) publishStatus() {
 	st := c.core.Core().Snapshot()
+	if st.Unshaped && !c.unshapeUntil.IsZero() {
+		st.UnshapedLeftS = math.Max(0, math.Round(time.Until(c.unshapeUntil).Seconds()))
+	}
 	baselines := c.core.Core().ReflectorBaselinesUs()
 	for _, r := range c.pingerMgr.Snapshot() {
 		st.Reflectors = append(st.Reflectors, ReflectorDelayStatus{ReflectorStatus: r, BaselineMs: roundMs(baselines[r.Address])})
@@ -213,6 +233,9 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 		if c.core.Core().Calibrating() {
 			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
 		}
+		if c.core.Core().Unshaped() {
+			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
+		}
 		var err error
 		for _, dir := range dirs {
 			c.rateErr = nil
@@ -225,6 +248,144 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 		}
 		return err
 	})
+}
+
+// SetUnshaped turns the shaping of the link off (on is true) or on again.
+// With a duration d > 0, the shaping comes back after d (also when the
+// program that sent the command stops); a new "unshape" sets a new time.
+// Without shaping, the shaper rate of each direction with rate control is
+// unshapedKbps and the rate control stops; the pings and the status
+// continue. When the shaping comes back, each direction gets its pause
+// state from before: a paused direction stays paused at the base rate,
+// the others start the rate control again from the base rate. The state
+// is not kept: the program starts with shaping, and it shapes the link
+// again before it stops.
+func (c *LinkController) SetUnshaped(on bool, d time.Duration) error {
+	return c.call(func(now time.Time) error {
+		if c.core.Core().Calibrating() {
+			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		if on {
+			c.setUnshapeTime(now, d)
+		}
+		if !on {
+			return c.shapeAgain(now)
+		}
+		if !c.link.Download.Adjust && !c.link.Upload.Adjust {
+			return fmt.Errorf("link %q: no direction has rate control (adjust)", c.name)
+		}
+		// A second "unshape" sets the rates again, as "pause" does: after
+		// an error, the user can send the command again. It keeps the
+		// pause states from before the first "unshape".
+		core := c.core.Core()
+		if !core.Unshaped() {
+			c.unshapePaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		}
+		// Set the mode before the rates: after a failed rate change, the
+		// user can turn the shaping on again. The mode also wakes an idle
+		// link: the delay measurement continues without load.
+		c.rateErr = nil
+		c.core.SetUnshaped(true, now)
+		for _, dir := range Directions() {
+			if c.link.DirConfig(dir).Adjust {
+				c.core.SetFixedRate(dir, unshapedKbps, now)
+			}
+		}
+		c.logger.Infof("[%s] shaping off", c.name)
+		return c.rateErr
+	})
+}
+
+// shapeAgain ends the unshaped state, if set: each direction gets its
+// pause state from before. Only the goroutine of Run calls it.
+func (c *LinkController) shapeAgain(now time.Time) error {
+	if !c.core.Core().Unshaped() {
+		return nil
+	}
+	c.rateErr = nil
+	for _, dir := range Directions() {
+		if c.link.DirConfig(dir).Adjust {
+			c.core.SetPaused(dir, c.unshapePaused[dir], now)
+		}
+	}
+	if c.rateErr != nil {
+		return c.rateErr
+	}
+	c.core.SetUnshaped(false, now)
+	c.setUnshapeTime(now, 0)
+	c.logger.Infof("[%s] shaping on", c.name)
+	return nil
+}
+
+// setUnshapeTime sets the time limit of the unshaped state: d from now, or
+// no limit for d == 0.
+func (c *LinkController) setUnshapeTime(now time.Time, d time.Duration) {
+	if c.unshapeTimer != nil {
+		c.unshapeTimer.Stop()
+		c.unshapeTimer = nil
+	}
+	c.unshapeUntil = time.Time{}
+	if d > 0 {
+		c.unshapeUntil = now.Add(d)
+		c.unshapeTimer = time.NewTimer(d)
+	}
+}
+
+// unshapeTimerC returns the channel of the time limit of the unshaped
+// state, or nil (no time limit: a nil channel never receives).
+func (c *LinkController) unshapeTimerC() <-chan time.Time {
+	if c.unshapeTimer == nil {
+		return nil
+	}
+	return c.unshapeTimer.C
+}
+
+// unshapeRetry is the time until the next try to shape the link again
+// after a failed try at the end of the time of "unshape". Tests change it.
+var unshapeRetry = 5 * time.Second
+
+// checkUnshapeTime shapes the link again at the end of the time of
+// "unshape LINK SECONDS". Only the goroutine of Run calls it.
+func (c *LinkController) checkUnshapeTime(now time.Time) {
+	if c.unshapeUntil.IsZero() || now.Before(c.unshapeUntil) || !c.core.Core().Unshaped() {
+		return
+	}
+	c.logger.Infof("[%s] the time of unshape ended", c.name)
+	if err := c.shapeAgain(now); err != nil {
+		// Try again later: the link must not stay without a shaper
+		// limit after a temporary error (for example of tc).
+		c.logger.Errorf("[%s] turning the shaping on (again in %v): %v", c.name, unshapeRetry, err)
+		c.unshapeTimer = time.NewTimer(unshapeRetry)
+	}
+}
+
+// stopShapeTries and stopShapeWait limit the time that the stop of the
+// program waits for the shaping of an unshaped link. Tests change them.
+var (
+	stopShapeTries = 3
+	stopShapeWait  = time.Second
+)
+
+// stop ends the work of the controller at the end of Run. The link must
+// not stay without a shaper limit after the stop of the program: it shapes
+// an unshaped link again.
+func (c *LinkController) stop(now time.Time) {
+	// A temporary error (for example of tc) must not leave the link
+	// without a shaper limit: try again a few times.
+	for try := 1; ; try++ {
+		err := c.shapeAgain(now)
+		if err == nil {
+			break
+		}
+		if try == stopShapeTries {
+			c.logger.Errorf("[%s] turning the shaping on before the stop: %v", c.name, err)
+			break
+		}
+		c.logger.Errorf("[%s] turning the shaping on before the stop (try %d of %d): %v", c.name, try, stopShapeTries, err)
+		time.Sleep(stopShapeWait)
+	}
+	c.StopPingers()
+	c.logger.Infof("[%s] controller stopped", c.name)
 }
 
 // restartPingers starts the pingers again to use the new active set of
@@ -311,6 +472,9 @@ func (c *LinkController) CalStart() error {
 		if !c.link.Download.Adjust || !c.link.Upload.Adjust {
 			return fmt.Errorf("link %q: the calibration needs the rate control (adjust) in both directions", c.name)
 		}
+		if c.core.Core().Unshaped() {
+			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
+		}
 		core := c.core.Core()
 		c.calPaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
 		c.core.SetCalibrating(true, now)
@@ -328,7 +492,7 @@ func (c *LinkController) CalBlock(rec *Recorder, unshaped bool) error {
 		c.core.SetCalibrating(true, now)
 		for _, dir := range Directions() {
 			if unshaped {
-				c.core.SetFixedRate(dir, calUnshapedKbps, now)
+				c.core.SetFixedRate(dir, unshapedKbps, now)
 			} else {
 				c.core.SetPaused(dir, false, now)
 			}

@@ -1195,13 +1195,13 @@ func TestCalibratingLeavesIdle(t *testing.T) {
 func TestSetFixedRate(t *testing.T) {
 	c, act := newTestCore(t)
 	c.link.Download.Adjust = true
-	c.SetFixedRate(DL, calUnshapedKbps)
-	if got := act.rates[DL]; len(got) == 0 || got[len(got)-1] != calUnshapedKbps || !c.Paused(DL) {
+	c.SetFixedRate(DL, unshapedKbps)
+	if got := act.rates[DL]; len(got) == 0 || got[len(got)-1] != unshapedKbps || !c.Paused(DL) {
 		t.Fatalf("rates %v, paused %v", got, c.Paused(DL))
 	}
 	// The rate control does not change the fixed rate.
 	c.setRates(1000, 1000)
-	if got := act.rates[DL]; got[len(got)-1] != calUnshapedKbps {
+	if got := act.rates[DL]; got[len(got)-1] != unshapedKbps {
 		t.Errorf("a paused direction changed: %v", got)
 	}
 	c.SetPaused(DL, false)
@@ -1220,5 +1220,73 @@ func TestCalibratingLeavesStall(t *testing.T) {
 	c.SetCalibrating(true, time.Now())
 	if c.state != StateRunning || act.starts != starts+1 || act.invalidates != invalidates+1 {
 		t.Errorf("state %s, pinger starts %d, shaper invalidations %d", c.state, act.starts-starts, act.invalidates-invalidates)
+	}
+}
+
+// The unshaped mode keeps the delay measurement: it leaves IDLE at once,
+// and a link with low traffic does not go to IDLE. After the mode, the
+// normal idle detection applies again.
+func TestUnshapedPreventsIdle(t *testing.T) {
+	c, act := newTestCore(t)
+	c.cfg.EnableSleepFunction = true
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.cfg.SustainedIdleSleepThrS = 0.001
+	c.state = StateIdle
+	starts := act.starts
+	now := time.Now()
+	c.SetUnshaped(true, now)
+	if c.state != StateRunning || act.starts != starts+1 || !c.Unshaped() || !c.Snapshot().Unshaped {
+		t.Fatalf("state %s, pinger starts %d, status %+v", c.state, act.starts-starts, c.Snapshot())
+	}
+	for i := range 3 {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateRunning {
+		t.Errorf("unshaped with low traffic: got %s, want RUNNING", c.state)
+	}
+	c.SetUnshaped(false, now.Add(3*time.Second))
+	for i := 4; i < 6; i++ {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateIdle || c.Snapshot().Unshaped {
+		t.Errorf("after the unshaped mode: got %s, status %+v", c.state, c.Snapshot())
+	}
+}
+
+// Without shaping, a saturated upload has a low load against 10 Gbit/s:
+// its queue must not go into the learned cross delay, also not after
+// "shape".
+func TestUnshapedDoesNotLearnCrossDelay(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.LearnCrossDelay = true
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.SetUnshaped(true, ts)
+	c.SetFixedRate(DL, unshapedKbps)
+	c.SetFixedRate(UL, unshapedKbps)
+	ping := func(n int, ulMs float64) {
+		for range n {
+			ts = ts.Add(50 * time.Millisecond)
+			c.HandlePing(owdPing("1.1.1.1", ts, 10+ulMs, 10))
+		}
+	}
+	// A saturated upload of 10 Mbit/s with download activity.
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	ping(200, 60)
+	if c.ul.crossDelayUs != 0 {
+		t.Fatalf("unshaped: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+	// After "shape", the low load starts again.
+	c.SetPaused(DL, false)
+	c.SetPaused(UL, false)
+	c.SetUnshaped(false, ts)
+	if !c.ul.lowLoadSince.IsZero() {
+		t.Errorf("low load since %v after shape, want zero", c.ul.lowLoadSince)
+	}
+	ping(10, 60)
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("after shape: learned %.0f us at once", c.ul.crossDelayUs)
 	}
 }
