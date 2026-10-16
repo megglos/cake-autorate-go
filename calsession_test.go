@@ -40,11 +40,11 @@ func (c *fakeClock) peek() time.Time {
 // delays of 4 reflectors and the achieved rates of a link with 50 Mbit/s
 // download and 20 Mbit/s upload capacity.
 type fakeCalTarget struct {
-	mu       sync.Mutex
-	clock    *fakeClock
-	times    calTimes
-	cfg      *Config
-	calls    []string
+	mu        sync.Mutex
+	clock     *fakeClock
+	times     calTimes
+	cfg       *Config
+	calls     []string
 	blocks    int
 	startErr  error
 	finishErr error
@@ -160,10 +160,18 @@ func waitCal(t *testing.T, k *Calibrator) (CalStatus, []string) {
 func TestCalibrationSession(t *testing.T) {
 	times := defaultCalTimes(30 * time.Second)
 	k, target, _ := newTestCalibrator(t, times)
+	// The phases from the hook: a poll can miss a short phase.
+	var mu sync.Mutex
+	var seen []string
+	k.onPhase = func(st CalStatus) {
+		mu.Lock()
+		seen = append(seen, fmt.Sprintf("%d %s %s %q", st.Block, st.Mode, st.Phase, st.Load))
+		mu.Unlock()
+	}
 	if err := k.Start("wan", times); err != nil {
 		t.Fatal(err)
 	}
-	st, seen := waitCal(t, k)
+	st, _ := waitCal(t, k)
 	if st.State != "done" || st.Result == nil {
 		t.Fatalf("state %s, error %q", st.State, st.Error)
 	}
@@ -182,9 +190,6 @@ func TestCalibrationSession(t *testing.T) {
 	// phase.
 	for _, s := range seen {
 		f := strings.Fields(s)
-		if len(f) < 4 {
-			continue // before the first block
-		}
 		load := strings.Trim(f[3], `"`)
 		if (f[2] == "load") != (load != "") || (load != "" && load != f[1]) {
 			t.Errorf("status %s: wrong load", s)
@@ -213,12 +218,15 @@ func TestCalibrationSession(t *testing.T) {
 	}
 
 	// The files: the session directory and the result file.
-	data, err := os.ReadFile(filepath.Join(k.dir, "calibration-wan", "blocks.tsv"))
+	if len(seen) != 3*len(calSessionBlocks) {
+		t.Errorf("phases: %v", seen)
+	}
+	data, err := os.ReadFile(filepath.Join(k.dir, "calibration", "sessions", "wan", "blocks.tsv"))
 	if err != nil || strings.Count(string(data), "\n") != 1+len(calSessionBlocks) {
 		t.Errorf("blocks.tsv: %v\n%s", err, data)
 	}
 	var file CalOutput
-	data, err = os.ReadFile(filepath.Join(k.dir, "calibration-wan.json"))
+	data, err = os.ReadFile(filepath.Join(k.dir, "calibration", "results", "wan.json"))
 	if err != nil || json.Unmarshal(data, &file) != nil || file.Download.MaxRateKbps != r.Download.MaxRateKbps {
 		t.Errorf("result file: %v\n%s", err, data)
 	}
@@ -408,4 +416,84 @@ func TestCalibrationWaitAtShutdown(t *testing.T) {
 	}
 	var none *Calibrator
 	none.Wait() // no calibrator: returns at once
+}
+
+// After the start of the shutdown, a new session does not start: Wait
+// would not wait for it.
+func TestCalibrationNoStartAfterShutdown(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	target := newFakeCalTarget(clock, times)
+	ctx, cancel := context.WithCancel(context.Background())
+	k := NewCalibrator(ctx, t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
+	cancel()
+	if err := k.Start("wan", times); err == nil || !strings.Contains(err.Error(), "stops") {
+		t.Errorf("start after the shutdown: %v", err)
+	}
+	if calls := target.Calls(); len(calls) != 0 {
+		t.Errorf("the link must not change: %v", calls)
+	}
+}
+
+// The links "wan" and "wan.json" have separate files, in both orders.
+func TestCalibrationFilesOfSimilarLinks(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	for _, order := range [][]string{{"wan", "wan.json"}, {"wan.json", "wan"}} {
+		clock := &fakeClock{t: time.Unix(1_700_000_000, 0), step: 50 * time.Millisecond}
+		targets := map[string]CalTarget{}
+		for _, name := range order {
+			targets[name] = newFakeCalTarget(clock, times)
+		}
+		k := NewCalibrator(context.Background(), t.TempDir(), targets, NewDiscardLogger())
+		k.now, k.tick, k.heartbeat = clock.Now, time.Microsecond, time.Hour
+		for _, name := range order {
+			if err := k.Start(name, times); err != nil {
+				t.Fatal(err)
+			}
+			if st, _ := waitCal(t, k); st.State != "done" {
+				t.Fatalf("%v: %s: %s %q", order, name, st.State, st.Error)
+			}
+		}
+		for _, name := range order {
+			if _, err := os.Stat(filepath.Join(k.dir, "calibration", "results", name+".json")); err != nil {
+				t.Errorf("%v: result of %s: %v", order, name, err)
+			}
+			if _, err := os.Stat(filepath.Join(k.dir, "calibration", "sessions", name, "blocks.tsv")); err != nil {
+				t.Errorf("%v: session of %s: %v", order, name, err)
+			}
+		}
+	}
+}
+
+// slowCalTarget needs 10 s (on the fake clock) to set up a block.
+type slowCalTarget struct{ *fakeCalTarget }
+
+func (s slowCalTarget) CalBlock(rec *Recorder, unshaped bool) error {
+	err := s.fakeCalTarget.CalBlock(rec, unshaped)
+	s.clock.mu.Lock()
+	s.clock.t = s.clock.t.Add(10 * time.Second)
+	s.clock.mu.Unlock()
+	return err
+}
+
+// The idle time of a block starts after its setup.
+func TestCalibrationIdleAfterSetup(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0), step: 50 * time.Millisecond}
+	target := slowCalTarget{newFakeCalTarget(clock, times)}
+	k := NewCalibrator(context.Background(), t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
+	k.now, k.tick, k.heartbeat = clock.Now, time.Microsecond, time.Hour
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	waitCal(t, k)
+	blocks, err := readBlocks(filepath.Join(k.dir, "calibration", "sessions", "wan"))
+	if err != nil || len(blocks) != len(calSessionBlocks) {
+		t.Fatalf("blocks: %v %v", blocks, err)
+	}
+	for _, b := range blocks {
+		if idle := b.loadStart.Sub(b.start); idle < times.Idle {
+			t.Errorf("block %d: idle time %v, want %v", b.num, idle, times.Idle)
+		}
+	}
 }

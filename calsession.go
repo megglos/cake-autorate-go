@@ -186,6 +186,9 @@ type Calibrator struct {
 	now       func() time.Time
 	tick      time.Duration
 	heartbeat time.Duration
+	// onPhase, if set, gets the status at the start of each phase (for
+	// the tests).
+	onPhase func(CalStatus)
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -211,6 +214,11 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	// After the start of the shutdown, Wait does not wait for a new
+	// session: the controllers would stop before its restore.
+	if k.ctx.Err() != nil {
+		return errors.New("the service stops")
+	}
 	if k.status.State == "running" {
 		return fmt.Errorf("a calibration of link %q runs", k.status.Link)
 	}
@@ -308,7 +316,12 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 
 // session runs the blocks and the analysis.
 func (k *Calibrator) session(ctx context.Context, link string, target CalTarget, times calTimes) (*CalOutput, error) {
-	dir := filepath.Join(k.dir, "calibration-"+link)
+	// The sessions and the results have separate directories: a link name
+	// can end with ".json".
+	if err := os.MkdirAll(filepath.Join(k.dir, "calibration"), 0o755); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(k.dir, "calibration", "sessions", link)
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
@@ -328,9 +341,11 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		if err != nil {
 			return nil, err
 		}
-		start := k.now()
 		k.setBlock(i+1, b.mode, b.policy)
 		err = target.CalBlock(rec, b.policy == "unshaped")
+		// The idle time starts after the setup of the block: a slow rate
+		// change must not shorten it.
+		start := k.now()
 		var loadStart, loadEnd time.Time
 		if err == nil {
 			err = k.phase(ctx, "idle", "", start.Add(times.Idle))
@@ -368,7 +383,11 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(k.dir, "calibration-"+link+".json"), append(data, '\n'), 0o644); err != nil {
+	results := filepath.Join(k.dir, "calibration", "results")
+	if err := os.MkdirAll(results, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(results, link+".json"), append(data, '\n'), 0o644); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -386,7 +405,11 @@ func (k *Calibrator) phase(ctx context.Context, name, load string, end time.Time
 	k.mu.Lock()
 	k.status.Phase, k.status.Load = name, load
 	k.phaseEnd = end
+	st := k.status
 	k.mu.Unlock()
+	if k.onPhase != nil {
+		k.onPhase(st)
+	}
 	tick := time.NewTicker(k.tick)
 	defer tick.Stop()
 	for {
