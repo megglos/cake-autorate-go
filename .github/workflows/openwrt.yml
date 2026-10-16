@@ -63,7 +63,11 @@ jobs:
       arch: x86_64-openwrt-25.12
       goarch: amd64
 
+  # Not for pull requests: the CI workflow already builds the program for
+  # arm64, and the package files are the same for all architectures. The
+  # runs on main and the releases build it.
   package-arm:
+    if: github.event_name != 'pull_request'
     needs: converter
     uses: ./.github/workflows/package.yml
     with:
