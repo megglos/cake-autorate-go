@@ -41,6 +41,11 @@ type DirStatus struct {
 	DeltaMs float64 `json:"delta_ms"`
 	// ThresholdMs is the delay threshold of the direction.
 	ThresholdMs float64 `json:"threshold_ms"`
+	// HighDelay is true if the delta of the last ping reply was above the
+	// threshold. The controller adds the time to send one packet at the
+	// shaper rate to the threshold. Thus, a delta a little above
+	// ThresholdMs at a low rate is not a high delay.
+	HighDelay bool `json:"high_delay"`
 	// BufferbloatCount is the number of pings with a high delay in the
 	// detection window.
 	BufferbloatCount int `json:"bufferbloat_count"`
@@ -94,6 +99,7 @@ func (c *Core) Snapshot() LinkStatus {
 			MaxKbps:          dc.MaxRateKbps,
 			DeltaMs:          roundMs(ds.lastDeltaUs),
 			ThresholdMs:      dc.OWDDeltaDelayThrMs,
+			HighDelay:        ds.lastHighDelay,
 			BufferbloatCount: ds.delayWindowCount,
 			CrossDelayMs:     roundMs(ds.crossDelayUs),
 			RateChanges:      ds.rateChanges,
