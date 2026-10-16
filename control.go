@@ -140,11 +140,13 @@ func handleCalibrateCommand(args []string, h *ControlHandler) string {
 		}
 		load := calDefaultLoad
 		if len(args) == 3 {
+			// Check the seconds before the conversion: a large value
+			// overflows the multiplication.
 			s, err := strconv.Atoi(args[2])
-			load = time.Duration(s) * time.Second
-			if err != nil || load < calMinLoad || load > calMaxLoad {
+			if err != nil || s < int(calMinLoad/time.Second) || s > int(calMaxLoad/time.Second) {
 				return fmt.Sprintf("error: load time %q: use %d to %d seconds", args[2], int(calMinLoad.Seconds()), int(calMaxLoad.Seconds()))
 			}
+			load = time.Duration(s) * time.Second
 		}
 		if err := h.Calib.Start(args[1], defaultCalTimes(load)); err != nil {
 			return "error: " + oneLine.Replace(err.Error())

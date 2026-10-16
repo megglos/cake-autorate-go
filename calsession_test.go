@@ -341,6 +341,8 @@ func TestHandleCalibrateCommand(t *testing.T) {
 		{"calibrate start wan 19", "error: load time", 0},
 		{"calibrate start wan 121", "error: load time", 0},
 		{"calibrate start wan x", "error: load time", 0},
+		// 36028797018964008 s * time.Second overflows to 40 s.
+		{"calibrate start wan 36028797018964008", "error: load time", 0},
 		{"calibrate start", "error: usage", 0},
 		{"calibrate", "error: usage", 0},
 		{"calibrate go", "error: unknown calibrate command", 0},
