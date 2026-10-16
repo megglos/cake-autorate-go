@@ -321,6 +321,29 @@ test('the cursor shows the values of a sample and stays after a refresh', async 
 	}
 });
 
+test('the cursor goes away if the graph under the pointer gets no pointerleave', async ({ page }) => {
+	await page.goto(PAGE);
+	const rate = page.locator('.cbi-section[data-link="wan"] [data-graph="rate"]');
+	const tip = rate.locator('.graph-tip');
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+	const box = await rate.locator('svg').boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await expect(tip).toBeVisible();
+
+	// A refresh replaces the graph under the pointer. The browser does not
+	// always send "pointerleave" to the new graph. A copy without event
+	// handlers has the same effect.
+	await page.evaluate(() => {
+		const g = document.querySelector('.cbi-section[data-link="wan"] svg[data-plot="rate"]');
+		g.replaceWith(g.cloneNode(true));
+	});
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 300);
+	// Also after the next refresh.
+	const old = await tip.elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	await expect(tip).toBeHidden();
+});
+
 test('the keyboard selects a sample and the selection stays after a refresh', async ({ page }) => {
 	control('pause wan');
 	try {

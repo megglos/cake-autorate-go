@@ -177,6 +177,14 @@ return view.extend({
 	// a selection. A refresh shows the two cursors again.
 	selection: null,
 
+	// Removes the cursor of the pointer from all graphs.
+	leavePointer: function() {
+		this.pointer = null;
+		for (const g of this.container.querySelectorAll('svg[data-plot]'))
+			if (g.showCursor)
+				g.showCursor();
+	},
+
 	// Adds one sample for each link if the program wrote a new status, and
 	// removes the old samples and the links that are not in the status.
 	addSamples: function(status) {
@@ -325,6 +333,9 @@ return view.extend({
 				this.pointer = null;
 			showCursor();
 		});
+		// For leavePointer(): a refresh replaces the graph under the
+		// pointer, and the new graph does not always get "pointerleave".
+		graph.showCursor = showCursor;
 		// The keyboard selects a sample: the arrow keys the previous or the
 		// next sample, Home the first and End the newest. The focus selects
 		// the shown sample, or the newest.
@@ -570,6 +581,17 @@ return view.extend({
 		this.lastData = data[0];
 		this.container = E('div', { 'id': 'cake-autorate-status' }, this.renderStatus(data[0]));
 		poll.add(L.bind(this.refresh, this), 2);
+
+		// The pointer left the graphs: on a move outside a graph, or out of
+		// the window.
+		document.addEventListener('pointermove', (ev) => {
+			if (this.pointer && !(ev.target.closest && ev.target.closest('svg[data-plot]')))
+				this.leavePointer();
+		});
+		document.addEventListener('pointerout', (ev) => {
+			if (this.pointer && !ev.relatedTarget)
+				this.leavePointer();
+		});
 
 		const period = E('select', {
 			'id': 'cake-autorate-period',
