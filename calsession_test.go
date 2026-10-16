@@ -45,8 +45,9 @@ type fakeCalTarget struct {
 	times    calTimes
 	cfg      *Config
 	calls    []string
-	blocks   int
-	startErr error
+	blocks    int
+	startErr  error
+	finishErr error
 }
 
 func newFakeCalTarget(clock *fakeClock, times calTimes) *fakeCalTarget {
@@ -118,7 +119,7 @@ func (f *fakeCalTarget) CalStopRecording() error {
 
 func (f *fakeCalTarget) CalFinish() error {
 	f.call("finish")
-	return nil
+	return f.finishErr
 }
 
 // newTestCalibrator returns a calibrator with a fake clock and a fake
@@ -351,4 +352,60 @@ func TestHandleCalibrateCommand(t *testing.T) {
 	if got := handleControlCommand("calibrate status", &ControlHandler{}); got != "error: no calibration" {
 		t.Errorf("without a calibrator: %q", got)
 	}
+}
+
+// A failed restore of the rate control is a failed session, also after a
+// stop: the shaper can still have no limit.
+func TestCalibrationRestoreFailure(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, clock := newTestCalibrator(t, times)
+	clock.step = 0
+	target.finishErr = errors.New("link does not answer")
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "restore the rate control: link does not answer") {
+		t.Errorf("status: %+v", st)
+	}
+
+	// After another error, the status has both errors.
+	clock.mu.Lock()
+	clock.step = 50 * time.Millisecond
+	clock.mu.Unlock()
+	k.heartbeat = 5 * time.Second
+	target.blocks = 0
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "restore the rate control") || !strings.Contains(st.Error, "no status request") {
+		t.Errorf("status: %+v", st)
+	}
+}
+
+// At the stop of the daemon, Wait returns after the session restored the
+// rate control.
+func TestCalibrationWaitAtShutdown(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	target := newFakeCalTarget(clock, times)
+	ctx, cancel := context.WithCancel(context.Background())
+	k := NewCalibrator(ctx, t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
+	k.now, k.tick, k.heartbeat = clock.Now, time.Millisecond, time.Hour
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	k.Wait()
+	if calls := target.Calls(); calls[len(calls)-1] != "finish" {
+		t.Errorf("calls: %v", calls)
+	}
+	if st := k.Status(); st.State != "stopped" {
+		t.Errorf("state: %s", st.State)
+	}
+	var none *Calibrator
+	none.Wait() // no calibrator: returns at once
 }

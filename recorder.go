@@ -48,6 +48,8 @@ const (
 	recShaper         = "shaper"
 	recState          = "state"
 	recPause          = "pause"
+	recCalibrating    = "calibrating"
+	recFixedRate      = "fixed_rate"
 )
 
 type recHeaderEvent struct {
@@ -105,6 +107,23 @@ type recPauseEvent struct {
 	Link   string    `json:"link"`
 	Dir    Direction `json:"dir"`
 	Paused bool      `json:"paused"`
+}
+
+// recCalibratingEvent is the start or the end of the calibration mode.
+type recCalibratingEvent struct {
+	T    int64  `json:"t"`
+	Type string `json:"type"`
+	Link string `json:"link"`
+	On   bool   `json:"on"`
+}
+
+// recFixedRateEvent is a fixed shaper rate of a calibration block.
+type recFixedRateEvent struct {
+	T        int64     `json:"t"`
+	Type     string    `json:"type"`
+	Link     string    `json:"link"`
+	Dir      Direction `json:"dir"`
+	RateKbps int       `json:"rate_kbps"`
 }
 
 type recStateEvent struct {
@@ -347,6 +366,24 @@ func (r *Recorder) Pause(link string, dir Direction, paused bool, ts time.Time) 
 	r.write(recPauseEvent{T: r.since(ts), Type: recPause, Link: link, Dir: dir, Paused: paused})
 }
 
+// Calibrating records the start or the end of the calibration mode. It is
+// an input of Core.
+func (r *Recorder) Calibrating(link string, on bool, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recCalibratingEvent{T: r.since(ts), Type: recCalibrating, Link: link, On: on})
+}
+
+// FixedRate records a fixed shaper rate of a calibration block. It is an
+// input of Core.
+func (r *Recorder) FixedRate(link string, dir Direction, rateKbps int, ts time.Time) {
+	if r == nil {
+		return
+	}
+	r.write(recFixedRateEvent{T: r.since(ts), Type: recFixedRate, Link: link, Dir: dir, RateKbps: rateKbps})
+}
+
 // State records a state change of Core.
 func (r *Recorder) State(link string, s State, ts time.Time) {
 	if r == nil {
@@ -400,12 +437,14 @@ func (rc *RecordingCore) SetCalRecorder(rec *Recorder, ts time.Time) {
 
 // SetCalibrating starts or ends the calibration mode of the Core.
 func (rc *RecordingCore) SetCalibrating(on bool, ts time.Time) {
+	rc.record(func(r *Recorder) { r.Calibrating(rc.name, on, ts) })
 	rc.process(ts, func() { rc.core.SetCalibrating(on, ts) })
 }
 
 // SetFixedRate sets a fixed shaper rate and pauses the rate control of a
 // direction (a calibration block without a shaper limit).
 func (rc *RecordingCore) SetFixedRate(dir Direction, rateKbps int, ts time.Time) {
+	rc.record(func(r *Recorder) { r.FixedRate(rc.name, dir, rateKbps, ts) })
 	rc.process(ts, func() { rc.core.SetFixedRate(dir, rateKbps) })
 }
 

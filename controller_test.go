@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -145,5 +146,64 @@ func TestPingers_RestartWithLivePingers(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if n := len(c.pingCh); n > 0 {
 		t.Errorf("got %d ping results after StopPingers returned, want 0", n)
+	}
+}
+
+// runCommands runs the commands of the controller like Run, until the test
+// ends.
+func runCommands(t *testing.T, c *LinkController) {
+	t.Helper()
+	c.ctrlCh = make(chan *ctrlCmd)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case cmd := <-c.ctrlCh:
+				cmd.err = cmd.fn(time.Now())
+				close(cmd.done)
+			case <-stop:
+				return
+			}
+		}
+	}()
+}
+
+// During a calibration, a pause or a resume would change the shaper of the
+// block: the controller refuses them.
+func TestSetPausedRefusedDuringCalibration(t *testing.T) {
+	c := testPingerController(t)
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, &fakeActuator{}, nil, testLogger(t))
+	runCommands(t, c)
+	c.core.SetCalibrating(true, time.Now())
+	if err := c.SetPaused([]Direction{DL}, true); err == nil || !strings.Contains(err.Error(), "calibration runs") {
+		t.Errorf("pause during a calibration: %v", err)
+	}
+	if c.core.Core().Paused(DL) {
+		t.Error("the pause must not apply")
+	}
+	c.core.SetCalibrating(false, time.Now())
+	if err := c.SetPaused([]Direction{DL}, true); err != nil || !c.core.Core().Paused(DL) {
+		t.Errorf("pause after the calibration: %v", err)
+	}
+}
+
+// A calibration command waits until the controller has run it, also when
+// it takes longer than the timeout of the other commands.
+func TestCallUntilDoneWaitsForSlowCommand(t *testing.T) {
+	c := testPingerController(t)
+	runCommands(t, c)
+	err := c.callUntilDone(func(time.Time) error {
+		time.Sleep(2500 * time.Millisecond)
+		return errors.New("done")
+	}, time.Second)
+	if err == nil || err.Error() != "done" {
+		t.Errorf("got %v, want the result of the command", err)
+	}
+	// Nobody takes the command: the dispatch times out.
+	idle := testPingerController(t)
+	idle.ctrlCh = make(chan *ctrlCmd)
+	if err := idle.callUntilDone(func(time.Time) error { return nil }, 50*time.Millisecond); err == nil {
+		t.Error("a command without a controller must time out")
 	}
 }

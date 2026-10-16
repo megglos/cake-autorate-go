@@ -260,6 +260,20 @@ func (k *Calibrator) Status() CalStatus {
 	return st
 }
 
+// Wait waits until a running session has ended and has restored the rate
+// control. A nil calibrator has no session.
+func (k *Calibrator) Wait() {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	done := k.done
+	k.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+
 // errCalStopped is the error of a stopped session.
 var errCalStopped = errors.New("stopped")
 
@@ -267,9 +281,14 @@ var errCalStopped = errors.New("stopped")
 func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, times calTimes, done chan struct{}) {
 	defer close(done)
 	out, err := k.session(ctx, link, target, times)
-	// Restore the rate control also after an error.
-	if ferr := target.CalFinish(); ferr != nil && err == nil {
-		err = fmt.Errorf("restore the rate control: %w", ferr)
+	// Restore the rate control also after an error. A failed restore is
+	// always a failed session: the shaper can still have no limit.
+	if ferr := target.CalFinish(); ferr != nil {
+		if err != nil && !errors.Is(err, errCalStopped) {
+			err = fmt.Errorf("restore the rate control: %v (after: %v)", ferr, err)
+		} else {
+			err = fmt.Errorf("restore the rate control: %w", ferr)
+		}
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()

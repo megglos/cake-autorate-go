@@ -142,6 +142,11 @@ func main() {
 		}()
 	}
 
+	// The controllers stop after a calibration session has restored the
+	// rate control (see below). Thus, they have their own context.
+	ctrlCtx, ctrlCancel := context.WithCancel(context.Background())
+	defer ctrlCancel()
+
 	// Launch a LinkController per configured link
 	controls := make(map[string]LinkControl)
 	for i := range cfg.Links {
@@ -153,12 +158,13 @@ func main() {
 		wg.Add(1)
 		go func(ctrl *LinkController, linkName string) {
 			defer wg.Done()
-			if err := ctrl.Run(ctx); err != nil && ctx.Err() == nil {
+			if err := ctrl.Run(ctrlCtx); err != nil && ctrlCtx.Err() == nil {
 				logger.Errorf("[%s] controller error: %v", linkName, err)
 			}
 		}(lc, link.Name)
 	}
 
+	var calib *Calibrator
 	if cfg.ControlSocket != "" {
 		// The calibration sessions write their files next to the
 		// control socket (a RAM file system on OpenWrt).
@@ -166,7 +172,7 @@ func main() {
 		for name, lc := range controls {
 			targets[name] = lc.(*LinkController)
 		}
-		calib := NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
+		calib = NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -175,6 +181,14 @@ func main() {
 			}
 		}()
 	}
+
+	// At the stop, a calibration session ends first: it restores the rate
+	// control through the controllers. Then the controllers stop.
+	go func() {
+		<-ctx.Done()
+		calib.Wait()
+		ctrlCancel()
+	}()
 
 	wg.Wait()
 	logger.Infof("cake-autorate-go stopped")
