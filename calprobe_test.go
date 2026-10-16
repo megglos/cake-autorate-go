@@ -181,3 +181,32 @@ func TestCalibrationStopDuringProbe(t *testing.T) {
 		t.Errorf("status: %+v", st)
 	}
 }
+
+// The probe has its own interval: with ping_interval_ms 1000, the idle
+// time of a block still gives enough requests to each reflector.
+func TestProbeIntervalIndependentOfPingInterval(t *testing.T) {
+	if n := int(defaultCalTimes(calMinLoad).Idle / calProbeInterval); n < calMinIdleSamples+calMinIdleSamples/2 {
+		t.Errorf("%d requests in the idle time, want more than %d", n, calMinIdleSamples)
+	}
+}
+
+// A probe with too few requests (for example, it stopped early) has no
+// result: the recordings select the ping method.
+func TestCalibrationProbeTooFewRequests(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, _, _ := newTestCalibrator(t, times)
+	k.probe = func(context.Context, *Config, *Logger) ([]tsProbe, error) {
+		return []tsProbe{{Addr: "10.0.0.1", Sent: 15, Replies: 15, OWD: 15}}, nil
+	}
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	r := k.Status().Result
+	if r == nil || r.PingMethod != PingMethodTimestamp || len(r.Reflectors) != 4 {
+		t.Fatalf("result: %+v", r)
+	}
+	if !strings.Contains(strings.Join(r.Notes, "\n"), "probe did not run: fewer than 20 requests") {
+		t.Errorf("notes: %v", r.Notes)
+	}
+}

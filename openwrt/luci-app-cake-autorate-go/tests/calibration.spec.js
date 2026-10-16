@@ -146,13 +146,32 @@ test('the dialog shows the time and the data volume, and starts the session', as
 	await expect(modal).toContainText('Calibrate the link wan');
 	// The test link: 80 and 35 Mbit/s maximum. 40 s: 3 blocks of each
 	// direction at the maximum: 40 * 3 * (10 + 4.375) MB = 1.7 GB.
-	await expect(modal.locator('.cake-autorate-estimate')).toContainText('up to 1.7 GB');
+	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 1.7 GB');
 	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 5 minutes');
+	// The default data limit is 1.5 times the volume, up to the next 100 MB.
+	await expect(modal.locator('#cake-autorate-calibrate-limit')).toHaveValue('2600');
 	await modal.locator('#cake-autorate-calibrate-load').selectOption('20');
-	await expect(modal.locator('.cake-autorate-estimate')).toContainText(/up to 86[23] MB/);
+	await expect(modal.locator('.cake-autorate-estimate')).toContainText(/approximately 86[23] MB/);
+	await expect(modal.locator('#cake-autorate-calibrate-limit')).toHaveValue('1300');
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('.cake-autorate-block')).toContainText('Block 1 of 5');
+	await expect(modal.locator('.cake-autorate-used')).toContainText('Data: 0 MB of 1.3 GB.');
 	expect(session.starts).toEqual([ { link: 'wan', load_s: 20 } ]);
+});
+
+test('the load stops the session at the data limit', async ({ page }) => {
+	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ]);
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	const modal = page.locator('.modal');
+	// One upload is 4 MiB: more than the limit of 1 MB.
+	await modal.locator('#cake-autorate-calibrate-limit').fill('1');
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The calibration stopped: the load reached the data limit of 1 MB.', { timeout: 10000 });
+	expect(session.stops).toBe(1);
+	expect(load.up).toBe(0);
 });
 
 test('the browser makes the load that the session asks for', async ({ page }) => {
@@ -216,6 +235,8 @@ test('the result shows the proposal and applies the selected values', async ({ p
 	const session = fakeSession([ running(5, 'both', 'unshaped', 'tail', ''), { state: 'done', link: 'wan', load: '', result: RESULT } ]);
 	await routeSession(page, session);
 	await routeLoad(page);
+	// The global section can have another name.
+	vm('uci rename cake-autorate.global=main && uci commit cake-autorate');
 	try {
 		await page.goto(PAGE);
 		await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
@@ -236,12 +257,21 @@ test('the result shows the proposal and applies the selected values', async ({ p
 		await expect(row('ping_method')).toContainText('icmp (global)');
 		await expect(row('reflectors')).toContainText('9.9.9.9 1.0.0.1 8.8.4.4 149.112.112.112');
 		await expect(page.locator('.modal')).toContainText('the upload grant delay is not measured');
-		// Do not apply the reflectors.
+		await expect(row('connection_active_thr_kbps')).toContainText('2000 (default)');
+		await expect(row('connection_active_thr_kbps')).toContainText('750');
+		// The reflectors of the link do not reply to ICMP timestamps: the
+		// ping method needs the proposed reflectors.
 		await row('reflectors').locator('input[type=checkbox]').uncheck();
+		await page.locator('.modal').getByRole('button', { name: 'Apply the selected values' }).click();
+		await expect(page.locator('.modal .alert-message.danger')).toContainText('no reflector of the list replies to ICMP timestamp requests');
+		expect(vm('uci -q get cake-autorate.wan.dl_max_rate_kbps').trim()).toBe('80000');
+		// Do not apply the ping method and the reflectors.
+		await row('ping_method').locator('input[type=checkbox]').uncheck();
 		await page.locator('.modal').getByRole('button', { name: 'Apply the selected values' }).click();
 		await expect.poll(() => vm('uci -q get cake-autorate.wan.dl_max_rate_kbps || true').trim(), { timeout: 30000 }).toBe('33000');
 		expect(vm('uci -q get cake-autorate.wan.ul_base_rate_kbps').trim()).toBe('13000');
-		expect(vm('uci -q get cake-autorate.wan.ping_method').trim()).toBe('icmp-timestamp');
+		expect(vm('uci -q get cake-autorate.wan.ping_method || true').trim()).toBe('');
+		expect(vm('uci -q get cake-autorate.main.connection_active_thr_kbps').trim()).toBe('750');
 		expect(vm('uci -q get cake-autorate.wan.learn_cross_delay').trim()).toBe('1');
 		expect(vm('uci -q get cake-autorate.wan.ul_owd_delta_delay_thr_ms').trim()).toBe('31');
 		expect(vm('uci -q get cake-autorate.wan.dl_owd_delta_delay_thr_ms || true').trim()).toBe('');
@@ -250,6 +280,25 @@ test('the result shows the proposal and applies the selected values', async ({ p
 	finally {
 		resetConfig();
 	}
+});
+
+test('Apply refuses rates that are not in the order minimum, base, maximum', async ({ page }) => {
+	const result = JSON.parse(JSON.stringify(RESULT));
+	result.download.max_rate_kbps = 15000; // below the base rate of the link (20000)
+	const session = fakeSession([ { state: 'done', link: 'wan', load: '', result: result } ]);
+	await routeSession(page, session);
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	const table = page.locator('.modal table.cake-autorate-result');
+	await expect(table).toBeVisible({ timeout: 10000 });
+	for (const key of [ 'dl_min_rate_kbps', 'dl_base_rate_kbps' ])
+		await table.locator(`tr[data-key="${key}"] input[type=checkbox]`).uncheck();
+	await page.locator('.modal').getByRole('button', { name: 'Apply the selected values' }).click();
+	await expect(page.locator('.modal .alert-message.danger')).toContainText('Download: the selected rates give minimum 5000, base 20000, maximum 15000 kbit/s');
+	await expect(table).toBeVisible();
+	expect(vm('uci -q get cake-autorate.wan.dl_max_rate_kbps').trim()).toBe('80000');
 });
 
 test('a reload of the page shows the running session again', async ({ page }) => {

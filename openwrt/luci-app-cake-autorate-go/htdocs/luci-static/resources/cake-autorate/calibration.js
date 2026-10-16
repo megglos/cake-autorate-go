@@ -34,8 +34,21 @@ const DEFAULTS = {
 	dl_owd_delta_delay_thr_ms: '30',
 	ul_owd_delta_delay_thr_ms: '30',
 	learn_cross_delay: '0',
-	ping_method: 'icmp'
+	ping_method: 'icmp',
+	connection_active_thr_kbps: '2000'
 };
+
+// The default reflectors for ICMP echo. They do not reply to ICMP
+// timestamp requests (config.go, noTimestampReply).
+const ECHO_REFLECTORS = [
+	'1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4',
+	'9.9.9.9', '149.112.112.112', '208.67.222.222', '208.67.220.220'
+];
+
+// The key in the session storage for the data limit of the running
+// session and the data that the load used. Thus, a reload of the page
+// keeps the limit.
+const LIMIT_KEY = 'cake-autorate-calibration-limit';
 
 // The load times that the user can select (s).
 const LOAD_TIMES = [ 20, 40, 80 ];
@@ -102,11 +115,32 @@ const Load = baseclass.extend({
 		this.errors = 0;
 		this.lastError = null;
 		this.upload = null;
+		// limit is the maximum data volume of the load (bytes). At the
+		// limit, the load stops and calls onLimit.
+		this.limit = Infinity;
+		this.onLimit = null;
+		this.overLimit = false;
+	},
+
+	// Returns the data that the load used (bytes). An upload counts from
+	// its start.
+	used: function() {
+		return this.bytes.dl + this.bytes.ul;
+	},
+
+	// Stops the load at the data limit.
+	limitReached: function() {
+		if (this.overLimit)
+			return;
+		this.overLimit = true;
+		this.stop();
+		if (this.onLimit)
+			this.onLimit();
 	},
 
 	// Sets the load: dl, ul, both or empty (no load).
 	set: function(mode) {
-		mode = mode || '';
+		mode = this.overLimit ? '' : (mode || '');
 		if (mode == this.mode)
 			return;
 		this.stop();
@@ -158,14 +192,24 @@ const Load = baseclass.extend({
 						if (r.done)
 							break;
 						this.bytes.dl += r.value.length;
+						if (this.used() >= this.limit) {
+							this.limitReached();
+							return;
+						}
 					}
 				}
 				else {
 					const data = this.uploadData();
+					// Count the upload before it starts: then the parallel
+					// uploads cannot go above the limit.
+					if (this.used() + data.size > this.limit) {
+						this.limitReached();
+						return;
+					}
+					this.bytes.ul += data.size;
 					const res = await fetch(UP_URL, { method: 'POST', body: data, signal: signal, cache: 'no-store' });
 					if (!res.ok)
 						throw new Error('HTTP ' + res.status);
-					this.bytes.ul += data.size;
 				}
 			}
 			catch (e) {
@@ -189,6 +233,7 @@ return baseclass.extend({
 		this.node = null;
 		this.lastBytes = null;
 		this.rates = { dl: 0, ul: 0 };
+		this.limitReached = false;
 		this.onUnload = (ev) => {
 			ev.preventDefault();
 			ev.returnValue = '';
@@ -203,6 +248,13 @@ return baseclass.extend({
 		return loadS * (DL_BLOCKS * dl + UL_BLOCKS * ul);
 	},
 
+	// Returns the default data limit for the estimate in bytes: 1.5 times
+	// the estimate (the capacity can be above the maximum rate), up to the
+	// next 100 MB.
+	defaultLimit: function(estimate) {
+		return Math.max(1, Math.ceil(1.5 * estimate / 1e8)) * 1e8;
+	},
+
 	// Opens the dialog to start a calibration of the link with the status
 	// ls.
 	open: function(ls) {
@@ -210,11 +262,18 @@ return baseclass.extend({
 		const select = E('select', { 'class': 'cbi-input-select', 'id': 'cake-autorate-calibrate-load' },
 			LOAD_TIMES.map((s) => E('option', { 'value': s, 'selected': s == 40 ? '' : null }, _('%d s').format(s))));
 		const info = E('p', { 'class': 'cake-autorate-estimate' });
+		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-calibrate-limit', 'min': 1, 'step': 1 });
+		const limitProblem = E('div', { 'class': 'cake-autorate-problem' });
+		let edited = false;
+		limit.addEventListener('input', () => { edited = true; });
 		const update = () => {
 			const s = +select.value;
 			const minutes = Math.ceil(BLOCKS * (s + BLOCK_EXTRA_S) / 60);
-			info.replaceChildren(text(_('Time: approximately %d minutes. Data volume: up to %s (with the maximum rates of the link).')
-				.format(minutes, volume(this.estimate(ls, s)))));
+			const estimate = this.estimate(ls, s);
+			info.replaceChildren(text(_('Time: approximately %d minutes. Data volume: approximately %s (with the maximum rates of the link).')
+				.format(minutes, volume(estimate))));
+			if (!edited)
+				limit.value = Math.round(this.defaultLimit(estimate) / 1e6);
 		};
 		select.addEventListener('change', update);
 		update();
@@ -230,22 +289,38 @@ return baseclass.extend({
 				E('div', { 'class': 'cbi-value-field' }, select)
 			]),
 			info,
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-calibrate-limit' }, _('Data limit (MB)')),
+				E('div', { 'class': 'cbi-value-field' }, [
+					limit,
+					E('div', { 'class': 'cbi-value-description' },
+						_('The calibration stops when the load of this browser reaches this limit. A link that is faster than its maximum rate needs more data.'))
+				])
+			]),
+			limitProblem,
 			E('div', { 'class': 'right' }, [
 				E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Cancel')),
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-positive',
-					'click': ui.createHandlerFn(this, function() { return this.start(ls.name, +select.value); })
+					'click': ui.createHandlerFn(this, function() {
+						const mb = Math.floor(+limit.value);
+						limitProblem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
+						if (!(mb >= 1))
+							return;
+						return this.start(ls.name, +select.value, mb * 1e6);
+					})
 				}, _('Start'))
 			])
 		]);
 	},
 
 	// Starts a session and shows its progress.
-	start: function(link, loadS) {
+	start: function(link, loadS, limit) {
 		return callStart(link, loadS).then((res) => {
 			if (!res || res.error)
 				throw new Error((res && res.error) || _('No answer from the service'));
+			this.saveLimit({ link: link, limit: limit, dl: 0, ul: 0 });
 			this.attach(link);
 		}).catch((e) => {
 			ui.addNotification(null, E('p', {}, text(_('The calibration did not start: %s').format(e.message || e))), 'danger');
@@ -257,6 +332,20 @@ return baseclass.extend({
 	attach: function(link) {
 		this.link = link;
 		this.lastBytes = null;
+		this.limitReached = false;
+		// A new load for each session. After a reload, the load continues
+		// with the limit and the used data of the session.
+		const saved = this.readLimit();
+		this.load.stop();
+		this.load = new Load();
+		if (saved && saved.link == link) {
+			this.load.limit = saved.limit;
+			this.load.bytes = { dl: saved.dl, ul: saved.ul };
+		}
+		this.load.onLimit = () => {
+			this.limitReached = true;
+			this.stop();
+		};
 		this.node = E('div', { 'id': 'cake-autorate-calibration' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
 		window.addEventListener('beforeunload', this.onUnload);
@@ -280,6 +369,8 @@ return baseclass.extend({
 			if (st.state == 'running') {
 				this.load.set(st.load);
 				this.measure();
+				if (this.load.limit < Infinity)
+					this.saveLimit({ link: this.link, limit: this.load.limit, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
 				this.renderRunning(st);
 				this.timer = setTimeout(() => this.poll(), POLL_MS);
 				return;
@@ -311,6 +402,32 @@ return baseclass.extend({
 		this.timer = null;
 		this.load.stop();
 		window.removeEventListener('beforeunload', this.onUnload);
+		this.saveLimit(null);
+	},
+
+	// Reads the data limit of the running session from the session
+	// storage, or null.
+	readLimit: function() {
+		try {
+			const v = JSON.parse(sessionStorage.getItem(LIMIT_KEY));
+			return (v && typeof v.link == 'string' && v.limit > 0 && v.dl >= 0 && v.ul >= 0) ? v : null;
+		}
+		catch (e) {
+			return null;
+		}
+	},
+
+	// Saves the data limit of the running session (null removes it).
+	saveLimit: function(v) {
+		try {
+			if (v)
+				sessionStorage.setItem(LIMIT_KEY, JSON.stringify(v));
+			else
+				sessionStorage.removeItem(LIMIT_KEY);
+		}
+		catch (e) {
+			// No storage (private mode): a reload loses the limit.
+		}
 	},
 
 	stop: function() {
@@ -336,7 +453,10 @@ return baseclass.extend({
 				phases[st.phase] || st.phase, Math.round(+st.phase_left_s || 0), Math.round(+st.left_s || 0)))),
 			E('p', { 'class': 'cake-autorate-load' }, text(st.load
 				? _('Load from this browser: download %s, upload %s.').format(mbit(this.rates.dl), mbit(this.rates.ul))
-				: _('No load in this phase.')))
+				: _('No load in this phase.'))),
+			E('p', { 'class': 'cake-autorate-used' }, text(this.load.limit < Infinity
+				? _('Data: %s of %s.').format(volume(this.load.used()), volume(this.load.limit))
+				: _('Data: %s (no limit after the reload of the page).').format(volume(this.load.used()))))
 		];
 		if (this.load.errors > 0)
 			nodes.push(E('p', { 'class': 'alert-message warning' },
@@ -353,7 +473,9 @@ return baseclass.extend({
 		if (st.state == 'done' && st.result)
 			return this.renderResult(st.result, close);
 		const message = {
-			stopped: _('The calibration stopped.'),
+			stopped: this.limitReached
+				? _('The calibration stopped: the load reached the data limit of %s.').format(volume(this.load.limit))
+				: _('The calibration stopped.'),
 			failed: _('The calibration failed: %s').format(st.error || ''),
 			error: _('Cannot read the status of the calibration: %s').format(st.error || '')
 		}[st.state] || _('No calibration runs.');
@@ -368,12 +490,15 @@ return baseclass.extend({
 		return uci.load('cake-autorate').then(() => {
 			const sid = this.sectionOf(r.link);
 			const get = (key) => sid ? uci.get('cake-autorate', sid, key) : null;
-			const global = (key) => uci.get('cake-autorate', 'global', key);
+			// The global section can have any name, or no name: use the
+			// first section of the type, as the configuration page does.
+			const gsid = (uci.sections('cake-autorate', 'global')[0] || {})['.name'];
+			const global = (key) => gsid ? uci.get('cake-autorate', gsid, key) : null;
 			const join = (v) => Array.isArray(v) ? v.join(' ') : String(v);
 			// Returns the value that the program uses now: the option of the
 			// link, else the option of the global section, else the default.
 			const current = (key, globalKey) => {
-				const v = get(key);
+				const v = key ? get(key) : null;
 				if (v != null && v !== '')
 					return { value: join(v), text: join(v) };
 				const g = globalKey ? global(globalKey) : null;
@@ -386,12 +511,13 @@ return baseclass.extend({
 			};
 			const same = (a, b) => a != null && (a === b || (a !== '' && b !== '' && !isNaN(a) && !isNaN(b) && +a == +b));
 			const rows = [];
-			const add = (key, title, value, shown, why, globalKey) => {
+			const add = (key, title, value, shown, why, globalKey, scope) => {
 				if (value == null || value === '' || (Array.isArray(value) && !value.length))
 					return;
-				const cur = current(key, globalKey);
+				// An option of the global section has no link value.
+				const cur = scope == 'global' ? current('', key) : current(key, globalKey);
 				rows.push({ key: key, title: title, value: value, shown: shown, why: why, current: cur.text,
-					unchanged: same(cur.value, join(value)) });
+					unchanged: same(cur.value, join(value)), scope: scope || 'link' });
 			};
 			for (const [ dir, name, prefix ] of [ [ r.download, _('Download'), 'dl' ], [ r.upload, _('Upload'), 'ul' ] ]) {
 				const d = dir || {};
@@ -407,6 +533,10 @@ return baseclass.extend({
 				r.learn_cross_delay ? _('on') : _('off'), (r.why || {}).learn_cross_delay, 'learn_cross_delay');
 			add('ping_method', _('Ping method'), r.ping_method, r.ping_method, (r.why || {}).ping_method || (r.why || {}).reflectors, 'ping_method');
 			add('reflectors', _('Reflectors'), r.reflectors, (r.reflectors || []).join(' '), (r.why || {}).reflectors, 'reflectors');
+			add('connection_active_thr_kbps', _('Activity threshold (kbit/s), all links'), r.connection_active_thr_kbps,
+				r.connection_active_thr_kbps,
+				_('Above this rate, the program leaves Idle. It must be below the minimum rates. This option of the global section applies to all links.'),
+				null, 'global');
 
 			const table = E('table', { 'class': 'table cake-autorate-result' }, [
 				E('tr', { 'class': 'tr table-titles' }, [
@@ -423,13 +553,19 @@ return baseclass.extend({
 				]))
 			]);
 			const notes = (r.notes || []).map((n) => E('li', {}, text(n)));
+			const problemNode = E('div', { 'class': 'cake-autorate-problem' });
 			const apply = E('button', {
 				'class': 'cbi-button cbi-button-apply',
 				'disabled': sid ? null : '',
 				'click': ui.createHandlerFn(this, function() {
 					const keys = Array.prototype.filter.call(table.querySelectorAll('input[type=checkbox]'), (c) => c.checked)
 						.map((c) => c.dataset.key);
-					return this.apply(sid, rows.filter((row) => keys.indexOf(row.key) >= 0));
+					const selected = rows.filter((row) => keys.indexOf(row.key) >= 0);
+					const problem = this.check(sid, gsid, selected);
+					problemNode.replaceChildren(...(problem ? [ E('p', { 'class': 'alert-message danger' }, text(problem)) ] : []));
+					if (problem)
+						return;
+					return this.apply(sid, gsid, selected);
 				})
 			}, _('Apply the selected values'));
 			this.node.replaceChildren(
@@ -437,6 +573,7 @@ return baseclass.extend({
 				table,
 				notes.length ? E('div', { 'class': 'alert-message notice' }, [ E('strong', {}, _('Notes')), E('ul', {}, notes) ]) : '',
 				sid ? '' : E('p', { 'class': 'alert-message warning' }, text(_('The configuration has no link "%s".').format(r.link))),
+				problemNode,
 				E('div', { 'class': 'right' }, [ close, ' ', apply ]));
 		});
 	},
@@ -448,10 +585,42 @@ return baseclass.extend({
 		return s ? s['.name'] : null;
 	},
 
-	// Writes the rows to the link section and applies the changes.
-	apply: function(sid, rows) {
-		for (const row of rows)
-			uci.set('cake-autorate', sid, row.key, Array.isArray(row.value) ? row.value : String(row.value));
+	// Returns the problem of the configuration with the selected rows, or
+	// null. The service would refuse the configuration (config.go,
+	// Validate): the rates of a direction must be in the order min, base,
+	// max, and icmp-timestamp needs a reflector that can reply to it.
+	check: function(sid, gsid, rows) {
+		const value = (key, global) => {
+			const row = rows.find((r) => r.key == key);
+			if (row)
+				return row.value;
+			const v = sid ? uci.get('cake-autorate', sid, key) : null;
+			if (v != null && v !== '' && !(Array.isArray(v) && !v.length))
+				return v;
+			return (global && gsid) ? uci.get('cake-autorate', gsid, key) : null;
+		};
+		for (const [ dir, name ] of [ [ 'dl', _('Download') ], [ 'ul', _('Upload') ] ]) {
+			const min = +value(dir + '_min_rate_kbps'), base = +value(dir + '_base_rate_kbps'), max = +value(dir + '_max_rate_kbps');
+			if (min > 0 && base > 0 && max > 0 && !(min <= base && base <= max))
+				return _('%s: the selected rates give minimum %d, base %d, maximum %d kbit/s. Select the rates together.').format(name, min, base, max);
+		}
+		const method = value('ping_method', true) || DEFAULTS.ping_method;
+		let reflectors = value('reflectors', true);
+		reflectors = Array.isArray(reflectors) ? reflectors : (reflectors ? String(reflectors).split(/\s+/) : []);
+		if (method == 'icmp-timestamp' && reflectors.length && reflectors.every((r) => ECHO_REFLECTORS.indexOf(r) >= 0))
+			return _('With the ping method icmp-timestamp, no reflector of the list replies to ICMP timestamp requests. Select the proposed reflectors too.');
+		return null;
+	},
+
+	// Writes the rows to the link section (and the global section) and
+	// applies the changes.
+	apply: function(sid, gsid, rows) {
+		for (const row of rows) {
+			let target = sid;
+			if (row.scope == 'global')
+				target = gsid || uci.add('cake-autorate', 'global');
+			uci.set('cake-autorate', target, row.key, Array.isArray(row.value) ? row.value : String(row.value));
+		}
 		return uci.save().then(() => {
 			ui.hideModal();
 			return ui.changes.apply(true);

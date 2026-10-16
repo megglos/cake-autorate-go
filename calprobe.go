@@ -29,9 +29,10 @@ import (
 // calProbeMaxReflectors is the maximum number of reflectors in the probe.
 const calProbeMaxReflectors = 16
 
-// calProbeMinInterval is the minimum time between two requests to a
-// reflector.
-const calProbeMinInterval = 200 * time.Millisecond
+// calProbeInterval is the time between two requests to a reflector. It
+// does not come from ping_interval_ms: with 1 s, the idle time of a block
+// (15 s) gives fewer than calMinIdleSamples replies.
+const calProbeInterval = 250 * time.Millisecond
 
 // tsProbe is the result of the probe of one reflector.
 type tsProbe struct {
@@ -77,7 +78,7 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 	if len(candidates) == 0 {
 		return nil, errors.New("no reflectors")
 	}
-	interval := max(time.Duration(cfg.PingIntervalMs)*time.Millisecond, calProbeMinInterval)
+	interval := calProbeInterval
 	deadline := time.Duration(cfg.ReflectorResponseDeadlineS * float64(time.Second))
 	if deadline <= 0 {
 		deadline = time.Second
@@ -150,6 +151,13 @@ func aboveMinP95(v []float64) float64 {
 		d[i] = x - m
 	}
 	return newCalDist(d).P95
+}
+
+// enough reports whether the probe sent sufficient requests to a reflector
+// for a result (calMinIdleSamples). A probe that stopped early has no
+// result.
+func (p *calProbe) enough() bool {
+	return slices.ContainsFunc(p.Reflectors, func(r tsProbe) bool { return r.Sent >= calMinIdleSamples })
 }
 
 // proposeFromProbe returns the ping method and the reflectors from the
