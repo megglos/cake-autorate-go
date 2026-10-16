@@ -116,6 +116,9 @@ const Load = baseclass.extend({
 		this.mode = '';
 		this.abort = null;
 		this.bytes = { dl: 0, ul: 0 };
+		// sent are the bytes that went through the link (an upload counts
+		// with its progress): for the rates. bytes is for the data limit.
+		this.sent = { dl: 0, ul: 0 };
 		this.errors = 0;
 		this.lastError = null;
 		this.upload = null;
@@ -182,6 +185,29 @@ const Load = baseclass.extend({
 		return this.upload;
 	},
 
+	// Sends data to the upload endpoint. XMLHttpRequest, not fetch: it
+	// tells the progress of the upload.
+	post: function(data, signal) {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			let last = 0;
+			const count = (loaded) => {
+				this.sent.ul += loaded - last;
+				last = loaded;
+			};
+			xhr.upload.onprogress = (ev) => count(ev.loaded);
+			xhr.onload = () => {
+				count(data.size);
+				(xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('HTTP ' + xhr.status));
+			};
+			xhr.onerror = () => reject(new Error(_('Network error')));
+			xhr.onabort = () => reject(new Error('aborted'));
+			signal.addEventListener('abort', () => xhr.abort(), { once: true });
+			xhr.open('POST', UP_URL);
+			xhr.send(data);
+		});
+	},
+
 	// Runs one connection in a loop until signal aborts.
 	loop: async function(signal, dir) {
 		while (!signal.aborted) {
@@ -196,6 +222,7 @@ const Load = baseclass.extend({
 						if (r.done)
 							break;
 						this.bytes.dl += r.value.length;
+						this.sent.dl += r.value.length;
 						if (this.used() >= this.limit) {
 							this.limitReached();
 							return;
@@ -211,9 +238,7 @@ const Load = baseclass.extend({
 						return;
 					}
 					this.bytes.ul += data.size;
-					const res = await fetch(UP_URL, { method: 'POST', body: data, signal: signal, cache: 'no-store' });
-					if (!res.ok)
-						throw new Error('HTTP ' + res.status);
+					await this.post(data, signal);
 				}
 			}
 			catch (e) {
@@ -457,7 +482,7 @@ return baseclass.extend({
 	// status).
 	measure: function() {
 		const now = performance.now();
-		const b = this.load.bytes;
+		const b = this.load.sent;
 		if (this.lastBytes) {
 			const s = (now - this.lastBytes.t) / 1000;
 			if (s > 0) {

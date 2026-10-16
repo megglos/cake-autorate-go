@@ -407,6 +407,61 @@ test('the Stop button keeps the keyboard focus during the refreshes', async ({ p
 	await expect(stop).toBeFocused();
 });
 
+test('the upload rate counts the uploads while they run', async ({ page }) => {
+	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ]);
+	await routeSession(page, session);
+	await routeLoad(page);
+	// An upload gets its answer after 20 s (a slow uplink; this route comes
+	// after the other one: Playwright uses it first). Chromium sends no
+	// upload progress for a request that Playwright answers, thus a fake
+	// XMLHttpRequest for the upload endpoint reports it (100 kB each
+	// 100 ms). The other requests (LuCI) use the real one.
+	await page.route('https://speed.cloudflare.com/__up', async (route) => {
+		if (route.request().method() == 'OPTIONS')
+			return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type' } });
+		await new Promise((resolve) => setTimeout(resolve, 20000));
+		await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' }).catch(() => {});
+	});
+	await page.addInitScript(() => {
+		const proto = XMLHttpRequest.prototype;
+		const open = proto.open, send = proto.send, abort = proto.abort;
+		proto.open = function(method, url, ...rest) {
+			this.fakeUpload = String(url).includes('speed.cloudflare.com/__up');
+			if (!this.fakeUpload)
+				return open.call(this, method, url, ...rest);
+		};
+		proto.send = function(body) {
+			if (!this.fakeUpload)
+				return send.call(this, body);
+			let loaded = 0;
+			this.fakeTimer = setInterval(() => {
+				loaded = Math.min(body.size, loaded + 100000);
+				if (this.upload.onprogress)
+					this.upload.onprogress({ loaded: loaded });
+			}, 100);
+		};
+		proto.abort = function() {
+			if (!this.fakeUpload)
+				return abort.call(this);
+			clearInterval(this.fakeTimer);
+			if (this.onabort)
+				this.onabort();
+		};
+	});
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	const line = page.locator('.modal .cake-autorate-load');
+	await page.waitForTimeout(4000);
+	// 4 uploads with up to 1 MB/s each (the timers of a busy page are
+	// slower), also after the start of the uploads. The old count gave 0.
+	for (let i = 0; i < 3; i++) {
+		const m = /upload ([\d.]+) Mbit\/s/.exec(await line.textContent());
+		expect(m && +m[1]).toBeGreaterThan(1);
+		await page.waitForTimeout(1000);
+	}
+});
+
 test('a failed stop ends the load and the status requests', async ({ page }) => {
 	const session = fakeSession([ running(1, 'dl', 'unshaped', 'load', 'dl') ]);
 	session.stopError = 'Command failed';
