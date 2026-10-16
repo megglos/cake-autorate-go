@@ -179,6 +179,22 @@ jobs:
           scripts/openwrt-vm.sh start
           scripts/openwrt-vm.sh install apk/*.apk
 
+      # The VM must finish its start (the WAN gets its address by DHCP)
+      # before the browser tests: the start changes the network. Before the
+      # shards, the service test ran first and gave this time.
+      - name: Wait until the VM is ready
+        if: matrix.part != 'service'
+        run: |
+          for i in $(seq 60); do
+            if scripts/openwrt-vm.sh ssh 'ifstatus wan | jsonfilter -e "@.up" | grep -qx true'; then
+              sleep 10
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the WAN of the VM is not up" >&2
+          exit 1
+
       - name: Test the service
         if: matrix.part == 'service'
         run: scripts/openwrt-vm-test.sh
@@ -203,6 +219,13 @@ jobs:
         if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
         run: npx playwright test --fully-parallel --shard=${{ matrix.part }}
+
+      - name: Get the state of the VM
+        if: failure() && matrix.part != 'service'
+        run: |
+          mkdir -p openwrt/luci-app-cake-autorate-go/tests/test-results
+          scripts/openwrt-vm.sh ssh 'uptime; tc qdisc show; ifstatus wan; logread' \
+            > openwrt/luci-app-cake-autorate-go/tests/test-results/vm-state.txt 2>&1 || true
 
       - name: Store the browser test results
         if: failure() && matrix.part != 'service'
