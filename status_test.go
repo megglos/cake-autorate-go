@@ -78,6 +78,7 @@ func TestStatusBoardFile(t *testing.T) {
 func TestRunStatusWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run", "status.json")
 	b := NewStatusBoard("v1", time.Now(), []string{"a"})
+	b.KeepHistory()
 	b.Set(LinkStatus{Name: "a", State: "RUNNING"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

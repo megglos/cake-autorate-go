@@ -95,6 +95,14 @@ func historySource(b *StatusBoard) HistorySource {
 	return b
 }
 
+// KeepHistory turns the history on. Without it, Record does nothing and
+// HistoryJSON gives an error.
+func (b *StatusBoard) KeepHistory() {
+	b.mu.Lock()
+	b.keepHistory = true
+	b.mu.Unlock()
+}
+
 // Record adds a sample for each link with a status. It removes the
 // samples that are older than historySeconds, and the links that have no
 // status. A clock step back (for example, NTP after the start) removes the
@@ -102,6 +110,9 @@ func historySource(b *StatusBoard) HistorySource {
 func (b *StatusBoard) Record(now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !b.keepHistory {
+		return
+	}
 	b.recorded = now
 	if b.history == nil {
 		b.history = make(map[string][]historySample)
@@ -137,6 +148,9 @@ func (b *StatusBoard) Record(now time.Time) {
 func (b *StatusBoard) HistoryJSON() ([]byte, error) {
 	if b == nil {
 		return nil, errors.New("no history: the status file is off")
+	}
+	if !b.keepHistory {
+		return nil, errors.New("no history: status_history is off")
 	}
 	b.mu.Lock()
 	h := History{

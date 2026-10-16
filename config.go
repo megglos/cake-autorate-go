@@ -154,6 +154,11 @@ type Config struct {
 	// status of all links to it each second. Empty: no status file.
 	StatusFile string `yaml:"status_file"`
 
+	// StatusHistory keeps the samples of the last 15 minutes of each link
+	// in memory, for the control command "history" (graphs of a user
+	// interface). It needs a status file. Off: no memory for the history.
+	StatusHistory bool `yaml:"status_history"`
+
 	// ControlSocket is the path of the Unix socket for the commands pause
 	// and resume. Empty: no control socket.
 	ControlSocket string `yaml:"control_socket"`
@@ -488,6 +493,9 @@ func editDistance(a, b string) int {
 // Warnings returns the problems in the config that do not stop the program.
 func (c *Config) Warnings() []string {
 	w := slices.Clone(c.unknownKeys)
+	if c.StatusHistory && c.StatusFile == "" {
+		w = append(w, "status_history needs status_file: there is no history")
+	}
 	for _, link := range c.Links {
 		if c.ForLink(&link).PingMethod == PingMethodTimestamp {
 			var bad []string

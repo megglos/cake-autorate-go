@@ -120,8 +120,9 @@ type StatusBoard struct {
 	links   map[string]LinkStatus
 	// history has the samples of each link, the oldest first. recorded
 	// is the time of the last Record.
-	history  map[string][]historySample
-	recorded time.Time
+	history     map[string][]historySample
+	recorded    time.Time
+	keepHistory bool
 }
 
 // NewStatusBoard creates a board for the links in the given order.
