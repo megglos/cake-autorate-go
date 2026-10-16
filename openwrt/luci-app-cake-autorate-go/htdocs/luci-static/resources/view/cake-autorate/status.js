@@ -12,6 +12,7 @@
 'require rpc';
 'require ui';
 'require cake-autorate.common as common';
+'require cake-autorate.calibration as calibration';
 
 const STATUS_FILE = '/var/run/cake-autorate/status.json';
 const ERROR_FILE = '/var/run/cake-autorate/config-error';
@@ -639,6 +640,23 @@ return view.extend({
 		return nodes;
 	},
 
+	// Returns the title of a link: the name, the state, a label during a
+	// calibration, and the button "Calibrate" for a user with write
+	// permission.
+	renderTitle: function(ls) {
+		const nodes = [ text(ls.name), ' ', common.stateLabel(ls.state) ];
+		if (ls.calibrating)
+			nodes.push(' ', E('span', { 'class': 'label notice', 'data-calibrating': '' }, _('Calibration')));
+		if (this.canControl)
+			nodes.push(' ', E('button', {
+				'class': 'cbi-button cbi-button-action cake-autorate-calibrate',
+				'style': 'font-size:small; vertical-align:middle',
+				'data-focus': focusKey(ls.name, 'calibrate', ''),
+				'click': ui.createHandlerFn(this, function() { calibration.open(ls); })
+			}, _('Calibrate…')));
+		return nodes;
+	},
+
 	renderLink: function(ls) {
 		const rows = [
 			E('tr', { 'class': 'tr table-titles' }, [
@@ -704,10 +722,7 @@ return view.extend({
 			]));
 
 		return E('div', { 'class': 'cbi-section', 'data-link': ls.name }, [
-			E('h3', {}, [
-				text(ls.name), ' ',
-				common.stateLabel(ls.state)
-			]),
+			E('h3', {}, this.renderTitle(ls)),
 			...this.renderCakeWarnings(ls),
 			E('table', { 'class': 'table' }, rows),
 			this.renderGraphs(ls.name),
@@ -766,6 +781,10 @@ return view.extend({
 		this.lastData = data[0];
 		this.container = E('div', { 'id': 'cake-autorate-status' }, this.renderStatus(data[0]));
 		poll.add(L.bind(this.refresh, this), 2);
+		// A calibration that runs (for example after a reload of the page)
+		// needs the load of this browser again.
+		if (this.canControl)
+			calibration.resume();
 
 		// The pointer left the graphs: on a move outside a graph, or out of
 		// the window.

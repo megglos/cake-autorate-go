@@ -4,7 +4,10 @@
 // and "resume" to the control socket of cake-autorate-go. The ACL of the
 // app gives these methods only to the users that can write the
 // configuration. The method "history" gives the samples of the last 15
-// minutes, for the graphs. The method "qdisc" gives the root qdisc of an
+// minutes, for the graphs. The methods "calibrate_start",
+// "calibrate_status" and "calibrate_stop" control a calibration session of
+// the program; the ACL gives them only to the users that can write the
+// configuration. The method "qdisc" gives the root qdisc of an
 // interface, to find interfaces without CAKE.
 
 'use strict';
@@ -109,6 +112,27 @@ function history() {
 	return { data: res.answer };
 }
 
+// Starts a calibration session for the link. load_s is the load time of
+// each block in seconds (the program checks the range).
+function calibrate_start(args) {
+	const link = args?.link, load = args?.load_s;
+	if (type(link) != 'string' || !match(link, LINK_NAME_RE))
+		return { error: 'Invalid link name' };
+	if (load != null && (type(load) != 'int' || load < 1 || load > 3600))
+		return { error: 'Invalid load time' };
+	return command('calibrate start ' + link + (load != null ? ' ' + load : ''));
+}
+
+// Returns the status of the calibration as a JSON text in "data".
+function calibrate_status() {
+	const res = exchange('calibrate status');
+	if (res.error)
+		return res;
+	if (substr(res.answer, 0, 7) == 'error: ')
+		return { error: substr(res.answer, 7) };
+	return { data: res.answer };
+}
+
 // Returns the kind of the root qdisc of the interface, for example "cake"
 // or "fq_codel".
 function qdisc(args) {
@@ -131,6 +155,22 @@ return {
 		history: {
 			call: function() {
 				return history();
+			}
+		},
+		calibrate_start: {
+			args: { link: 'link', load_s: 0 },
+			call: function(req) {
+				return calibrate_start(req.args);
+			}
+		},
+		calibrate_status: {
+			call: function() {
+				return calibrate_status();
+			}
+		},
+		calibrate_stop: {
+			call: function() {
+				return command('calibrate stop');
 			}
 		},
 		qdisc: {
