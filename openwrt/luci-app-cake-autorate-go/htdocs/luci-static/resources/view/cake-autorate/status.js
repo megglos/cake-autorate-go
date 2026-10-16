@@ -105,10 +105,11 @@ function rate(kbps) {
 }
 
 // Returns a shaper rate in Mbit/s for the graphs, or null for a shaper
-// without a useful limit. Else the y axis goes to 10 Gbit/s.
+// without a useful limit (exactly the rate of the program for it; a
+// configured rate can be higher). Else the y axis goes to 10 Gbit/s.
 function shaperMbits(kbps) {
 	const v = (+kbps || 0) / 1000;
-	return v >= NO_LIMIT_MBITS ? null : v;
+	return v == NO_LIMIT_MBITS ? null : v;
 }
 
 function ms(v) {

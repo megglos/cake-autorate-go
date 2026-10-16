@@ -957,6 +957,14 @@ test('turn the shaping of a link off and on', async ({ page }) => {
 	}
 });
 
+test('a shaper rate above 10 Gbit/s is a rate, not "No limit"', async ({ page }) => {
+	await mockStatus(page, (s) => { s.links[0].download.shaper_kbps = 12000000; });
+	await page.goto(PAGE);
+	const dl = page.locator('.cbi-section[data-link="wan"] tr[data-dir="dl"]');
+	await expect(dl).toContainText('12000.0 Mbit/s');
+	await expect(dl).not.toContainText('No limit');
+});
+
 test('during a calibration, the shaping button is disabled', async ({ page }) => {
 	await mockStatus(page, (s) => { s.links[0].calibrating = true; });
 	await page.goto(PAGE);
