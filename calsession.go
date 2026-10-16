@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -293,11 +294,22 @@ var errCalStopped = errors.New("stopped")
 // run runs the session and sets the final state.
 func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, times calTimes, done chan struct{}) {
 	defer close(done)
-	out, err := k.session(ctx, link, target, times)
-	// Restore the rate control also after an error. A failed restore is
-	// always a failed session: the shaper can still have no limit.
-	if ferr := target.CalFinish(); ferr != nil {
-		if err != nil && !errors.Is(err, errCalStopped) {
+	// The session restores the rate control after the last block, before
+	// the analysis. After an error, restore it here.
+	restored := false
+	var ferr error
+	restore := func() error {
+		if !restored {
+			restored = true
+			ferr = target.CalFinish()
+		}
+		return ferr
+	}
+	out, err := k.session(ctx, link, target, times, restore)
+	// A failed restore is always a failed session: the shaper can still
+	// have no limit.
+	if ferr := restore(); ferr != nil {
+		if err != nil && !errors.Is(err, errCalStopped) && !errors.Is(err, ferr) {
 			err = fmt.Errorf("restore the rate control: %v (after: %v)", ferr, err)
 		} else {
 			err = fmt.Errorf("restore the rate control: %w", ferr)
@@ -319,14 +331,38 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	}
 }
 
-// session runs the blocks and the analysis.
-func (k *Calibrator) session(ctx context.Context, link string, target CalTarget, times calTimes) (*CalOutput, error) {
-	// The sessions and the results have separate directories: a link name
-	// can end with ".json".
-	if err := os.MkdirAll(filepath.Join(k.dir, "calibration"), 0o755); err != nil {
-		return nil, err
+// privateDir creates the directory path with mode 0700, or checks an
+// existing one: it must be a directory (not a link) of this user, and no
+// other user can write to it. Thus, no other user can place a link in it
+// (the control socket can be in a shared directory, for example /tmp).
+func privateDir(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
+		return err
 	}
-	dir := filepath.Join(k.dir, "calibration", "sessions", link)
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !fi.IsDir() || !ok || int(st.Uid) != os.Geteuid() || fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s must be a directory of this user that other users cannot write to", path)
+	}
+	return nil
+}
+
+// session runs the blocks, restores the rate control and runs the
+// analysis.
+func (k *Calibrator) session(ctx context.Context, link string, target CalTarget, times calTimes, restore func() error) (*CalOutput, error) {
+	// The sessions and the results have separate directories: a link name
+	// can end with ".json". The top directory is private: then nobody can
+	// place links in it.
+	top := filepath.Join(k.dir, "calibration")
+	for _, d := range []string{top, filepath.Join(top, "sessions"), filepath.Join(top, "results")} {
+		if err := privateDir(d); err != nil {
+			return nil, err
+		}
+	}
+	dir := filepath.Join(top, "sessions", link)
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}
@@ -383,6 +419,11 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		}
 	}
 
+	// Restore the rate control before the analysis: the last block has
+	// no shaper limit.
+	if err := restore(); err != nil {
+		return nil, err
+	}
 	res, cfg, err := calibrateSession(dir)
 	if err != nil {
 		return nil, fmt.Errorf("analysis: %w", err)
@@ -392,11 +433,11 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 	if err != nil {
 		return nil, err
 	}
-	results := filepath.Join(k.dir, "calibration", "results")
-	if err := os.MkdirAll(results, 0o755); err != nil {
-		return nil, err
+	// A stop during the analysis: no result.
+	if ctx.Err() != nil {
+		return nil, errCalStopped
 	}
-	if err := os.WriteFile(filepath.Join(results, link+".json"), append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(top, "results", link+".json"), append(data, '\n'), 0o600); err != nil {
 		return nil, err
 	}
 	return out, nil

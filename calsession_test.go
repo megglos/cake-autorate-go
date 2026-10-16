@@ -48,6 +48,7 @@ type fakeCalTarget struct {
 	blocks    int
 	startErr  error
 	finishErr error
+	onFinish  func()
 }
 
 func newFakeCalTarget(clock *fakeClock, times calTimes) *fakeCalTarget {
@@ -119,6 +120,9 @@ func (f *fakeCalTarget) CalStopRecording() error {
 
 func (f *fakeCalTarget) CalFinish() error {
 	f.call("finish")
+	if f.onFinish != nil {
+		f.onFinish()
+	}
 	return f.finishErr
 }
 
@@ -527,6 +531,81 @@ func TestCalibrationRefusesDotNames(t *testing.T) {
 		}
 		if calls := f.Calls(); len(calls) != 0 {
 			t.Errorf("%q: the link must not change: %v", name, calls)
+		}
+	}
+}
+
+// The rate control comes back before the analysis: the last block has no
+// shaper limit. A stop during the analysis gives no result.
+func TestCalibrationRestoresBeforeAnalysis(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0), step: 50 * time.Millisecond}
+	target := newFakeCalTarget(clock, times)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	k := NewCalibrator(ctx, t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
+	k.now, k.tick, k.heartbeat = clock.Now, time.Microsecond, time.Hour
+	result := filepath.Join(k.dir, "calibration", "results", "wan.json")
+	target.onFinish = func() {
+		if _, err := os.Stat(result); err == nil {
+			t.Error("the restore must come before the result")
+		}
+		// A stop at this time: during the analysis.
+		cancel()
+	}
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	k.Wait()
+	if st := k.Status(); st.State != "stopped" || st.Result != nil {
+		t.Errorf("status: %+v", st)
+	}
+	if _, err := os.Stat(result); err == nil {
+		t.Error("a stopped session must not write a result")
+	}
+	n := 0
+	for _, c := range target.Calls() {
+		if c == "finish" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("restores: %d, want 1", n)
+	}
+}
+
+// The calibration directory must be a directory of this user that other
+// users cannot write to: else another user can place links in it.
+func TestCalibrationDirectoryMustBePrivate(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	for _, tc := range []struct {
+		name  string
+		setup func(dir string)
+	}{
+		{"link", func(dir string) { os.Symlink(t.TempDir(), filepath.Join(dir, "calibration")) }},
+		{"writable", func(dir string) {
+			p := filepath.Join(dir, "calibration")
+			os.Mkdir(p, 0o777)
+			os.Chmod(p, 0o777)
+		}},
+		{"writable sessions", func(dir string) {
+			os.Mkdir(filepath.Join(dir, "calibration"), 0o700)
+			p := filepath.Join(dir, "calibration", "sessions")
+			os.Mkdir(p, 0o777)
+			os.Chmod(p, 0o777)
+		}},
+	} {
+		clock := &fakeClock{t: time.Unix(1_700_000_000, 0), step: 50 * time.Millisecond}
+		target := newFakeCalTarget(clock, times)
+		k := NewCalibrator(context.Background(), t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
+		k.now, k.tick, k.heartbeat = clock.Now, time.Microsecond, time.Hour
+		tc.setup(k.dir)
+		if err := k.Start("wan", times); err != nil {
+			t.Fatal(err)
+		}
+		k.Wait()
+		if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "other users cannot write") {
+			t.Errorf("%s: status %+v", tc.name, st)
 		}
 	}
 }

@@ -217,7 +217,7 @@ The program that makes the load reads `calibrate status` each second:
 
 Each status request is also a sign that the load program operates. Without a request for 15 s, the session stops: then there is no load, and the link must not stay without a shaper limit. At the end of the session (also after an error or a stop), the rate control of the link continues as before. A direction that was paused stays paused.
 
-The session writes its files next to the control socket, in the directory `calibration`: the session in `sessions/LINK` (in the format of step 1) and the result in `results/LINK.json`. The result has the proposed values for each direction (`min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps`, `owd_delta_delay_thr_ms`; a rate that was not measured is not in the result), `learn_cross_delay`, `ping_method`, `reflectors`, `connection_active_thr_kbps`, the reasons (`why`), the notes and the measured distributions (`measured`).
+The session writes its files next to the control socket, in the directory `calibration`: the session in `sessions/LINK` (in the format of step 1) and the result in `results/LINK.json`. The directories must belong to the user of the program, and other users must not be able to write to them (the program makes them with mode 0700): else the session fails. The rate control comes back after the last block, before the analysis. The result has the proposed values for each direction (`min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps`, `owd_delta_delay_thr_ms`; a rate that was not measured is not in the result), `learn_cross_delay`, `ping_method`, `reflectors`, `connection_active_thr_kbps`, the reasons (`why`), the notes and the measured distributions (`measured`).
 
 Differences to the session of step 1:
 
