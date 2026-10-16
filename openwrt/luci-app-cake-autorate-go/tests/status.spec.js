@@ -15,6 +15,35 @@ function pausedInFile(key) {
 	return vm(`jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].${key}.paused" 2>/dev/null || true`).trim();
 }
 
+// Changes the status file that the page reads: mutate(status) changes the
+// parsed file in the answers of rpcd. The file on the router does not
+// change.
+async function mockStatus(page, mutate) {
+	await page.route('**/ubus/**', async (route) => {
+		const request = route.request().postDataJSON();
+		const requests = Array.isArray(request) ? request : [ request ];
+		let response;
+		try {
+			response = await route.fetch();
+		}
+		catch (e) {
+			// The test closed the page during the request.
+			return;
+		}
+		const body = await response.json();
+		for (const res of Array.isArray(body) ? body : [ body ]) {
+			const p = (requests.find((q) => q && q.id === res.id) || {}).params;
+			const data = res.result && res.result[1] && res.result[1].data;
+			if (p && p[1] == 'file' && p[2] == 'read' && p[3] && p[3].path == '/var/run/cake-autorate/status.json' && data) {
+				const status = JSON.parse(data);
+				mutate(status);
+				res.result[1].data = JSON.stringify(status);
+			}
+		}
+		await route.fulfill({ response, json: body });
+	});
+}
+
 // Waits until the program writes the status file.
 async function waitForStatus() {
 	await expect.poll(() => vm('[ -e /var/run/cake-autorate/status.json ] && echo yes || true').trim(),
@@ -315,6 +344,42 @@ async function points(page, kind, series) {
 	const d = await page.locator(`.cbi-section[data-link="wan"] [data-graph="${kind}"] path[data-series="${series}"]`).getAttribute('d');
 	return [ ...(d || '').matchAll(/([ML])(-?[\d.]+) (-?[\d.]+)/g) ].map((m) => [ m[1], +m[2], +m[3] ]);
 }
+
+test('the labels show the state, the rate control and a high delay in color', async ({ page }) => {
+	let state = 'RUNNING';
+	await mockStatus(page, (s) => {
+		const ls = s.links[0];
+		ls.state = state;
+		Object.assign(ls.download, { adjust: true, paused: false, delta_ms: 40, threshold_ms: 15 });
+		Object.assign(ls.upload, { adjust: true, paused: true, delta_ms: 2, threshold_ms: 15 });
+	});
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	const label = link.locator('h3 [data-state]');
+	await expect(label).toHaveText('Running');
+	await expect(label).toHaveClass('label success');
+
+	// Active is green, Paused is blue.
+	const dl = link.locator('tr[data-dir="dl"]'), ul = link.locator('tr[data-dir="ul"]');
+	await expect(dl.locator('[data-control]')).toHaveText('Active');
+	await expect(dl.locator('[data-control]')).toHaveClass('label success');
+	await expect(ul.locator('[data-control]')).toHaveText('Paused');
+	await expect(ul.locator('[data-control]')).toHaveClass('label notice');
+
+	// Only a delay delta above the threshold is orange.
+	await expect(dl.locator('[data-over]')).toHaveText('40.0 ms');
+	await expect(dl.locator('[data-over]')).toHaveClass('label warning');
+	await expect(ul.locator('[data-over]')).toHaveCount(0);
+	await expect(ul).toContainText('2.0 ms / 15.0 ms');
+
+	// Stall is orange, Idle has no color.
+	state = 'STALL';
+	await expect(label).toHaveText('Stall', { timeout: 10000 });
+	await expect(label).toHaveClass('label warning');
+	state = 'IDLE';
+	await expect(label).toHaveText('Idle', { timeout: 10000 });
+	await expect(label).toHaveClass('label');
+});
 
 test('graphs show the rates and the delay delta of a link', async ({ page }) => {
 	await page.goto(PAGE);
@@ -672,19 +737,27 @@ test('Overview shows the link and a pause', async ({ page }) => {
 	await page.goto(OVERVIEW);
 	const row = page.locator('tr[data-link="wan"]');
 	await expect(row).toBeVisible({ timeout: 15000 });
-	await expect(row).toContainText(/RUNNING|IDLE|STALL/);
+	await expect(row.locator('.label[data-state]')).toHaveText(/^(Running|Idle|Stall)$/);
 	await expect(row).toContainText('Mbit/s');
-	await expect(row).not.toContainText('paused');
+	await expect(row).not.toContainText('Paused');
 
 	vm('ucode -e \'import * as socket from "socket"; let s = socket.connect("/var/run/cake-autorate/control.sock"); s.send("pause wan ul\\n"); s.recv(256);\'');
 	try {
-		await expect(row.locator('td').nth(3)).toContainText('paused', { timeout: 15000 });
-		await expect(row.locator('td').nth(2)).not.toContainText('paused');
+		await expect(row.locator('td').nth(3).locator('.label.notice')).toHaveText('Paused', { timeout: 15000 });
+		await expect(row.locator('td').nth(2)).not.toContainText('Paused');
 	}
 	finally {
 		resetConfig();
 		await waitForStatus();
 	}
+});
+
+test('Overview shows the state with the same label as the status page', async ({ page }) => {
+	await mockStatus(page, (s) => { s.links[0].state = 'RUNNING'; });
+	await page.goto(OVERVIEW);
+	const label = page.locator('tr[data-link="wan"] [data-state]');
+	await expect(label).toHaveText('Running', { timeout: 15000 });
+	await expect(label).toHaveClass('label success');
 });
 
 test('Overview shows a stopped service', async ({ page }) => {

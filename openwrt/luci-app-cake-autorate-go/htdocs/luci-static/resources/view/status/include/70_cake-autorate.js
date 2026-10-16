@@ -6,27 +6,24 @@
 'use strict';
 'require baseclass';
 'require fs';
+'require cake-autorate.common as common';
 
 const STATUS_FILE = '/var/run/cake-autorate/status.json';
 
-// Returns a text node. The status file contains UCI values, and E() reads a
-// string as HTML.
-function text(v) {
-	return document.createTextNode(v == null ? '' : String(v));
-}
+const text = common.text;
 
 function rate(kbps) {
 	return '%.1f Mbit/s'.format((+kbps || 0) / 1000);
 }
 
-// Returns the text for a direction: the shaper rate, the delay delta and
-// "paused" if a user paused the rate control.
+// Returns the nodes for a direction: the shaper rate, the delay delta and
+// the label "Paused" if a user paused the rate control.
 function direction(st) {
 	st = st || {};
-	let s = rate(st.shaper_kbps) + ' (' + '%.1f ms'.format(+st.delta_ms || 0) + ')';
+	const nodes = [ text(rate(st.shaper_kbps) + ' (' + '%.1f ms'.format(+st.delta_ms || 0) + ')') ];
 	if (st.paused)
-		s += ', ' + _('paused');
-	return text(s);
+		nodes.push(' ', common.controlLabel(true));
+	return nodes;
 }
 
 return baseclass.extend({
@@ -58,7 +55,7 @@ return baseclass.extend({
 		for (const ls of status.links)
 			rows.push(E('tr', { 'class': 'tr', 'data-link': ls.name }, [
 				E('td', { 'class': 'td', 'data-title': _('Link') }, text(ls.name)),
-				E('td', { 'class': 'td', 'data-title': _('State') }, text(ls.state)),
+				E('td', { 'class': 'td', 'data-title': _('State') }, common.stateLabel(ls.state)),
 				E('td', { 'class': 'td', 'data-title': _('Download (delay delta)') }, direction(ls.download)),
 				E('td', { 'class': 'td', 'data-title': _('Upload (delay delta)') }, direction(ls.upload))
 			]));

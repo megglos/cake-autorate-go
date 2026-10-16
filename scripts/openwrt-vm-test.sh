@@ -191,6 +191,7 @@ for v in cake-autorate/config cake-autorate/status; do
 	check "menu has the view $v" "jsonfilter -i /usr/share/luci/menu.d/luci-app-cake-autorate-go.json -e '@[\"admin/network/$v\"].action.path' | grep -qx $v"
 done
 check "web server sends the Overview section" 'wget -qO- http://127.0.0.1/luci-static/resources/view/status/include/70_cake-autorate.js | grep -q baseclass.extend'
+check "web server sends the common module" 'wget -qO- http://127.0.0.1/luci-static/resources/cake-autorate/common.js | grep -q baseclass.extend'
 check "rpcd has the plugin" 'ubus list cake-autorate >/dev/null'
 # root has all permissions. The user "cakeacl" has only the ACL groups of
 # the app and of luci-base, thus the checks show missing permissions. The

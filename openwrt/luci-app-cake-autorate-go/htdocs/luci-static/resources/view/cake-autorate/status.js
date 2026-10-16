@@ -11,6 +11,7 @@
 'require poll';
 'require rpc';
 'require ui';
+'require cake-autorate.common as common';
 
 const STATUS_FILE = '/var/run/cake-autorate/status.json';
 const ERROR_FILE = '/var/run/cake-autorate/config-error';
@@ -53,12 +54,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const COLORS = { dl: '#2a7ab8', ul: '#3a9a3a' };
 
-const STATES = {
-	RUNNING: [ _('Running'), _('The program changes the shaper rates.') ],
-	IDLE: [ _('Idle'), _('The load is low. The pings stopped until the load increases.') ],
-	STALL: [ _('Stall'), _('No ping replies. The pings stopped until there is traffic again.') ]
-};
-
 const callAccess = rpc.declare({
 	object: 'session',
 	method: 'access',
@@ -86,9 +81,7 @@ const callResume = rpc.declare({
 
 // Returns a text node. The status file contains UCI values, and E() reads a
 // string as HTML.
-function text(v) {
-	return document.createTextNode(v == null ? '' : String(v));
-}
+const text = common.text;
 
 function rate(kbps) {
 	return text('%.1f Mbit/s'.format((+kbps || 0) / 1000));
@@ -542,8 +535,7 @@ return view.extend({
 			return E('em', {}, _('Off (adjust)'));
 		const verb = st.paused ? 'resume' : 'pause';
 		const nodes = [
-			E('span', { 'class': st.paused ? 'label notice' : 'label' },
-				st.paused ? _('Paused') : _('Active'))
+			common.controlLabel(st.paused)
 		];
 		if (this.canControl)
 			nodes.push(' ', E('button', {
@@ -580,7 +572,6 @@ return view.extend({
 	},
 
 	renderLink: function(ls) {
-		const state = STATES[ls.state] || [ ls.state, '' ];
 		const rows = [
 			E('tr', { 'class': 'tr table-titles' }, [
 				E('th', { 'class': 'th' }, _('Direction')),
@@ -596,9 +587,14 @@ return view.extend({
 		];
 		for (const [ key, dir, title ] of DIRECTIONS) {
 			const st = ls[key] || {};
-			let delta = ms(st.delta_ms) + ' / ' + ms(st.threshold_ms);
+			// A delta above the threshold is bufferbloat now: orange.
+			const over = +st.threshold_ms > 0 && +st.delta_ms > +st.threshold_ms;
+			const delta = [
+				over ? E('span', { 'class': 'label warning', 'data-over': '' }, text(ms(st.delta_ms))) : text(ms(st.delta_ms)),
+				text(' / ' + ms(st.threshold_ms))
+			];
 			if (+st.cross_delay_ms > 0)
-				delta += ' ' + _('(cross delay %s)').format(ms(st.cross_delay_ms));
+				delta.push(text(' ' + _('(cross delay %s)').format(ms(st.cross_delay_ms))));
 			rows.push(E('tr', { 'class': 'tr', 'data-dir': dir }, [
 				E('td', { 'class': 'td', 'data-title': _('Direction') }, title),
 				E('td', { 'class': 'td', 'data-title': _('Interface') }, text(st.interface)),
@@ -612,7 +608,7 @@ return view.extend({
 				]),
 				E('td', { 'class': 'td', 'data-title': _('Achieved rate') }, rate(st.achieved_kbps)),
 				E('td', { 'class': 'td', 'data-title': _('Load') }, text('%.0f %%'.format(+st.load_percent || 0))),
-				E('td', { 'class': 'td', 'data-title': _('Delay delta / threshold') }, text(delta)),
+				E('td', { 'class': 'td', 'data-title': _('Delay delta / threshold') }, delta),
 				E('td', { 'class': 'td', 'data-title': _('High-delay pings') }, text(st.bufferbloat_count)),
 				E('td', { 'class': 'td', 'data-title': _('Rate changes') }, text(st.rate_changes)),
 				E('td', { 'class': 'td', 'data-title': _('Rate control') }, this.renderControl(ls.name, dir, st))
@@ -638,7 +634,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-section', 'data-link': ls.name }, [
 			E('h3', {}, [
 				text(ls.name), ' ',
-				E('span', { 'class': 'label', 'title': state[1], 'data-state': ls.state }, text(state[0]))
+				common.stateLabel(ls.state)
 			]),
 			...this.renderCakeWarnings(ls),
 			E('table', { 'class': 'table' }, rows),
