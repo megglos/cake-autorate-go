@@ -340,6 +340,10 @@ func (c *LinkController) unshapeTimerC() <-chan time.Time {
 	return c.unshapeTimer.C
 }
 
+// unshapeRetry is the time until the next try to shape the link again
+// after a failed try at the end of the time of "unshape". Tests change it.
+var unshapeRetry = 5 * time.Second
+
 // checkUnshapeTime shapes the link again at the end of the time of
 // "unshape LINK SECONDS". Only the goroutine of Run calls it.
 func (c *LinkController) checkUnshapeTime(now time.Time) {
@@ -348,7 +352,10 @@ func (c *LinkController) checkUnshapeTime(now time.Time) {
 	}
 	c.logger.Infof("[%s] the time of unshape ended", c.name)
 	if err := c.shapeAgain(now); err != nil {
-		c.logger.Errorf("[%s] turning the shaping on: %v", c.name, err)
+		// Try again later: the link must not stay without a shaper
+		// limit after a temporary error (for example of tc).
+		c.logger.Errorf("[%s] turning the shaping on (again in %v): %v", c.name, unshapeRetry, err)
+		c.unshapeTimer = time.NewTimer(unshapeRetry)
 	}
 }
 

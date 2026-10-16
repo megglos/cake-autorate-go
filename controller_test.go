@@ -457,3 +457,69 @@ func TestRunLoopEndsUnshapeTime(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// failingActuator is a fakeActuator whose next fails rate changes fail
+// (as SetRate of the controller with a tc error).
+type failingActuator struct {
+	fakeActuator
+	c     *LinkController
+	fails int
+}
+
+func (f *failingActuator) SetRate(dir Direction, rateKbps int) {
+	if f.fails > 0 {
+		f.fails--
+		f.c.rateErr = errors.New("tc failed")
+		return
+	}
+	f.fakeActuator.SetRate(dir, rateKbps)
+}
+
+// If the shaping does not come back at the end of the time of "unshape"
+// (a rate error), the controller tries again without a new command.
+func TestRunLoopRetriesShapeAfterError(t *testing.T) {
+	old := unshapeRetry
+	unshapeRetry = 50 * time.Millisecond
+	t.Cleanup(func() { unshapeRetry = old })
+	c := testPingerController(t)
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	act := &failingActuator{c: c}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	c.ctrlCh = make(chan *ctrlCmd)
+	c.rateCh = make(chan RateStats)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error)
+	go func() { done <- c.loop(ctx, nil, nil) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	if err := c.SetUnshaped(true, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	// The first try to shape the link again fails.
+	if err := c.call(func(time.Time) error { act.fails = 1; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	var unshaped bool
+	var dl int
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := c.call(func(time.Time) error {
+			unshaped, dl = c.core.Core().Unshaped(), lastRate(&act.fakeActuator, DL)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !unshaped {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the shaping did not come back after the failed try")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if dl != c.link.Download.BaseRateKbps {
+		t.Errorf("download rate %d, want the base rate", dl)
+	}
+}
