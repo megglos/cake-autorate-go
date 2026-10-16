@@ -411,7 +411,9 @@ test('the cursor goes away if the graph under the pointer gets no pointerleave',
 		const g = document.querySelector('.cbi-section[data-link="wan"] svg[data-plot="rate"]');
 		g.replaceWith(g.cloneNode(true));
 	});
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 300);
+	// A point in the window, above the graph. A point out of the window
+	// gives no events.
+	await page.mouse.move(box.x + box.width / 2, box.y - 40);
 	// Also after the next refresh.
 	const old = await tip.elementHandle();
 	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
