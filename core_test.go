@@ -1252,3 +1252,41 @@ func TestUnshapedPreventsIdle(t *testing.T) {
 		t.Errorf("after the unshaped mode: got %s, status %+v", c.state, c.Snapshot())
 	}
 }
+
+// Without shaping, a saturated upload has a low load against 10 Gbit/s:
+// its queue must not go into the learned cross delay, also not after
+// "shape".
+func TestUnshapedDoesNotLearnCrossDelay(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.LearnCrossDelay = true
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.SetUnshaped(true, ts)
+	c.SetFixedRate(DL, unshapedKbps)
+	c.SetFixedRate(UL, unshapedKbps)
+	ping := func(n int, ulMs float64) {
+		for range n {
+			ts = ts.Add(50 * time.Millisecond)
+			c.HandlePing(owdPing("1.1.1.1", ts, 10+ulMs, 10))
+		}
+	}
+	// A saturated upload of 10 Mbit/s with download activity.
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	ping(200, 60)
+	if c.ul.crossDelayUs != 0 {
+		t.Fatalf("unshaped: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+	// After "shape", the low load starts again.
+	c.SetPaused(DL, false)
+	c.SetPaused(UL, false)
+	c.SetUnshaped(false, ts)
+	if !c.ul.lowLoadSince.IsZero() {
+		t.Errorf("low load since %v after shape, want zero", c.ul.lowLoadSince)
+	}
+	ping(10, 60)
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("after shape: learned %.0f us at once", c.ul.crossDelayUs)
+	}
+}

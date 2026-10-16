@@ -523,3 +523,24 @@ func TestRunLoopRetriesShapeAfterError(t *testing.T) {
 		t.Errorf("download rate %d, want the base rate", dl)
 	}
 }
+
+// The stop of the program tries again to shape the link after a failed
+// rate change.
+func TestStopRetriesShape(t *testing.T) {
+	old := stopShapeWait
+	stopShapeWait = time.Millisecond
+	t.Cleanup(func() { stopShapeWait = old })
+	c := testPingerController(t)
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	act := &failingActuator{c: c}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	runCommands(t, c)
+	if err := c.SetUnshaped(true, 0); err != nil {
+		t.Fatal(err)
+	}
+	act.fails = 1
+	c.stop(time.Now())
+	if c.core.Core().Unshaped() || lastRate(&act.fakeActuator, DL) != c.link.Download.BaseRateKbps {
+		t.Errorf("after the stop: unshaped %v, rates %v", c.core.Core().Unshaped(), act.rates)
+	}
+}

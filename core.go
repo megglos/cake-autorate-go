@@ -181,6 +181,8 @@ func (c *Core) SetCalibrating(on bool, now time.Time) {
 func (c *Core) SetUnshaped(on bool, now time.Time) {
 	c.unshaped = on
 	c.idleSince = time.Time{}
+	// The low upload load of the unshaped time is not a low load.
+	c.ul.lowLoadSince = time.Time{}
 	if on {
 		c.wake(now)
 	}
@@ -399,7 +401,9 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 		return ulDeltaUs
 	}
 	ul := &c.ul
-	if !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+	// Without shaping, the load of the upload is against 10 Gbit/s: a
+	// saturated upload has a low load, and its queue is not cross delay.
+	if !c.unshaped && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
 		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
 	}

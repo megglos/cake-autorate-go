@@ -359,12 +359,30 @@ func (c *LinkController) checkUnshapeTime(now time.Time) {
 	}
 }
 
+// stopShapeTries and stopShapeWait limit the time that the stop of the
+// program waits for the shaping of an unshaped link. Tests change them.
+var (
+	stopShapeTries = 3
+	stopShapeWait  = time.Second
+)
+
 // stop ends the work of the controller at the end of Run. The link must
 // not stay without a shaper limit after the stop of the program: it shapes
 // an unshaped link again.
 func (c *LinkController) stop(now time.Time) {
-	if err := c.shapeAgain(now); err != nil {
-		c.logger.Errorf("[%s] turning the shaping on before the stop: %v", c.name, err)
+	// A temporary error (for example of tc) must not leave the link
+	// without a shaper limit: try again a few times.
+	for try := 1; ; try++ {
+		err := c.shapeAgain(now)
+		if err == nil {
+			break
+		}
+		if try == stopShapeTries {
+			c.logger.Errorf("[%s] turning the shaping on before the stop: %v", c.name, err)
+			break
+		}
+		c.logger.Errorf("[%s] turning the shaping on before the stop (try %d of %d): %v", c.name, try, stopShapeTries, err)
+		time.Sleep(stopShapeWait)
 	}
 	c.StopPingers()
 	c.logger.Infof("[%s] controller stopped", c.name)
