@@ -483,10 +483,21 @@ func TestCalibrationIdleAfterSetup(t *testing.T) {
 	target := slowCalTarget{newFakeCalTarget(clock, times)}
 	k := NewCalibrator(context.Background(), t.TempDir(), map[string]CalTarget{"wan": target}, NewDiscardLogger())
 	k.now, k.tick, k.heartbeat = clock.Now, time.Microsecond, time.Hour
+	// The time left at the start of the last block: the whole block, also
+	// after the setup time of the blocks before it.
+	var lastLeft float64
+	k.onPhase = func(st CalStatus) {
+		if st.Block == len(calSessionBlocks) && st.Phase == "idle" {
+			lastLeft = k.Status().LeftS
+		}
+	}
 	if err := k.Start("wan", times); err != nil {
 		t.Fatal(err)
 	}
 	waitCal(t, k)
+	if block := (times.Idle + times.Load + times.Tail).Seconds(); lastLeft < block-1 || lastLeft > block+1 {
+		t.Errorf("time left at the start of the last block: %.1f s, want %.0f s", lastLeft, block)
+	}
 	blocks, err := readBlocks(filepath.Join(k.dir, "calibration", "sessions", "wan"))
 	if err != nil || len(blocks) != len(calSessionBlocks) {
 		t.Fatalf("blocks: %v %v", blocks, err)
@@ -494,6 +505,28 @@ func TestCalibrationIdleAfterSetup(t *testing.T) {
 	for _, b := range blocks {
 		if idle := b.loadStart.Sub(b.start); idle < times.Idle {
 			t.Errorf("block %d: idle time %v, want %v", b.num, idle, times.Idle)
+		}
+	}
+}
+
+// The link names "." and ".." are valid, but the session would use the
+// parent directory: the calibration refuses them.
+func TestCalibrationRefusesDotNames(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	targets := map[string]CalTarget{}
+	fakes := map[string]*fakeCalTarget{}
+	for _, name := range []string{".", ".."} {
+		fakes[name] = newFakeCalTarget(clock, times)
+		targets[name] = fakes[name]
+	}
+	k := NewCalibrator(context.Background(), t.TempDir(), targets, NewDiscardLogger())
+	for name, f := range fakes {
+		if err := k.Start(name, times); err == nil || !strings.Contains(err.Error(), "another link name") {
+			t.Errorf("%q: %v", name, err)
+		}
+		if calls := f.Calls(); len(calls) != 0 {
+			t.Errorf("%q: the link must not change: %v", name, calls)
 		}
 	}
 }

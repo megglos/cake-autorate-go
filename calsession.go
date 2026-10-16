@@ -212,6 +212,11 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	if !ok {
 		return fmt.Errorf("unknown link %q", link)
 	}
+	// The link name is a directory name of the session: "." and ".." are
+	// valid link names, but not valid directory names.
+	if link == "." || link == ".." {
+		return fmt.Errorf("link %q: the calibration needs another link name", link)
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	// After the start of the shutdown, Wait does not wait for a new
@@ -344,8 +349,12 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		k.setBlock(i+1, b.mode, b.policy)
 		err = target.CalBlock(rec, b.policy == "unshaped")
 		// The idle time starts after the setup of the block: a slow rate
-		// change must not shorten it.
+		// change must not shorten it. The end of the session moves with
+		// the setup time.
 		start := k.now()
+		k.mu.Lock()
+		k.end = start.Add(time.Duration(len(calSessionBlocks)-i) * (times.Idle + times.Load + times.Tail))
+		k.mu.Unlock()
 		var loadStart, loadEnd time.Time
 		if err == nil {
 			err = k.phase(ctx, "idle", "", start.Add(times.Idle))
