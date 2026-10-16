@@ -18,11 +18,13 @@ type fakeLinkControl struct {
 	dirs     []Direction
 	paused   bool
 	unshaped []bool // the arguments of SetUnshaped
+	unshapeD time.Duration
 	err      error
 }
 
-func (f *fakeLinkControl) SetUnshaped(on bool) error {
+func (f *fakeLinkControl) SetUnshaped(on bool, d time.Duration) error {
 	f.unshaped = append(f.unshaped, on)
+	f.unshapeD = d
 	return f.err
 }
 
@@ -49,8 +51,14 @@ func TestHandleControlCommand(t *testing.T) {
 		{"pause", "error: usage", nil, false},
 		{"", "error: empty", nil, false},
 		{"stop a", "error: unknown command", nil, false},
-		{"unshape", "error: usage: unshape LINK", nil, false},
+		{"unshape", "error: usage: unshape LINK [SECONDS]", nil, false},
+		{"unshape a 10 20", "error: usage: unshape LINK [SECONDS]", nil, false},
+		{"unshape a 0", "error: SECONDS must be 1 to 3600", nil, false},
+		{"unshape a 3601", "error: SECONDS must be 1 to 3600", nil, false},
+		{"unshape a 9223372036854775807", "error: SECONDS must be 1 to 3600", nil, false},
+		{"unshape a x", "error: SECONDS must be 1 to 3600", nil, false},
 		{"shape a dl", "error: usage: shape LINK", nil, false},
+		{"shape a 10", "error: usage: shape LINK", nil, false},
 		{"unshape x", `error: unknown link "x"`, nil, false},
 	} {
 		*a = fakeLinkControl{}
@@ -70,9 +78,13 @@ func TestHandleControlCommand(t *testing.T) {
 		if got := handleControlCommand(line, &ControlHandler{Names: names, Links: links}); got != "ok" {
 			t.Errorf("%q: got %q", line, got)
 		}
-		if want := []bool{line == "unshape a"}; !slices.Equal(a.unshaped, want) {
-			t.Errorf("%q: SetUnshaped calls %v, want %v", line, a.unshaped, want)
+		if want := []bool{line == "unshape a"}; !slices.Equal(a.unshaped, want) || a.unshapeD != 0 {
+			t.Errorf("%q: SetUnshaped calls %v (%v), want %v", line, a.unshaped, a.unshapeD, want)
 		}
+	}
+	*a = fakeLinkControl{}
+	if got := handleControlCommand("unshape a 90", &ControlHandler{Names: names, Links: links}); got != "ok" || a.unshapeD != 90*time.Second {
+		t.Errorf("unshape a 90: %q, duration %v", got, a.unshapeD)
 	}
 	a.err = fmt.Errorf("link does not run")
 	if got := handleControlCommand("pause a", &ControlHandler{Names: names, Links: links}); got != "error: link does not run" {

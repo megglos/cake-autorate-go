@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -39,6 +40,9 @@ type LinkController struct {
 	// unshapePaused are the pause states of the directions before the
 	// command "unshape". Only the goroutine of Run uses it.
 	unshapePaused map[Direction]bool
+	// unshapeUntil is the end of the time of "unshape LINK SECONDS", or
+	// zero (no time limit). Only the goroutine of Run uses it.
+	unshapeUntil time.Time
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
 	// goroutine of Run.
@@ -138,6 +142,7 @@ func (c *LinkController) Run(ctx context.Context) error {
 			close(cmd.done)
 
 		case <-healthTicker.C:
+			c.checkUnshapeTime(time.Now())
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
 				for _, r := range promoted {
@@ -153,6 +158,9 @@ func (c *LinkController) Run(ctx context.Context) error {
 // goroutine of Run calls it, thus it can read the Core.
 func (c *LinkController) publishStatus() {
 	st := c.core.Core().Snapshot()
+	if st.Unshaped && !c.unshapeUntil.IsZero() {
+		st.UnshapedLeftS = math.Max(0, math.Round(time.Until(c.unshapeUntil).Seconds()))
+	}
 	baselines := c.core.Core().ReflectorBaselinesUs()
 	for _, r := range c.pingerMgr.Snapshot() {
 		st.Reflectors = append(st.Reflectors, ReflectorDelayStatus{ReflectorStatus: r, BaselineMs: roundMs(baselines[r.Address])})
@@ -233,6 +241,8 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 }
 
 // SetUnshaped turns the shaping of the link off (on is true) or on again.
+// With a duration d > 0, the shaping comes back after d (also when the
+// program that sent the command stops); a new "unshape" sets a new time.
 // Without shaping, the shaper rate of each direction with rate control is
 // unshapedKbps and the rate control stops; the pings and the status
 // continue. When the shaping comes back, each direction gets its pause
@@ -240,10 +250,16 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 // the others start the rate control again from the base rate. The state
 // is not kept: the program starts with shaping, and it shapes the link
 // again before it stops.
-func (c *LinkController) SetUnshaped(on bool) error {
+func (c *LinkController) SetUnshaped(on bool, d time.Duration) error {
 	return c.call(func(now time.Time) error {
 		if c.core.Core().Calibrating() {
 			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		if on {
+			c.unshapeUntil = time.Time{}
+			if d > 0 {
+				c.unshapeUntil = now.Add(d)
+			}
 		}
 		if on == c.core.Core().Unshaped() {
 			return nil
@@ -287,8 +303,21 @@ func (c *LinkController) shapeAgain(now time.Time) error {
 		return c.rateErr
 	}
 	c.core.SetUnshaped(false, now)
+	c.unshapeUntil = time.Time{}
 	c.logger.Infof("[%s] shaping on", c.name)
 	return nil
+}
+
+// checkUnshapeTime shapes the link again at the end of the time of
+// "unshape LINK SECONDS". Only the goroutine of Run calls it.
+func (c *LinkController) checkUnshapeTime(now time.Time) {
+	if c.unshapeUntil.IsZero() || now.Before(c.unshapeUntil) || !c.core.Core().Unshaped() {
+		return
+	}
+	c.logger.Infof("[%s] the time of unshape ended", c.name)
+	if err := c.shapeAgain(now); err != nil {
+		c.logger.Errorf("[%s] turning the shaping on: %v", c.name, err)
+	}
 }
 
 // stop ends the work of the controller at the end of Run. The link must

@@ -557,7 +557,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 |---|---|
 | `pause LINK [dl\|ul]` | Set the shaper to the base rate and stop the rate changes. Without a direction, the command applies to both directions. |
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
-| `unshape LINK` | Turn the shaping of the link off: the shaper rate of each direction with rate control is 10 Gbit/s (no useful limit), and the rate control stops. |
+| `unshape LINK [SECONDS]` | Turn the shaping of the link off: the shaper rate of each direction with rate control is 10 Gbit/s (no useful limit), and the rate control stops. With `SECONDS` (1 to 3600), the shaping comes back after this time. |
 | `shape LINK` | Turn the shaping of the link on again. Each direction gets its pause state from before `unshape`: a paused direction stays paused at the base rate, the others start the rate control again from the base rate. |
 | `list` | Answer with the link names. |
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [docs/calibration.md](docs/calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
@@ -567,7 +567,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
 
-Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue: an idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`). A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
+Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue: an idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`) and, for `unshape LINK SECONDS`, the time left (`unshaped_left_s`). A program that turns the shaping off for a test (for example a web page) should send `SECONDS`: then the shaping comes back also when the program stops. A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

@@ -264,7 +264,7 @@ func TestSetUnshaped(t *testing.T) {
 	if err := c.SetPaused([]Direction{UL}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SetUnshaped(true); err != nil {
+	if err := c.SetUnshaped(true, 0); err != nil {
 		t.Fatal(err)
 	}
 	core := c.core.Core()
@@ -279,11 +279,11 @@ func TestSetUnshaped(t *testing.T) {
 	}
 	// A second "unshape" changes nothing.
 	n := len(act.rates[DL])
-	if err := c.SetUnshaped(true); err != nil || len(act.rates[DL]) != n {
+	if err := c.SetUnshaped(true, 0); err != nil || len(act.rates[DL]) != n {
 		t.Errorf("second unshape: %v, %d rate changes", err, len(act.rates[DL])-n)
 	}
 
-	if err := c.SetUnshaped(false); err != nil {
+	if err := c.SetUnshaped(false, 0); err != nil {
 		t.Fatal(err)
 	}
 	if lastRate(act, DL) != c.link.Download.BaseRateKbps || core.Paused(DL) {
@@ -303,7 +303,7 @@ func TestSetUnshaped(t *testing.T) {
 // the controller refuses "unshape".
 func TestUnshapedRefusesOtherCommands(t *testing.T) {
 	c, _ := testUnshapeController(t)
-	if err := c.SetUnshaped(true); err != nil {
+	if err := c.SetUnshaped(true, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SetPaused([]Direction{DL}, false); err == nil || !strings.Contains(err.Error(), "shaping is off") {
@@ -315,11 +315,11 @@ func TestUnshapedRefusesOtherCommands(t *testing.T) {
 	if c.core.Core().Calibrating() {
 		t.Error("the calibration must not start")
 	}
-	if err := c.SetUnshaped(false); err != nil {
+	if err := c.SetUnshaped(false, 0); err != nil {
 		t.Fatal(err)
 	}
 	c.core.SetCalibrating(true, time.Now())
-	if err := c.SetUnshaped(true); err == nil || !strings.Contains(err.Error(), "calibration runs") {
+	if err := c.SetUnshaped(true, 0); err == nil || !strings.Contains(err.Error(), "calibration runs") {
 		t.Errorf("unshape during a calibration: %v", err)
 	}
 	if c.core.Core().Unshaped() {
@@ -331,7 +331,7 @@ func TestUnshapedRefusesOtherCommands(t *testing.T) {
 func TestSetUnshapedOnlyAdjustedDirections(t *testing.T) {
 	c, act := testUnshapeController(t)
 	c.link.Upload.Adjust = false
-	if err := c.SetUnshaped(true); err != nil {
+	if err := c.SetUnshaped(true, 0); err != nil {
 		t.Fatal(err)
 	}
 	if lastRate(act, DL) != unshapedKbps || len(act.rates[UL]) != 0 {
@@ -339,7 +339,7 @@ func TestSetUnshapedOnlyAdjustedDirections(t *testing.T) {
 	}
 	c.link.Download.Adjust = false
 	c.core.SetUnshaped(false, time.Now())
-	if err := c.SetUnshaped(true); err == nil {
+	if err := c.SetUnshaped(true, 0); err == nil {
 		t.Error("a link without rate control cannot be unshaped")
 	}
 }
@@ -347,7 +347,7 @@ func TestSetUnshapedOnlyAdjustedDirections(t *testing.T) {
 // The program shapes an unshaped link again before it stops.
 func TestStopShapesAgain(t *testing.T) {
 	c, act := testUnshapeController(t)
-	if err := c.SetUnshaped(true); err != nil {
+	if err := c.SetUnshaped(true, 0); err != nil {
 		t.Fatal(err)
 	}
 	c.stop(time.Now())
@@ -361,10 +361,60 @@ func TestSetUnshapedWakesIdleLink(t *testing.T) {
 	c, act := testUnshapeController(t)
 	c.core.Core().state = StateIdle
 	starts := act.starts
-	if err := c.SetUnshaped(true); err != nil {
+	if err := c.SetUnshaped(true, 0); err != nil {
 		t.Fatal(err)
 	}
 	if st := c.core.Core().State(); st != StateRunning || act.starts != starts+1 {
 		t.Errorf("state %s, pinger starts %d", st, act.starts-starts)
+	}
+}
+
+// "unshape LINK SECONDS" shapes the link again after the time. The status
+// shows the time left.
+func TestUnshapeTimeLimit(t *testing.T) {
+	c, act := testUnshapeController(t)
+	if err := c.SetUnshaped(true, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	c.publishStatus()
+	if st := boardStatus(c); !st.Unshaped || st.UnshapedLeftS < 25 || st.UnshapedLeftS > 30 {
+		t.Errorf("status: unshaped %v, left %v s", st.Unshaped, st.UnshapedLeftS)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkUnshapeTime(now.Add(29 * time.Second)) })
+	if !c.core.Core().Unshaped() {
+		t.Fatal("shaped before the end of the time")
+	}
+	runOnController(t, c, func(now time.Time) { c.checkUnshapeTime(now.Add(31 * time.Second)) })
+	if c.core.Core().Unshaped() || lastRate(act, DL) != c.link.Download.BaseRateKbps {
+		t.Errorf("after the time: unshaped %v, rates %v", c.core.Core().Unshaped(), act.rates)
+	}
+	c.publishStatus()
+	if st := boardStatus(c); st.Unshaped || st.UnshapedLeftS != 0 {
+		t.Errorf("status after the time: %+v", st)
+	}
+
+	// Without a time, the link stays unshaped. A second "unshape" with a
+	// time sets the time.
+	if err := c.SetUnshaped(true, 0); err != nil {
+		t.Fatal(err)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkUnshapeTime(now.Add(24 * time.Hour)) })
+	if !c.core.Core().Unshaped() {
+		t.Fatal("unshape without a time must stay")
+	}
+	if err := c.SetUnshaped(true, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkUnshapeTime(now.Add(11 * time.Second)) })
+	if c.core.Core().Unshaped() {
+		t.Error("the second unshape must set the time")
+	}
+}
+
+// runOnController runs fn on the goroutine of the controller (runCommands).
+func runOnController(t *testing.T, c *LinkController, fn func(now time.Time)) {
+	t.Helper()
+	if err := c.call(func(now time.Time) error { fn(now); return nil }); err != nil {
+		t.Fatal(err)
 	}
 }

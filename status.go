@@ -71,10 +71,13 @@ type LinkStatus struct {
 	Calibrating bool `json:"calibrating"`
 	// Unshaped is true while a user turned the shaping of the link off
 	// through the control socket.
-	Unshaped   bool                   `json:"unshaped"`
-	Download   DirStatus              `json:"download"`
-	Upload     DirStatus              `json:"upload"`
-	Reflectors []ReflectorDelayStatus `json:"reflectors"`
+	Unshaped bool `json:"unshaped"`
+	// UnshapedLeftS is the time until the shaping comes back, for
+	// "unshape LINK SECONDS". It is 0 without a time limit.
+	UnshapedLeftS float64                `json:"unshaped_left_s,omitempty"`
+	Download      DirStatus              `json:"download"`
+	Upload        DirStatus              `json:"upload"`
+	Reflectors    []ReflectorDelayStatus `json:"reflectors"`
 }
 
 // StatusFile is the content of the status file.
