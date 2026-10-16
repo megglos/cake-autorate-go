@@ -1,0 +1,357 @@
+// SPDX-License-Identifier: GPL-2.0
+//
+// The bufferbloat test of the status page. The browser makes the load (the
+// load of the calibration: downloads from and uploads to the speed test of
+// Cloudflare) in 4 phases: no load, download, upload, both. The delay comes
+// from the program: the delay delta of its reflectors in the status file,
+// each second. Optionally, the test runs a second time without the shaper
+// ("unshape" with a time), so that the user can compare the two results.
+
+'use strict';
+'require baseclass';
+'require fs';
+'require rpc';
+'require ui';
+'require cake-autorate.calibration as calibration';
+
+const STATUS_FILE = '/var/run/cake-autorate/status.json';
+
+// The phases of a run: the load and the time (s).
+const PHASES = [
+	{ key: 'idle', load: '', seconds: 6 },
+	{ key: 'dl', load: 'dl', seconds: 12 },
+	{ key: 'ul', load: 'ul', seconds: 12 },
+	{ key: 'both', load: 'both', seconds: 12 }
+];
+
+// The first seconds of a load phase are not in the result: TCP increases
+// its rate, and the program can leave Idle.
+const WARMUP_S = 3;
+
+// The time between two runs (s): the queues become empty.
+const PAUSE_S = 3;
+
+// The grades of the delay increase (ms), as on common bufferbloat tests:
+// the first grade with an increase below its limit.
+const GRADES = [ [ 5, 'A+' ], [ 30, 'A' ], [ 60, 'B' ], [ 200, 'C' ], [ 400, 'D' ], [ Infinity, 'F' ] ];
+
+const callUnshape = rpc.declare({
+	object: 'cake-autorate',
+	method: 'unshape',
+	params: [ 'link', 'seconds' ]
+});
+
+const callShape = rpc.declare({
+	object: 'cake-autorate',
+	method: 'shape',
+	params: [ 'link' ]
+});
+
+// Returns a text node. The values come from the program, and E() reads a
+// string as HTML.
+function text(v) {
+	return document.createTextNode(v == null ? '' : String(v));
+}
+
+function mbit(kbps) {
+	return '%.1f Mbit/s'.format((+kbps || 0) / 1000);
+}
+
+function volume(bytes) {
+	return bytes >= 1e9 ? '%.1f GB'.format(bytes / 1e9) : '%.0f MB'.format(bytes / 1e6);
+}
+
+// Returns the value at the quantile q (0 to 1) of the values, or null.
+function quantile(values, q) {
+	if (!values.length)
+		return null;
+	const s = values.slice().sort((a, b) => a - b);
+	return s[Math.min(s.length - 1, Math.floor(q * s.length))];
+}
+
+// Returns the grade of a delay increase in ms.
+function grade(ms) {
+	return GRADES.find((g) => ms < g[0])[1];
+}
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Throws the error of an rpcd answer.
+function checkAnswer(res) {
+	if (!res || res.error)
+		throw new Error((res && res.error) || _('No answer from the service'));
+}
+
+return baseclass.extend({
+	__init__: function() {
+		this.node = null;
+		this.running = false;
+		this.cancelled = false;
+		this.load = null;
+		this.unshaped = false;
+		// The phases and the warm-up time (tests make them shorter).
+		this.phases = PHASES;
+		this.warmup = WARMUP_S;
+		this.onUnload = (ev) => {
+			ev.preventDefault();
+			ev.returnValue = '';
+		};
+	},
+
+	// The time of one run (s).
+	runSeconds: function() {
+		return this.phases.reduce((s, p) => s + p.seconds, 0);
+	},
+
+	// The data volume of one run with the maximum rates of the link.
+	estimate: function(ls) {
+		const dl = (+(ls.download || {}).max_kbps || 0) * 1000 / 8;
+		const ul = (+(ls.upload || {}).max_kbps || 0) * 1000 / 8;
+		let bytes = 0;
+		for (const p of this.phases) {
+			if (p.load == 'dl' || p.load == 'both')
+				bytes += p.seconds * dl;
+			if (p.load == 'ul' || p.load == 'both')
+				bytes += p.seconds * ul;
+		}
+		return bytes;
+	},
+
+	// Opens the dialog of the test for the link with the status ls.
+	open: function(ls) {
+		const compare = E('input', { 'type': 'checkbox', 'id': 'cake-autorate-bufferbloat-compare' });
+		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-bufferbloat-limit', 'min': 1, 'step': 1 });
+		const info = E('p', { 'class': 'cake-autorate-estimate' });
+		const problem = E('div', { 'class': 'cake-autorate-problem' });
+		let edited = false;
+		limit.addEventListener('input', () => { edited = true; });
+		const update = () => {
+			const runs = compare.checked ? 2 : 1;
+			const estimate = runs * this.estimate(ls);
+			info.replaceChildren(text(_('Time: approximately %d s. Data volume: approximately %s (with the maximum rates of the link).')
+				.format(runs * this.runSeconds() + (runs - 1) * PAUSE_S, volume(estimate))));
+			// Without the shaper, the link can be faster than its maximum
+			// rate: 1.5 times the volume, up to the next 100 MB.
+			if (!edited)
+				limit.value = Math.max(1, Math.ceil(1.5 * estimate / 1e8)) * 100;
+		};
+		compare.addEventListener('change', update);
+		update();
+		ui.showModal(_('Bufferbloat test of the link %s').format(ls.name), [
+			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. Do not use the network during the test.'))),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-compare' }, _('Compare without shaping')),
+				E('div', { 'class': 'cbi-value-field' }, [
+					compare,
+					E('div', { 'class': 'cbi-value-description' },
+						_('Run the test a second time with the shaping off. The shaping comes back after the test, also if this page closes (after a time limit).'))
+				])
+			]),
+			info,
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-limit' }, _('Data limit (MB)')),
+				E('div', { 'class': 'cbi-value-field' }, [
+					limit,
+					E('div', { 'class': 'cbi-value-description' }, _('The test stops when the load of this browser reaches this limit.'))
+				])
+			]),
+			problem,
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Cancel')),
+				' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'click': ui.createHandlerFn(this, function() {
+						const mb = Math.floor(+limit.value);
+						problem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
+						if (mb >= 1)
+							this.start(ls.name, compare.checked, mb * 1e6);
+					})
+				}, _('Start'))
+			])
+		]);
+	},
+
+	// Runs the test and shows the result. The dialog stays open.
+	start: function(link, compare, limit) {
+		this.running = true;
+		this.cancelled = false;
+		this.load = new calibration.Load();
+		this.load.limit = limit;
+		this.load.onLimit = () => { this.cancelled = true; };
+		this.node = E('div', { 'id': 'cake-autorate-bufferbloat' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
+		ui.showModal(_('Bufferbloat test of the link %s').format(link), [ this.node ]);
+		window.addEventListener('beforeunload', this.onUnload);
+
+		const runs = [];
+		let error = null;
+		const total = compare ? 2 : 1;
+		return (async () => {
+			try {
+				runs.push(await this.run(link, _('With shaping'), 1, total));
+				if (compare && !this.cancelled) {
+					await this.wait(link, PAUSE_S, _('Pause between the runs'));
+					// The time limit: the run, and a margin for slow status
+					// requests. Then the shaping comes back without this page.
+					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
+					this.unshaped = true;
+					runs.push(await this.run(link, _('Without shaping'), 2, total));
+				}
+			}
+			catch (e) {
+				error = e.message || String(e);
+			}
+			finally {
+				this.load.stop();
+				if (this.unshaped) {
+					this.unshaped = false;
+					await L.resolveDefault(callShape(link), null);
+				}
+				this.running = false;
+				window.removeEventListener('beforeunload', this.onUnload);
+			}
+			this.renderResult(runs, error);
+		})();
+	},
+
+	stop: function() {
+		this.cancelled = true;
+	},
+
+	// Reads the status of the link, or null.
+	readLink: function(link) {
+		return L.resolveDefault(fs.read(STATUS_FILE), null).then((data) => {
+			try {
+				const s = JSON.parse(data);
+				const ls = (s.links || []).find((l) => l.name == link);
+				return ls ? { updated: s.updated, ls: ls } : null;
+			}
+			catch (e) {
+				return null;
+			}
+		});
+	},
+
+	// Waits seconds without load and shows the reason.
+	wait: async function(link, seconds, what) {
+		for (let i = seconds; i > 0 && !this.cancelled; i--) {
+			this.renderRunning(what, i, null);
+			await sleep(1000);
+		}
+	},
+
+	// Runs the phases once. Returns { title, phases: [ { key, samples,
+	// dl, ul, seconds } ] }.
+	run: async function(link, title, number, total) {
+		const result = { title: title, phases: [] };
+		for (const p of this.phases) {
+			if (this.cancelled)
+				break;
+			const ph = { key: p.key, dl: [], ul: [], idle: 0, bytes: null, seconds: 0 };
+			result.phases.push(ph);
+			this.load.set(p.load);
+			const start = performance.now();
+			let lastUpdated = null, warm = null;
+			for (let s = 0; s < p.seconds && !this.cancelled; s++) {
+				await sleep(Math.max(0, start + (s + 1) * 1000 - performance.now()));
+				const st = await this.readLink(link);
+				const measuring = !p.load || s + 1 > this.warmup;
+				if (measuring && warm == null)
+					warm = { t: performance.now(), dl: this.load.bytes.dl, ul: this.load.bytes.ul };
+				// Only a new status of a link with pings: in Idle and Stall,
+				// the delay delta does not change.
+				if (st && st.updated != lastUpdated && measuring) {
+					if (st.ls.state == 'RUNNING') {
+						ph.dl.push(+st.ls.download.delta_ms || 0);
+						ph.ul.push(+st.ls.upload.delta_ms || 0);
+					}
+					else {
+						ph.idle++;
+					}
+				}
+				if (st)
+					lastUpdated = st.updated;
+				this.renderRunning(_('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key)),
+					p.seconds - s - 1, st && st.ls);
+			}
+			if (warm) {
+				ph.seconds = (performance.now() - warm.t) / 1000;
+				ph.bytes = { dl: this.load.bytes.dl - warm.dl, ul: this.load.bytes.ul - warm.ul };
+			}
+		}
+		this.load.set('');
+		return result;
+	},
+
+	phaseTitle: function(key) {
+		return {
+			idle: _('no load'),
+			dl: _('download'),
+			ul: _('upload'),
+			both: _('download and upload')
+		}[key];
+	},
+
+	renderRunning: function(what, left, ls) {
+		const nodes = [
+			E('p', { 'class': 'cake-autorate-phase' }, text(_('%s (%d s left).').format(what, left)))
+		];
+		if (ls)
+			nodes.push(E('p', { 'class': 'cake-autorate-delay' }, text(_('Delay delta now: download %.1f ms, upload %.1f ms. State: %s.')
+				.format(+ls.download.delta_ms || 0, +ls.upload.delta_ms || 0, ls.state))));
+		nodes.push(E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s of %s.').format(volume(this.load.used()), volume(this.load.limit)))));
+		nodes.push(E('div', { 'class': 'right' }, E('button', {
+			'class': 'cbi-button cbi-button-negative',
+			'click': ui.createHandlerFn(this, 'stop')
+		}, _('Stop'))));
+		this.node.replaceChildren(...nodes);
+	},
+
+	// Returns the cells of a phase: the rates of the browser, the median
+	// and the p95 of the delay delta of each direction, and the grade (the
+	// larger median).
+	phaseCells: function(ph) {
+		const rate = (dir) => (ph.bytes && ph.seconds > 0) ? mbit(ph.bytes[dir] * 8 / ph.seconds / 1000) : '-';
+		const delay = (v) => v.length ? _('%.1f ms (p95 %.1f)').format(quantile(v, 0.5), quantile(v, 0.95)) : '-';
+		const m = Math.max(quantile(ph.dl, 0.5) ?? -1, quantile(ph.ul, 0.5) ?? -1);
+		const g = (ph.key != 'idle' && m >= 0) ? grade(m) : '';
+		return [
+			text(this.phaseTitle(ph.key)),
+			text(ph.key == 'idle' ? '-' : rate('dl')),
+			text(ph.key == 'idle' ? '-' : rate('ul')),
+			text(delay(ph.dl)),
+			text(delay(ph.ul)),
+			g ? E('span', { 'class': 'label ' + ({ 'A+': 'success', 'A': 'success', 'B': 'notice' }[g] || 'warning'), 'data-grade': g }, g) : text(ph.idle ? _('no pings (Idle)') : '')
+		];
+	},
+
+	renderResult: function(runs, error) {
+		const nodes = [];
+		if (error)
+			nodes.push(E('p', { 'class': 'alert-message warning' }, text(_('The test stopped with an error: %s').format(error))));
+		else if (this.load.overLimit)
+			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped: the load reached the data limit of %s.').format(volume(this.load.limit)))));
+		else if (this.cancelled)
+			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped.'))));
+		nodes.push(E('p', {}, text(_('The delay is the delay delta of the reflectors of the service (the increase above the baseline) in each direction: the median and the p95. The grade is for the larger median: A+ below 5 ms, A below 30 ms, B below 60 ms, C below 200 ms, D below 400 ms, else F. The rates are the rates of this browser.'))));
+		for (const r of runs) {
+			const rows = [
+				E('tr', { 'class': 'tr table-titles' }, [
+					E('th', { 'class': 'th' }, _('Load')),
+					E('th', { 'class': 'th' }, _('Download rate')),
+					E('th', { 'class': 'th' }, _('Upload rate')),
+					E('th', { 'class': 'th' }, _('Download delay')),
+					E('th', { 'class': 'th' }, _('Upload delay')),
+					E('th', { 'class': 'th' }, _('Grade'))
+				])
+			];
+			for (const ph of r.phases)
+				rows.push(E('tr', { 'class': 'tr', 'data-phase': ph.key }, this.phaseCells(ph).map((c) => E('td', { 'class': 'td' }, c))));
+			nodes.push(E('h4', {}, text(r.title)), E('table', { 'class': 'table cake-autorate-bufferbloat-result' }, rows));
+		}
+		nodes.push(E('div', { 'class': 'right' }, E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Close'))));
+		this.node.replaceChildren(...nodes);
+	}
+});
