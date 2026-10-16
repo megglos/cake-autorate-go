@@ -186,13 +186,15 @@ return baseclass.extend({
 		window.addEventListener('beforeunload', this.onUnload);
 
 		const runs = [];
-		let error = null;
+		let error = null, shapeError = null;
 		const total = compare ? 2 : 1;
 		return (async () => {
 			try {
 				runs.push(await this.run(link, _('With shaping'), 1, total));
-				if (compare && !this.cancelled) {
+				if (compare && !this.cancelled)
 					await this.wait(link, PAUSE_S, _('Pause between the runs'));
+				// A stop in the pause: no change of the shaping.
+				if (compare && !this.cancelled) {
 					// The time limit: the run, and a margin for slow status
 					// requests. Then the shaping comes back without this page.
 					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
@@ -206,18 +208,26 @@ return baseclass.extend({
 			finally {
 				this.load.stop();
 				if (this.unshaped) {
-					this.unshaped = false;
-					await L.resolveDefault(callShape(link), null);
+					try {
+						checkAnswer(await callShape(link));
+						this.unshaped = false;
+					}
+					catch (e) {
+						shapeError = e.message || String(e);
+					}
 				}
 				this.running = false;
 				window.removeEventListener('beforeunload', this.onUnload);
 			}
-			this.renderResult(runs, error);
+			this.renderResult(runs, error, shapeError);
 		})();
 	},
 
+	// Stops the load at once; the run ends at its next check.
 	stop: function() {
 		this.cancelled = true;
+		if (this.load)
+			this.load.stop();
 	},
 
 	// Reads the status of the link, or null.
@@ -256,10 +266,14 @@ return baseclass.extend({
 			let lastUpdated = null, warm = null;
 			for (let s = 0; s < p.seconds && !this.cancelled; s++) {
 				await sleep(Math.max(0, start + (s + 1) * 1000 - performance.now()));
+				// A failed load request (for example, the speed test is
+				// blocked): the delay without load would get a good grade.
+				if (this.load.errors > 0)
+					throw new Error(_('The load failed: %s').format(this.load.lastError));
 				const st = await this.readLink(link);
 				const measuring = !p.load || s + 1 > this.warmup;
 				if (measuring && warm == null)
-					warm = { t: performance.now(), dl: this.load.bytes.dl, ul: this.load.bytes.ul };
+					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
 				// Only a new status of a link with pings: in Idle and Stall,
 				// the delay delta does not change.
 				if (st && st.updated != lastUpdated && measuring) {
@@ -278,7 +292,7 @@ return baseclass.extend({
 			}
 			if (warm) {
 				ph.seconds = (performance.now() - warm.t) / 1000;
-				ph.bytes = { dl: this.load.bytes.dl - warm.dl, ul: this.load.bytes.ul - warm.ul };
+				ph.bytes = { dl: this.load.sent.dl - warm.dl, ul: this.load.sent.ul - warm.ul };
 			}
 		}
 		this.load.set('');
@@ -327,8 +341,10 @@ return baseclass.extend({
 		];
 	},
 
-	renderResult: function(runs, error) {
+	renderResult: function(runs, error, shapeError) {
 		const nodes = [];
+		if (shapeError)
+			nodes.push(E('p', { 'class': 'alert-message danger', 'data-shape-error': '' }, text(_('The shaping did not come back: %s. Click "Turn shaping on" on the status page. Else the service turns it on after the time limit of the test.').format(shapeError))));
 		if (error)
 			nodes.push(E('p', { 'class': 'alert-message warning' }, text(_('The test stopped with an error: %s').format(error))));
 		else if (this.load.overLimit)
