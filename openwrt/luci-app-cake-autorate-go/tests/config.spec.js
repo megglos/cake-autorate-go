@@ -57,6 +57,17 @@ test.afterEach(() => {
 	expect(errors, 'JavaScript errors on the page').toEqual([]);
 });
 
+// Selects a value in a LuCI dropdown. A click while the dropdown opens,
+// closes or the page refreshes can get lost. Thus, try again until the
+// dropdown shows the value.
+async function selectInterface(dropdown, value) {
+	await expect(async () => {
+		await dropdown.click();
+		await dropdown.locator(`li[data-value="${value}"][tabindex]`).click({ timeout: 2000 });
+		await expect(dropdown.locator(`li[data-value="${value}"][selected]`)).toHaveCount(1, { timeout: 1000 });
+	}).toPass({ timeout: 15000 });
+}
+
 test('page shows the service and the links', async ({ page }) => {
 	await expect(page.locator('h2')).toHaveText('CAKE Autorate (Go)');
 	await expect(page.locator('.cbi-tabmenu li').filter({ hasText: /^(General|Idle and stall|Delay thresholds|Advanced|Logging)$/ }))
@@ -143,11 +154,9 @@ test('new link gets the default rates and Save & Apply starts it', async ({ page
 	await custom.press('Enter');
 	// eth1 is the upload interface of the link wan.
 	const ul = modal.locator('[data-name="ul_interface"] .cbi-dropdown');
-	await ul.click();
-	await ul.locator('li[data-value="eth1"][tabindex]').click();
+	await selectInterface(ul, 'eth1');
 	await expect(page.locator('[id="cbid.cake-autorate.lte.ul_interface"]')).toHaveClass(INVALID);
-	await ul.click();
-	await ul.locator('li[data-value="eth0"][tabindex]').click();
+	await selectInterface(ul, 'eth0');
 	await expect(page.locator('[id="cbid.cake-autorate.lte.ul_interface"]')).not.toHaveClass(INVALID);
 
 	await modal.locator('.cbi-button-positive').click();
@@ -420,8 +429,7 @@ test('a disabled link does not use its interfaces', async ({ page }) => {
 	const selectEth0 = async () => {
 		await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
 		const ul = page.locator('.modal [data-name="ul_interface"] .cbi-dropdown');
-		await ul.click();
-		await ul.locator('li[data-value="eth0"][tabindex]').click();
+		await selectInterface(ul, 'eth0');
 	};
 	// The enabled link "old" uses eth0.
 	await selectEth0();
@@ -511,8 +519,7 @@ test('enabling a link in its dialog uses the changed interfaces', async ({ page 
 	await page.locator('.cbi-section-table-row[data-sid="old"] .cbi-button-edit').click();
 	const modal = page.locator('.modal');
 	const ul = modal.locator('[data-name="ul_interface"] .cbi-dropdown');
-	await ul.click();
-	await ul.locator('li[data-value="eth0"][tabindex]').click();
+	await selectInterface(ul, 'eth0');
 	await modal.locator('input[data-widget-id="widget.cbid.cake-autorate.old.enabled"]').check();
 	await modal.locator('.cbi-button-positive').click();
 	await expect(modal).toBeHidden();
