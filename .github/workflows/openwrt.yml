@@ -52,93 +52,23 @@ jobs:
             jq empty "$f"
           done
 
-  # Build the apk packages with the OpenWrt SDK.
-  package:
-    # Do not build or publish packages with a converter that fails its tests.
+  # Build the apk packages with the OpenWrt SDK, one job for each
+  # architecture. The VM tests need only x86_64; the aarch64 build takes
+  # much longer and runs at the same time.
+  # Do not build or publish packages with a converter that fails its tests.
+  package-x86:
     needs: converter
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64_cortex-a53-openwrt-25.12
-            goarch: arm64
-          - arch: x86_64-openwrt-25.12
-            goarch: amd64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    uses: ./.github/workflows/package.yml
+    with:
+      arch: x86_64-openwrt-25.12
+      goarch: amd64
 
-      # Write the version to the Makefile, because the SDK action does not
-      # pass variables to make. apk versions have no "-" (see "apk
-      # version"). A release tag 1.2.0-rc.1 (or v1.2.0-rc.1) gives 1.2.0_rc1.
-      # Other builds get the Makefile version plus _p and the commit count.
-      - name: Set the version
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          mk=openwrt/cake-autorate-go/Makefile
-          luci=openwrt/luci-app-cake-autorate-go/Makefile
-          if [ -n "$TAG" ]; then
-            v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
-          else
-            v="$(sed -n 's/^PKG_VERSION:=//p' "$mk")_p$(git rev-list --count HEAD)"
-          fi
-          if ! echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*(_(alpha|beta|pre|rc|p)[0-9]*)?$'; then
-            echo "::error::version $v (from tag \"$TAG\") is not a valid apk version"
-            exit 1
-          fi
-          desc=$(git describe --tags --always --dirty)
-          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
-            -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
-          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" "$luci"
-          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk" "$luci"
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      # Build the program with the Go toolchain of the runner. Then the SDK
-      # does not build its own Go toolchain (about 10 minutes). The program
-      # is static, thus it does not need the C library of OpenWrt.
-      - name: Build the program
-        env:
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-        run: |
-          desc=$(git describe --tags --always)
-          go build -trimpath -ldflags="-s -w -X main.version=$desc" \
-            -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
-
-      - name: Build
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ matrix.arch }}
-          PACKAGES: cake-autorate-go luci-app-cake-autorate-go
-          # The prebuilt program and the LuCI app need no other feeds.
-          NO_DEFAULT_FEEDS: 1
-
-      # The apk file names do not have the architecture. Add it, because
-      # the names of the release files must be unique.
-      - name: Name the packages
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          mkdir dist
-          for f in bin/packages/*/action/*.apk; do
-            b=$(basename "$f" .apk)
-            cp "$f" "dist/${b}_${ARCH}.apk"
-          done
-          ls -l dist
-
-      - name: Store packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-${{ matrix.arch }}
-          path: dist/*.apk
-          if-no-files-found: error
+  package-arm:
+    needs: converter
+    uses: ./.github/workflows/package.yml
+    with:
+      arch: aarch64_cortex-a53-openwrt-25.12
+      goarch: arm64
 
   # Install the x86_64 packages in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
@@ -148,7 +78,7 @@ jobs:
   # browser tests are split in shards; in a shard, they run one after the
   # other, as on a local run.
   vm:
-    needs: package
+    needs: package-x86
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -242,7 +172,7 @@ jobs:
   # Attach the packages to the release, only after all tests passed.
   release:
     if: github.event_name == 'release'
-    needs: [package, vm]
+    needs: [package-x86, package-arm, vm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

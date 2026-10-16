@@ -1,0 +1,95 @@
+# Builds the apk packages of one architecture with the OpenWrt SDK. The
+# workflow "OpenWrt" calls it for each architecture as a separate job:
+# then the VM tests wait only for the x86_64 packages.
+name: OpenWrt package
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: SDK image tag, for example x86_64-openwrt-25.12
+        required: true
+        type: string
+      goarch:
+        description: GOARCH of the program
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Write the version to the Makefile, because the SDK action does not
+      # pass variables to make. apk versions have no "-" (see "apk
+      # version"). A release tag 1.2.0-rc.1 (or v1.2.0-rc.1) gives 1.2.0_rc1.
+      # Other builds get the Makefile version plus _p and the commit count.
+      - name: Set the version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mk=openwrt/cake-autorate-go/Makefile
+          luci=openwrt/luci-app-cake-autorate-go/Makefile
+          if [ -n "$TAG" ]; then
+            v=$(echo "${TAG#v}" | sed -E 's/-(alpha|beta|pre|rc)\.?([0-9]*)$/_\1\2/')
+          else
+            v="$(sed -n 's/^PKG_VERSION:=//p' "$mk")_p$(git rev-list --count HEAD)"
+          fi
+          if ! echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*(_(alpha|beta|pre|rc|p)[0-9]*)?$'; then
+            echo "::error::version $v (from tag \"$TAG\") is not a valid apk version"
+            exit 1
+          fi
+          desc=$(git describe --tags --always --dirty)
+          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" \
+            -e "s/^CAKE_AUTORATE_VERSION?=.*/CAKE_AUTORATE_VERSION?=$desc/" "$mk"
+          sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" "$luci"
+          grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk" "$luci"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Build the program with the Go toolchain of the runner. Then the SDK
+      # does not build its own Go toolchain (about 10 minutes). The program
+      # is static, thus it does not need the C library of OpenWrt.
+      - name: Build the program
+        env:
+          GOOS: linux
+          GOARCH: ${{ inputs.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          desc=$(git describe --tags --always)
+          go build -trimpath -ldflags="-s -w -X main.version=$desc" \
+            -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@v11
+        env:
+          ARCH: ${{ inputs.arch }}
+          PACKAGES: cake-autorate-go luci-app-cake-autorate-go
+          # The prebuilt program and the LuCI app need no other feeds.
+          NO_DEFAULT_FEEDS: 1
+
+      # The apk file names do not have the architecture. Add it, because
+      # the names of the release files must be unique.
+      - name: Name the packages
+        env:
+          ARCH: ${{ inputs.arch }}
+        run: |
+          mkdir dist
+          for f in bin/packages/*/action/*.apk; do
+            b=$(basename "$f" .apk)
+            cp "$f" "dist/${b}_${ARCH}.apk"
+          done
+          ls -l dist
+
+      - name: Store packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ inputs.arch }}
+          path: dist/*.apk
+          if-no-files-found: error
+
