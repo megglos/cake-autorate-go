@@ -41,8 +41,10 @@ type LinkController struct {
 	// command "unshape". Only the goroutine of Run uses it.
 	unshapePaused map[Direction]bool
 	// unshapeUntil is the end of the time of "unshape LINK SECONDS", or
-	// zero (no time limit). Only the goroutine of Run uses it.
+	// zero (no time limit). unshapeTimer fires at this time. Only the
+	// goroutine of Run uses them.
 	unshapeUntil time.Time
+	unshapeTimer *time.Timer
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
 	// goroutine of Run.
@@ -123,6 +125,12 @@ func (c *LinkController) Run(ctx context.Context) error {
 		c.link.Download.Interface, c.link.Download.MinRateKbps, c.link.Download.BaseRateKbps, c.link.Download.MaxRateKbps,
 		c.link.Upload.Interface, c.link.Upload.MinRateKbps, c.link.Upload.BaseRateKbps, c.link.Upload.MaxRateKbps)
 
+	return c.loop(ctx, healthTicker.C, statusC)
+}
+
+// loop handles the events of the link until ctx ends. healthC and statusC
+// are the ticks of the health check of the reflectors and of the status.
+func (c *LinkController) loop(ctx context.Context, healthC, statusC <-chan time.Time) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -141,8 +149,10 @@ func (c *LinkController) Run(ctx context.Context) error {
 			cmd.err = cmd.fn(time.Now())
 			close(cmd.done)
 
-		case <-healthTicker.C:
+		case <-c.unshapeTimerC():
 			c.checkUnshapeTime(time.Now())
+
+		case <-healthC:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
 				for _, r := range promoted {
@@ -256,10 +266,7 @@ func (c *LinkController) SetUnshaped(on bool, d time.Duration) error {
 			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
 		}
 		if on {
-			c.unshapeUntil = time.Time{}
-			if d > 0 {
-				c.unshapeUntil = now.Add(d)
-			}
+			c.setUnshapeTime(now, d)
 		}
 		if !on {
 			return c.shapeAgain(now)
@@ -305,9 +312,32 @@ func (c *LinkController) shapeAgain(now time.Time) error {
 		return c.rateErr
 	}
 	c.core.SetUnshaped(false, now)
-	c.unshapeUntil = time.Time{}
+	c.setUnshapeTime(now, 0)
 	c.logger.Infof("[%s] shaping on", c.name)
 	return nil
+}
+
+// setUnshapeTime sets the time limit of the unshaped state: d from now, or
+// no limit for d == 0.
+func (c *LinkController) setUnshapeTime(now time.Time, d time.Duration) {
+	if c.unshapeTimer != nil {
+		c.unshapeTimer.Stop()
+		c.unshapeTimer = nil
+	}
+	c.unshapeUntil = time.Time{}
+	if d > 0 {
+		c.unshapeUntil = now.Add(d)
+		c.unshapeTimer = time.NewTimer(d)
+	}
+}
+
+// unshapeTimerC returns the channel of the time limit of the unshaped
+// state, or nil (no time limit: a nil channel never receives).
+func (c *LinkController) unshapeTimerC() <-chan time.Time {
+	if c.unshapeTimer == nil {
+		return nil
+	}
+	return c.unshapeTimer.C
 }
 
 // checkUnshapeTime shapes the link again at the end of the time of

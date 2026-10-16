@@ -419,3 +419,41 @@ func runOnController(t *testing.T, c *LinkController, fn func(now time.Time)) {
 		t.Fatal(err)
 	}
 }
+
+// The run loop shapes the link again at the end of the time of "unshape
+// LINK SECONDS", with its own timer: also without health and status ticks.
+func TestRunLoopEndsUnshapeTime(t *testing.T) {
+	c := testPingerController(t)
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
+	act := &fakeActuator{}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	c.ctrlCh = make(chan *ctrlCmd)
+	c.rateCh = make(chan RateStats)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error)
+	go func() { done <- c.loop(ctx, nil, nil) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	if err := c.SetUnshaped(true, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	unshaped := func() bool {
+		var u bool
+		if err := c.call(func(time.Time) error { u = c.core.Core().Unshaped(); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	if !unshaped() {
+		t.Fatal("the link must be unshaped")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for unshaped() {
+		if time.Now().After(deadline) {
+			t.Fatal("the shaping did not come back after the time")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
