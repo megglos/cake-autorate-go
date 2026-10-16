@@ -256,6 +256,9 @@ const Load = baseclass.extend({
 });
 
 return baseclass.extend({
+	// The load of the browser, also for the bufferbloat test.
+	Load: Load,
+
 	__init__: function() {
 		this.load = new Load();
 		this.timer = null;

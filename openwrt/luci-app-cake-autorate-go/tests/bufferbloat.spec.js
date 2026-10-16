@@ -1,0 +1,217 @@
+// SPDX-License-Identifier: GPL-2.0
+//
+// Browser tests of the bufferbloat test of the status page in the OpenWrt
+// VM. The page answers the speed test requests locally. The delay comes
+// from the status file of the program; some tests change it.
+
+const { test, expect } = require('@playwright/test');
+const { vm, resetConfig, login } = require('./helpers');
+
+const PAGE = '/cgi-bin/luci/admin/network/cake-autorate/status';
+
+// Short phases: 2 s each, without warm-up.
+const PHASES = [
+	{ key: 'idle', load: '', seconds: 2 },
+	{ key: 'dl', load: 'dl', seconds: 2 },
+	{ key: 'ul', load: 'ul', seconds: 2 },
+	{ key: 'both', load: 'both', seconds: 2 }
+];
+
+// Answers the speed test endpoints locally and counts the requests.
+async function routeLoad(page) {
+	const load = { down: 0, up: 0 };
+	await page.route('https://speed.cloudflare.com/**', async (route) => {
+		const req = route.request();
+		if (req.method() == 'OPTIONS')
+			return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type' } });
+		if (req.url().includes('__down'))
+			load.down++;
+		else
+			load.up++;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		try {
+			await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: 'x'.repeat(100000) });
+		}
+		catch (e) {
+			// The page aborted the request.
+		}
+	});
+	return load;
+}
+
+// Changes the status file that the page reads (the file on the router
+// does not change), and records the calls of unshape and shape.
+async function routeUbus(page, mutate) {
+	const calls = [];
+	await page.route('**/ubus/**', async (route) => {
+		const request = route.request().postDataJSON();
+		const requests = Array.isArray(request) ? request : [ request ];
+		for (const q of requests)
+			if (q && q.params && q.params[1] == 'cake-autorate' && /^(un)?shape$/.test(q.params[2]))
+				calls.push([ q.params[2], q.params[3] ]);
+		let response;
+		try {
+			response = await route.fetch();
+		}
+		catch (e) {
+			return;
+		}
+		const body = await response.json();
+		if (mutate)
+			for (const res of Array.isArray(body) ? body : [ body ]) {
+				const p = (requests.find((q) => q && q.id === res.id) || {}).params;
+				const data = res.result && res.result[1] && res.result[1].data;
+				if (p && p[1] == 'file' && p[2] == 'read' && p[3] && p[3].path == '/var/run/cake-autorate/status.json' && data) {
+					const status = JSON.parse(data);
+					mutate(status);
+					res.result[1].data = JSON.stringify(status);
+				}
+			}
+		await route.fulfill({ response, json: body });
+	});
+	return calls;
+}
+
+// Opens the status page with short phases and opens the dialog.
+async function openDialog(page) {
+	await page.goto(PAGE);
+	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = phases;
+		b.warmup = 0;
+	}), PHASES);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	return page.locator('.modal');
+}
+
+// Sets a high data limit: the local answers are fast, the uploads use
+// approximately 600 Mbit/s.
+async function noLimit(modal) {
+	await modal.locator('#cake-autorate-bufferbloat-limit').fill('100000');
+}
+
+// Returns the "unshaped" value of the link in the status file.
+function unshapedInFile() {
+	return vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" 2>/dev/null || true').trim();
+}
+
+let errors;
+
+test.beforeAll(() => {
+	resetConfig();
+});
+
+test.afterAll(() => {
+	resetConfig();
+});
+
+test.beforeEach(async ({ page }) => {
+	await login(page);
+	errors = [];
+	page.on('pageerror', (e) => errors.push(e.message));
+});
+
+test.afterEach(() => {
+	expect(errors, 'JavaScript errors on the page').toEqual([]);
+});
+
+test('the test measures the delay in each phase and gives a grade', async ({ page }) => {
+	await routeUbus(page, (s) => {
+		Object.assign(s.links[0], { state: 'RUNNING' });
+		Object.assign(s.links[0].download, { delta_ms: 12 });
+		Object.assign(s.links[0].upload, { delta_ms: 40 });
+	});
+	const load = await routeLoad(page);
+	const modal = await openDialog(page);
+	await expect(modal).toContainText('Bufferbloat test of the link wan');
+	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 8 s');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 1 of 1 (With shaping)');
+	const table = modal.locator('table.cake-autorate-bufferbloat-result');
+	await expect(table).toHaveCount(1, { timeout: 20000 });
+	await expect(table.locator('tr[data-phase]')).toHaveCount(4);
+	await expect(table.locator('tr[data-phase="idle"]')).toContainText('12.0 ms (p95 12.0)');
+	await expect(table.locator('tr[data-phase="idle"] [data-grade]')).toHaveCount(0);
+	for (const key of [ 'dl', 'ul', 'both' ]) {
+		// The larger median is 40 ms: grade B.
+		await expect(table.locator(`tr[data-phase="${key}"] [data-grade]`)).toHaveText('B');
+		await expect(table.locator(`tr[data-phase="${key}"]`)).toContainText('40.0 ms (p95 40.0)');
+	}
+	await expect(table.locator('tr[data-phase="dl"]')).toContainText('Mbit/s');
+	expect(load.down).toBeGreaterThan(0);
+	expect(load.up).toBeGreaterThan(0);
+});
+
+test('a link in Idle shows no delay', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].state = 'IDLE'; });
+	await routeLoad(page);
+	const modal = await openDialog(page);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const table = modal.locator('table.cake-autorate-bufferbloat-result');
+	await expect(table).toHaveCount(1, { timeout: 20000 });
+	await expect(table.locator('tr[data-phase="dl"]')).toContainText('no pings (Idle)');
+	await expect(table.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('the comparison turns the shaping off for the second run, with a time limit', async ({ page }) => {
+	const calls = await routeUbus(page);
+	await routeLoad(page);
+	try {
+		const modal = await openDialog(page);
+		await modal.locator('#cake-autorate-bufferbloat-compare').check();
+		await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 19 s');
+		await noLimit(modal);
+		await modal.getByRole('button', { name: 'Start' }).click();
+		await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 2 of 2 (Without shaping)', { timeout: 20000 });
+		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('true');
+		const tables = modal.locator('table.cake-autorate-bufferbloat-result');
+		await expect(tables).toHaveCount(2, { timeout: 20000 });
+		await expect(modal.locator('#cake-autorate-bufferbloat h4')).toHaveText([ 'With shaping', 'Without shaping' ]);
+		// The time limit: the run (8 s) and 60 s.
+		expect(calls).toEqual([ [ 'unshape', { link: 'wan', seconds: 68 } ], [ 'shape', { link: 'wan' } ] ]);
+		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('false');
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('Stop in the second run turns the shaping on again', async ({ page }) => {
+	const calls = await routeUbus(page);
+	await routeLoad(page);
+	try {
+		const modal = await openDialog(page);
+		await modal.locator('#cake-autorate-bufferbloat-compare').check();
+		await noLimit(modal);
+		await modal.getByRole('button', { name: 'Start' }).click();
+		await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 2 of 2', { timeout: 20000 });
+		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('true');
+		await modal.getByRole('button', { name: 'Stop' }).click();
+		await expect(modal).toContainText('The test stopped.', { timeout: 10000 });
+		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('false');
+		expect(calls.map((c) => c[0])).toEqual([ 'unshape', 'shape' ]);
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('the test stops at the data limit', async ({ page }) => {
+	const calls = await routeUbus(page);
+	const load = await routeLoad(page);
+	const modal = await openDialog(page);
+	await modal.locator('#cake-autorate-bufferbloat-compare').check();
+	// One upload is 4 MiB: more than the limit of 1 MB.
+	await modal.locator('#cake-autorate-bufferbloat-limit').fill('1');
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The test stopped: the load reached the data limit of 1 MB.', { timeout: 20000 });
+	expect(load.up).toBe(0);
+	// The second run does not start.
+	expect(calls).toEqual([]);
+});
+
+test('the button is disabled while the shaping is off', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].unshaped = true; });
+	await page.goto(PAGE);
+	await expect(page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat')).toBeDisabled();
+});
