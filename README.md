@@ -202,7 +202,7 @@ apk add --allow-untrusted ./cake-autorate-go-*.apk ./luci-app-cake-autorate-go-*
 Then:
 
 1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`).
-2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link, then click **Save & Apply**.
+2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
 3. Open the tab **Status**. If an interface has no CAKE, the page shows a warning.
 
 ### Configuration with UCI
