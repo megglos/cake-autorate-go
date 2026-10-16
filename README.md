@@ -547,7 +547,7 @@ Set `status_file` to a path, for example `/var/run/cake-autorate/status.json`. T
 
 The program writes the file each second. Thus, use a path on a RAM file system, for example `/var/run` on OpenWrt, so that the flash memory does not wear out.
 
-The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
+The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, its threshold, whether the last delta was above the threshold (`high_delay`; the threshold includes the time to send one packet at the shaper rate), the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
 
 ### Control socket
 

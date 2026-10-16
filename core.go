@@ -64,6 +64,7 @@ type dirState struct {
 	crossDelayUs      float64   // learned delay from activity in the other direction
 	lowLoadSince      time.Time // start of the low load for the cross delay, or zero
 	lastDeltaUs       float64   // delay delta of the last ping reply
+	lastHighDelay     bool      // the last delta was above the compensated threshold
 	rateChanges       int       // number of rate changes since the start
 	lastRequestedKbps int       // last rate that Core sent to the actuator
 	paused            bool      // true: Core does not change the shaper rate
@@ -392,6 +393,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	// Record the result in the sliding window. Keep the count in O(1).
 	ds.lastDeltaUs = deltaUs
 	exceeded := deltaUs > thresholdUs
+	ds.lastHighDelay = exceeded
 	old := ds.delayWindow[ds.delayWindowIdx]
 	ds.delayWindow[ds.delayWindowIdx] = exceeded
 	ds.delayWindowIdx = (ds.delayWindowIdx + 1) % len(ds.delayWindow)

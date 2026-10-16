@@ -45,6 +45,34 @@ func TestCoreSnapshot(t *testing.T) {
 	}
 }
 
+// The controller adds the time to send one packet at the shaper rate to
+// the threshold. A delta between the configured and the compensated
+// threshold is not a high delay.
+func TestSnapshotHighDelayUsesCompensatedThreshold(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	link := &cfg.Links[0]
+	link.Download.OWDDeltaDelayThrMs = 30
+	// 1500 bytes at 1000 kbit/s: 12 ms. The compensated threshold is 42 ms.
+	link.Download.MinRateKbps, link.Download.BaseRateKbps = 1000, 1000
+	core := NewCore(link, cfg, 1500, 1500, nopActuator{}, NewDiscardLogger())
+	now := time.Now()
+	core.Start(now)
+	core.HandlePing(PingResult{Reflector: "r1", RTT: 20 * time.Millisecond, Timestamp: now})
+	core.HandlePing(PingResult{Reflector: "r1", RTT: 96 * time.Millisecond, Timestamp: now.Add(time.Second)})
+	st := core.Snapshot().Download
+	if st.DeltaMs <= 30 || st.DeltaMs >= 42 {
+		t.Fatalf("the delta must be between the two thresholds: %v", st.DeltaMs)
+	}
+	if st.HighDelay {
+		t.Errorf("delta %v ms below the compensated threshold must not be a high delay", st.DeltaMs)
+	}
+	core.HandlePing(PingResult{Reflector: "r1", RTT: 140 * time.Millisecond, Timestamp: now.Add(2 * time.Second)})
+	if st := core.Snapshot().Download; st.DeltaMs <= 42 || !st.HighDelay {
+		t.Errorf("delta %v ms above the compensated threshold must be a high delay (%v)", st.DeltaMs, st.HighDelay)
+	}
+}
+
 func TestSnapshotShowsPause(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.migrateLinks()
