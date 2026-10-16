@@ -173,6 +173,7 @@ func main() {
 			targets[name] = lc.(*LinkController)
 		}
 		calib = NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
+		calib.probe = probeTimestamps
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
