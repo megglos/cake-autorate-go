@@ -395,3 +395,50 @@ func TestRecording_ReplayPauseAndRetry(t *testing.T) {
 		t.Errorf("recorded %v, replay gave %v", shaper, replayed)
 	}
 }
+
+// The recorder of a calibration block gets the same events as the main
+// recorder, from the start of the block until it is removed.
+func TestRecordingCore_CalRecorder(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	dir := t.TempDir()
+	start := time.Now()
+	main, err := newRecorderAt(filepath.Join(dir, "main.jsonl"), 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, main, testLogger(t))
+	rc.Start(start)
+	rc.HandleRate(RateStats{DlRateKbps: 1, Timestamp: start.Add(time.Second)})
+	cal, err := newRecorderAt(filepath.Join(dir, "cal.jsonl"), 0, cfg, start.Add(2*time.Second), testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.SetCalRecorder(cal, start.Add(2*time.Second))
+	rc.HandleRate(RateStats{DlRateKbps: 2, Timestamp: start.Add(3 * time.Second)})
+	rc.SetFixedRate(DL, calUnshapedKbps, start.Add(4*time.Second))
+	rc.SetCalRecorder(nil, start.Add(5*time.Second))
+	rc.HandleRate(RateStats{DlRateKbps: 3, Timestamp: start.Add(6 * time.Second)})
+	for _, r := range []*Recorder{main, cal} {
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	types := func(name string) string {
+		var out []string
+		for _, ev := range readRecording(t, filepath.Join(dir, name)) {
+			s := fmt.Sprint(ev["type"])
+			if s == "rate" {
+				s += fmt.Sprint(ev["dl_kbps"])
+			}
+			out = append(out, s)
+		}
+		return strings.Join(out, " ")
+	}
+	if got, want := types("cal.jsonl"), "header start rate2 shaper"; got != want {
+		t.Errorf("calibration recording: got %q, want %q", got, want)
+	}
+	if got := types("main.jsonl"); !strings.Contains(got, "rate1 rate2 shaper rate3") {
+		t.Errorf("main recording: %q", got)
+	}
+}

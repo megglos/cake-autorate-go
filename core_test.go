@@ -1148,3 +1148,64 @@ func TestSetPaused_RepeatSetsBaseRateAgain(t *testing.T) {
 		t.Errorf("a second resume must send the base rate again: %v", act.rates[DL])
 	}
 }
+
+// In the calibration mode, Core does not go to IDLE: the session needs
+// the pings also without load.
+func TestCalibratingPreventsIdle(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.EnableSleepFunction = true
+	c.cfg.ConnectionActiveThrKbps = 2000
+	c.cfg.SustainedIdleSleepThrS = 0.001
+	now := time.Now()
+	c.SetCalibrating(true, now)
+	for i := range 3 {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateRunning {
+		t.Errorf("calibrating: got %s, want RUNNING", c.state)
+	}
+	// After the session, the normal idle detection applies again.
+	c.SetCalibrating(false, now.Add(3*time.Second))
+	for i := 4; i < 6; i++ {
+		c.HandleRate(RateStats{DlRateKbps: 100, UlRateKbps: 100, Timestamp: now.Add(time.Duration(i) * time.Second)})
+	}
+	if c.state != StateIdle {
+		t.Errorf("after calibrating: got %s, want IDLE", c.state)
+	}
+}
+
+// The calibration mode starts the pingers of an idle link at once.
+func TestCalibratingLeavesIdle(t *testing.T) {
+	c, act := newTestCore(t)
+	c.state = StateIdle
+	starts := act.starts
+	c.SetCalibrating(true, time.Now())
+	if c.state != StateRunning || act.starts != starts+1 || !c.Calibrating() || !c.Snapshot().Calibrating {
+		t.Errorf("state %s, pinger starts %d, status %+v", c.state, act.starts-starts, c.Snapshot())
+	}
+	// In RUNNING, the mode does not start the pingers again.
+	c.SetCalibrating(true, time.Now())
+	if act.starts != starts+1 {
+		t.Errorf("pinger starts %d, want 1", act.starts-starts)
+	}
+}
+
+// A fixed rate pauses the rate control; SetPaused ends it with the base
+// rate.
+func TestSetFixedRate(t *testing.T) {
+	c, act := newTestCore(t)
+	c.link.Download.Adjust = true
+	c.SetFixedRate(DL, calUnshapedKbps)
+	if got := act.rates[DL]; len(got) == 0 || got[len(got)-1] != calUnshapedKbps || !c.Paused(DL) {
+		t.Fatalf("rates %v, paused %v", got, c.Paused(DL))
+	}
+	// The rate control does not change the fixed rate.
+	c.setRates(1000, 1000)
+	if got := act.rates[DL]; got[len(got)-1] != calUnshapedKbps {
+		t.Errorf("a paused direction changed: %v", got)
+	}
+	c.SetPaused(DL, false)
+	if got := act.rates[DL]; got[len(got)-1] != c.link.Download.BaseRateKbps || c.Paused(DL) {
+		t.Errorf("after resume: rates %v, paused %v", got, c.Paused(DL))
+	}
+}

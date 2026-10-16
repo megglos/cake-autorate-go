@@ -10,12 +10,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +31,12 @@ import (
 //	list                  answer: the link names, separated by spaces
 //	history               answer: the samples of the last 15 minutes of
 //	                      each link as one line of JSON (see History)
+//	calibrate start LINK [LOAD_S]
+//	                      start a calibration session for the link (see
+//	                      Calibrator). LOAD_S: the load time of each block
+//	calibrate status      answer: the status of the session as one line
+//	                      of JSON (see CalStatus)
+//	calibrate stop        stop the session
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
@@ -49,8 +57,25 @@ type LinkControl interface {
 	SetPaused(dirs []Direction, paused bool) error
 }
 
+// CalControl is the part of the Calibrator that the control socket uses.
+type CalControl interface {
+	Start(link string, times calTimes) error
+	Stop() error
+	Status() CalStatus
+}
+
+// ControlHandler has what the commands of the control socket use. History
+// and Calib can be nil.
+type ControlHandler struct {
+	Names   []string
+	Links   map[string]LinkControl
+	History HistorySource
+	Calib   CalControl
+}
+
 // handleControlCommand runs one command and returns the answer line.
-func handleControlCommand(line string, names []string, links map[string]LinkControl, history HistorySource) string {
+func handleControlCommand(line string, h *ControlHandler) string {
+	names, links, history := h.Names, h.Links, h.History
 	f := strings.Fields(line)
 	if len(f) == 0 {
 		return "error: empty command"
@@ -70,6 +95,8 @@ func handleControlCommand(line string, names []string, links map[string]LinkCont
 			return "error: " + oneLine.Replace(err.Error())
 		}
 		return string(data)
+	case "calibrate":
+		return handleCalibrateCommand(f[1:], h)
 	case "pause", "resume":
 		if len(f) < 2 || len(f) > 3 {
 			return fmt.Sprintf("error: usage: %s LINK [dl|ul]", f[0])
@@ -95,6 +122,51 @@ func handleControlCommand(line string, names []string, links map[string]LinkCont
 		return "ok"
 	default:
 		return fmt.Sprintf("error: unknown command %q", f[0])
+	}
+}
+
+// handleCalibrateCommand runs "calibrate start|status|stop".
+func handleCalibrateCommand(args []string, h *ControlHandler) string {
+	if h.Calib == nil {
+		return "error: no calibration"
+	}
+	if len(args) == 0 {
+		return "error: usage: calibrate start LINK [LOAD_S] | status | stop"
+	}
+	switch args[0] {
+	case "start":
+		if len(args) < 2 || len(args) > 3 {
+			return "error: usage: calibrate start LINK [LOAD_S]"
+		}
+		load := calDefaultLoad
+		if len(args) == 3 {
+			s, err := strconv.Atoi(args[2])
+			load = time.Duration(s) * time.Second
+			if err != nil || load < calMinLoad || load > calMaxLoad {
+				return fmt.Sprintf("error: load time %q: use %d to %d seconds", args[2], int(calMinLoad.Seconds()), int(calMaxLoad.Seconds()))
+			}
+		}
+		if err := h.Calib.Start(args[1], defaultCalTimes(load)); err != nil {
+			return "error: " + oneLine.Replace(err.Error())
+		}
+		return "ok"
+	case "status", "stop":
+		if len(args) != 1 {
+			return fmt.Sprintf("error: usage: calibrate %s", args[0])
+		}
+		if args[0] == "stop" {
+			if err := h.Calib.Stop(); err != nil {
+				return "error: " + oneLine.Replace(err.Error())
+			}
+			return "ok"
+		}
+		data, err := json.Marshal(h.Calib.Status())
+		if err != nil {
+			return "error: " + oneLine.Replace(err.Error())
+		}
+		return string(data)
+	default:
+		return fmt.Sprintf("error: unknown calibrate command %q", args[0])
 	}
 }
 
@@ -166,9 +238,8 @@ func listenPrivate(path string) (net.Listener, os.FileInfo, error) {
 
 // RunControlSocket listens on the Unix socket at path until ctx ends. Then
 // it removes the socket, but only if it is still the socket that this
-// function created. Only the owner of the socket can connect. history can
-// be nil.
-func RunControlSocket(ctx context.Context, path string, names []string, links map[string]LinkControl, history HistorySource, logger *Logger) error {
+// function created. Only the owner of the socket can connect.
+func RunControlSocket(ctx context.Context, path string, h *ControlHandler, logger *Logger) error {
 	if err := removeStaleSocket(path); err != nil {
 		return err
 	}
@@ -201,13 +272,13 @@ func RunControlSocket(ctx context.Context, path string, names []string, links ma
 			logger.Errorf("control socket: %v", err)
 			return err
 		}
-		go serveControlConn(conn, names, links, history, logger)
+		go serveControlConn(conn, h, logger)
 	}
 }
 
 // serveControlConn reads one command from conn and writes the answer. It
 // runs the command only if the client sent a complete line.
-func serveControlConn(conn net.Conn, names []string, links map[string]LinkControl, history HistorySource, logger *Logger) {
+func serveControlConn(conn net.Conn, h *ControlHandler, logger *Logger) {
 	defer conn.Close()
 	conn.SetReadDeadline(time.Now().Add(controlTimeout))
 	// Read not more than maxControlLine bytes. A longer line gives an
@@ -218,12 +289,12 @@ func serveControlConn(conn net.Conn, names []string, links map[string]LinkContro
 		fmt.Fprintln(conn, "error: no complete command")
 		return
 	}
-	answer := handleControlCommand(line, names, links, history)
+	answer := handleControlCommand(line, h)
 	// The answer has its own time. The command can use the read time.
 	conn.SetWriteDeadline(time.Now().Add(controlTimeout))
-	// The history is long and a page reads it at each load: log only
-	// its size, and only as debug.
-	if cmd := strings.TrimSpace(line); cmd == "history" && !strings.HasPrefix(answer, "error: ") {
+	// The history is long and a page reads it at each load. A page reads
+	// the calibration status each second. Log only the size, as debug.
+	if cmd := strings.TrimSpace(line); (cmd == "history" || cmd == "calibrate status") && !strings.HasPrefix(answer, "error: ") {
 		logger.Debugf("control: %q: %d bytes", cmd, len(answer))
 	} else {
 		logger.Infof("control: %q: %s", cmd, answer)

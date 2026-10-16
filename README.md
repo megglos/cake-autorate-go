@@ -558,6 +558,9 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `pause LINK [dl\|ul]` | Set the shaper to the base rate and stop the rate changes. Without a direction, the command applies to both directions. |
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
 | `list` | Answer with the link names. |
+| `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [docs/calibration.md](docs/calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
+| `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
+| `calibrate stop` | Stop the session. The rate control continues as before the session. |
 | `history` | Answer with the samples of the last 15 minutes of each link, as one line of JSON. The program adds one sample each second, when it writes the status file. Only with `status_history: true` and a status file. |
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
@@ -634,7 +637,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `debug` | `false` | Write more log messages |
 | `status_file` | (empty) | Path of the status file. The program writes the status of all links to it each second. Empty: no status file |
 | `status_history` | `false` | Keep the samples of the last 15 minutes of each link in memory, for the control command `history` (approximately 36 kB for each link). Needs `status_file` |
-| `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume`, `list` and `history`. Not more than 90 bytes. Empty: no control socket |
+| `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume`, `list`, `history` and `calibrate`. Not more than 90 bytes. Empty: no control socket |
 
 ## Usage
 

@@ -100,9 +100,13 @@ type calRate struct {
 
 // calDist is a distribution summary.
 type calDist struct {
-	N             int
-	P5, P50, P95  float64
-	P10, P25, P90 float64
+	N   int     `json:"n"`
+	P5  float64 `json:"p5"`
+	P10 float64 `json:"p10"`
+	P25 float64 `json:"p25"`
+	P50 float64 `json:"p50"`
+	P90 float64 `json:"p90"`
+	P95 float64 `json:"p95"`
 }
 
 func newCalDist(v []float64) calDist {

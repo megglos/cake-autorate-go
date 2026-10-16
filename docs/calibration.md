@@ -191,6 +191,40 @@ Then test the proposed config: record a second session with it as a variant, and
 sudo ./scripts/record-session.sh -i enp7s0 -c my-5g.yaml -r 2 -W 30 -A calibrated=my-5g-calibrated.yaml
 ```
 
+## Online calibration
+
+The daemon can also run a calibration session for one link itself, on the router. Another program makes the load: for example the LuCI page in a browser behind the router. Thus, no PC with the tools of step 1 is necessary. The analysis is the same as in step 2.
+
+The control socket has the commands (see the README, "Control socket"):
+
+- `calibrate start LINK [LOAD_S]`: start a session. One session at a time. Both directions of the link need the rate control (`adjust: true`).
+- `calibrate status`: the status as one line of JSON.
+- `calibrate stop`: stop the session.
+
+The session has 5 blocks: unshaped `dl`, autorate `dl`, unshaped `ul`, autorate `ul`, unshaped `both`. Each block has 15 s of idle time, `LOAD_S` of load (default 40 s) and 3 s at the end. With 40 s, the session takes approximately 5 minutes. In the unshaped blocks, the shaper rate of the link is 10 Gbit/s (no useful limit) and the rate control stops. In the autorate blocks, the normal rate control runs.
+
+The program that makes the load reads `calibrate status` each second:
+
+| Field | Meaning |
+|---|---|
+| `state` | `none` (no session since the start of the daemon), `running`, `done`, `failed` or `stopped` |
+| `block`, `blocks`, `mode`, `policy` | the current block |
+| `phase` | `idle`, `load` or `tail` |
+| `load` | the load that the program must make now: `dl`, `ul`, `both`, or empty (no load) |
+| `phase_left_s`, `left_s` | the time left in the phase and in the session |
+| `error` | the reason of a failed session |
+| `result` | at the end: the proposal and the measured data |
+
+Each status request is also a sign that the load program operates. Without a request for 15 s, the session stops: then there is no load, and the link must not stay without a shaper limit. At the end of the session (also after an error or a stop), the rate control of the link continues as before. A direction that was paused stays paused.
+
+The session writes its files next to the control socket: the directory `calibration-LINK` (in the format of step 1) and the result `calibration-LINK.json`. The result has the proposed values for each direction (`min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps`, `owd_delta_delay_thr_ms`; a rate that was not measured is not in the result), `learn_cross_delay`, `ping_method`, `reflectors`, `connection_active_thr_kbps`, the reasons (`why`), the notes and the measured distributions (`measured`).
+
+Differences to the session of step 1:
+
+- One round, shorter blocks: the result is less reliable on a link with a large change of the capacity. Calibrate again at another time and compare.
+- The load comes from the other program. If it cannot fill the link (for example a slow PC or a slow load server), the capacity is too low. Then the unshaped blocks show a low delay increase.
+- The other traffic of the network adds to the load. Do not use the network during the session.
+
 ## Limits
 
 - One session measures one time of day. The capacity of a mobile cell changes during the day (load of other users). Record at a busy time (for example in the evening) to get a safe `min_rate_kbps`.

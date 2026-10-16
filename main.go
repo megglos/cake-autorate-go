@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -159,10 +160,17 @@ func main() {
 	}
 
 	if cfg.ControlSocket != "" {
+		// The calibration sessions write their files next to the
+		// control socket (a RAM file system on OpenWrt).
+		targets := make(map[string]CalTarget, len(controls))
+		for name, lc := range controls {
+			targets[name] = lc.(*LinkController)
+		}
+		calib := NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RunControlSocket(ctx, cfg.ControlSocket, names, controls, historySource(board), logger); err != nil {
+			if err := RunControlSocket(ctx, cfg.ControlSocket, &ControlHandler{Names: names, Links: controls, History: historySource(board), Calib: calib}, logger); err != nil {
 				logger.Errorf("control socket: %v", err)
 			}
 		}()

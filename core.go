@@ -103,6 +103,9 @@ type Core struct {
 	consecutiveTimeouts int
 	// lastPingOWD is true if the last ping reply had one-way delays.
 	lastPingOWD bool
+	// calibrating is true during a calibration session. Then Core does not
+	// go to IDLE: the session needs the pings also without load.
+	calibrating bool
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -154,6 +157,36 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds.paused = paused
 }
 
+// SetCalibrating starts or ends the calibration mode. In this mode, Core
+// does not go to IDLE, and it leaves IDLE at once (with the base rates and
+// the pingers on), because a calibration session needs the pings also
+// without load.
+func (c *Core) SetCalibrating(on bool, now time.Time) {
+	c.calibrating = on
+	c.idleSince = time.Time{}
+	if on && c.state == StateIdle {
+		c.transitionTo(StateRunning)
+		c.consecutiveTimeouts = 0
+		c.lastPingTime = now
+		c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
+		c.act.StartPingers()
+	}
+}
+
+// Calibrating reports whether Core is in the calibration mode.
+func (c *Core) Calibrating() bool { return c.calibrating }
+
+// SetFixedRate sets the shaper rate of a direction and pauses its rate
+// control. A calibration session uses it for the blocks without a shaper
+// limit. SetPaused ends it (with the base rate).
+func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
+	ds := c.getDirState(dir)
+	ds.paused = false
+	ds.shaperRateKbps = float64(rateKbps)
+	c.applyRate(dir)
+	ds.paused = true
+}
+
 // Paused reports whether the rate control of a direction is paused.
 func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }
 
@@ -202,7 +235,7 @@ func (c *Core) HandleRate(stats RateStats) {
 	switch c.state {
 	case StateRunning:
 		// Check for transition to idle
-		if c.cfg.EnableSleepFunction &&
+		if c.cfg.EnableSleepFunction && !c.calibrating &&
 			stats.DlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) &&
 			stats.UlRateKbps < float64(c.cfg.ConnectionActiveThrKbps) {
 			if c.idleSince.IsZero() {

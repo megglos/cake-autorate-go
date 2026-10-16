@@ -65,11 +65,13 @@ type ReflectorDelayStatus struct {
 
 // LinkStatus is the status of one link.
 type LinkStatus struct {
-	Name       string                 `json:"name"`
-	State      string                 `json:"state"`
-	Download   DirStatus              `json:"download"`
-	Upload     DirStatus              `json:"upload"`
-	Reflectors []ReflectorDelayStatus `json:"reflectors"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+	// Calibrating is true during a calibration session of the link.
+	Calibrating bool                   `json:"calibrating"`
+	Download    DirStatus              `json:"download"`
+	Upload      DirStatus              `json:"upload"`
+	Reflectors  []ReflectorDelayStatus `json:"reflectors"`
 }
 
 // StatusFile is the content of the status file.
@@ -84,7 +86,7 @@ type StatusFile struct {
 // Snapshot returns the status of a link. Call it from the goroutine that
 // uses the Core. It does not change the Core.
 func (c *Core) Snapshot() LinkStatus {
-	st := LinkStatus{Name: c.name, State: c.state.String()}
+	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
 		out := DirStatus{
