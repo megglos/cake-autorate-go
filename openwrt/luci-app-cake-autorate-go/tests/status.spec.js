@@ -374,6 +374,14 @@ test('the cursor shows the values of a sample and stays after a refresh', async 
 		await expect(tip).toContainText('Download shaper: 20.0 Mbit/s');
 		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
 		await expect(tip).toContainText(/\d+ s ago/);
+		// The time of the status on the router.
+		const updated = JSON.parse(vm('cat /var/run/cake-autorate/status.json')).updated;
+		await expect(tip.locator('.graph-time')).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d:\d{3}$/);
+		const shown = await tip.locator('.graph-time').textContent();
+		const [ date, time ] = shown.split(' ');
+		const [ hh, mm, ss, ms ] = time.split(':');
+		const at = new Date(date + 'T' + [ hh, mm, ss ].join(':') + '.' + ms).getTime();
+		expect(Math.abs(at - Date.parse(updated.replace(/(\.\d{3})\d+/, '$1')))).toBeLessThan(10000);
 		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(1);
 
 		// A refresh makes a new graph with the cursor at the same position.
@@ -382,12 +390,27 @@ test('the cursor shows the values of a sample and stays after a refresh', async 
 		await expect(tip).toBeVisible();
 		await expect(tip).toContainText('Upload shaper: 12.0 Mbit/s');
 
-		// Only the graph under the pointer shows a cursor.
-		await expect(page.locator('[data-graph="delay"] .graph-tip')).toBeHidden();
+		// The other graph of the link shows a dashed cursor at the same
+		// sample. Only the box of the graph under the pointer is live for a
+		// screen reader.
+		const delay = page.locator('.cbi-section[data-link="wan"] [data-graph="delay"]');
+		const delayTip = delay.locator('.graph-tip');
+		await expect(delayTip).toBeVisible();
+		await expect(delayTip).toContainText('Upload threshold');
+		const ago = async (t) => (await t.textContent()).match(/(\d+) s ago/)[1];
+		expect(await ago(delayTip)).toBe(await ago(tip));
+		const lineX = (g) => g.locator('svg line[visibility="visible"]').getAttribute('x1');
+		expect(await lineX(delay)).toBe(await lineX(rate));
+		await expect(rate.locator('svg line[visibility="visible"]')).toHaveAttribute('stroke-dasharray', 'none');
+		await expect(delay.locator('svg line[visibility="visible"]')).toHaveAttribute('stroke-dasharray', '3 3');
+		await expect(tip).toHaveAttribute('aria-live', 'polite');
+		await expect(delayTip).toHaveAttribute('aria-live', 'off');
 
 		await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
 		await expect(tip).toBeHidden();
+		await expect(delayTip).toBeHidden();
 		await expect(rate.locator('svg line[visibility="visible"]')).toHaveCount(0);
+		await expect(delay.locator('svg line[visibility="visible"]')).toHaveCount(0);
 	}
 	finally {
 		resetConfig();
@@ -444,6 +467,9 @@ test('the keyboard selects a sample and the selection stays after a refresh', as
 		await page.keyboard.press('ArrowRight');
 		const next = await ago();
 		expect(next).toBeLessThan(oldest);
+		// The other graph of the link shows the same sample.
+		const delayTip = page.locator('.cbi-section[data-link="wan"] [data-graph="delay"] .graph-tip');
+		await expect(delayTip).toContainText('%d s ago'.replace('%d', next));
 
 		// A refresh keeps the focus and the selected sample: the sample is
 		// older now, not the newest one.
@@ -456,6 +482,7 @@ test('the keyboard selects a sample and the selection stays after a refresh', as
 		// Without the focus, there is no cursor.
 		await page.locator('#cake-autorate-period').focus();
 		await expect(tip).toBeHidden();
+		await expect(delayTip).toBeHidden();
 	}
 	finally {
 		resetConfig();
@@ -525,16 +552,21 @@ test('the pointer on one graph does not change the selection of the other graph'
 	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(8);
 
 	// Select the oldest sample of Rates, then move the pointer over Delay
-	// delta and away.
+	// delta and away. Rates keeps its selection while the pointer is on
+	// Delay delta. After the pointer leaves, Delay delta shows the
+	// selection of Rates again.
 	await rate.locator('svg').focus();
 	await page.keyboard.press('Home');
 	const oldest = await ago(rate);
+	// The newest sample is at the right side.
 	const box = await delay.locator('svg').boundingBox();
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.move(box.x + box.width * 0.99, box.y + box.height / 2);
 	await expect(delay.locator('.graph-tip')).toBeVisible();
+	expect(await ago(rate)).toBeLessThanOrEqual(oldest + 4);
+	await expect.poll(() => ago(delay)).toBeLessThan(oldest);
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height + 200);
-	await expect(delay.locator('.graph-tip')).toBeHidden();
 	await expect(rate.locator('.graph-tip')).toBeVisible();
+	await expect.poll(() => ago(delay)).toBe(await ago(rate));
 	// The same sample: a refresh can add 2 seconds to its age.
 	const still = await ago(rate);
 	expect(still).toBeGreaterThanOrEqual(oldest);
@@ -545,7 +577,8 @@ test('the pointer on one graph does not change the selection of the other graph'
 	expect(next).toBeGreaterThanOrEqual(still - 5);
 
 	// With the pointer over Rates, Tab to Delay delta: Delay delta has a
-	// selection, also after the pointer leaves Rates.
+	// selection, also after the pointer leaves Rates. Then Rates shows the
+	// selection of Delay delta.
 	const rbox = await rate.locator('svg').boundingBox();
 	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height / 2);
 	await page.keyboard.press('Tab');
@@ -553,11 +586,39 @@ test('the pointer on one graph does not change the selection of the other graph'
 	await page.keyboard.press('Home');
 	const delayOldest = await ago(delay);
 	await page.mouse.move(rbox.x + rbox.width / 2, rbox.y + rbox.height + 200);
-	await expect(rate.locator('.graph-tip')).toBeHidden();
 	await expect(delay.locator('.graph-tip')).toBeVisible();
+	await expect.poll(() => ago(rate)).toBe(await ago(delay));
 	const delayStill = await ago(delay);
 	expect(delayStill).toBeGreaterThanOrEqual(delayOldest);
 	expect(delayStill).toBeLessThanOrEqual(delayOldest + 4);
+});
+
+test('the cursor of the other graph shows the same sample near the middle of two samples', async ({ page }) => {
+	// A slow browser: each call of performance.now() adds 500 ms. If the
+	// two graphs read the time separately, the samples of the second graph
+	// are more to the left.
+	await page.addInitScript(() => {
+		const now = performance.now.bind(performance);
+		let extra = 0;
+		performance.now = () => now() + (extra += 500);
+	});
+	await page.goto(PAGE);
+	await page.selectOption('#cake-autorate-period', '60');
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	const rate = link.locator('[data-graph="rate"]');
+	const delay = link.locator('[data-graph="delay"]');
+	await expect.poll(async () => (await points(page, 'rate', 'dl-shaper')).length, { timeout: 30000 }).toBeGreaterThanOrEqual(4);
+
+	// Just after a refresh: point a little to the left of the middle of the
+	// two newest samples of Rates.
+	const old = await rate.locator('svg').elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	const p = await points(page, 'rate', 'dl-shaper');
+	const x = (p[p.length - 2][1] + p[p.length - 1][1]) / 2 - 2;
+	const box = await rate.locator('svg').boundingBox();
+	await page.mouse.move(box.x + x / 600 * box.width, box.y + box.height / 2);
+	await expect(delay.locator('.graph-tip')).toBeVisible();
+	expect(await delay.locator('.graph-time').textContent()).toBe(await rate.locator('.graph-time').textContent());
 });
 
 test('a link name that is an Object property has graphs', async ({ page }) => {

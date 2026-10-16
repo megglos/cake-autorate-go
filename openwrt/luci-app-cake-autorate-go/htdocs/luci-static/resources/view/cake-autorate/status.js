@@ -125,8 +125,26 @@ function niceMax(v) {
 
 // Returns one sample of a link for the graphs: rates in Mbit/s, delays in
 // ms.
-function sample(ls, t) {
-	const s = { t: t };
+// Returns the time of an RFC 3339 time stamp in ms, or null. The program
+// writes nanoseconds: some browsers do not parse more than 3 digits.
+function parseTime(ts) {
+	const ms = Date.parse(String(ts).replace(/(\.\d{3})\d+/, '$1'));
+	return isNaN(ms) ? null : ms;
+}
+
+// Returns a time in ms as "YYYY-MM-DD HH:mm:ss:SSS" in the time zone of the
+// browser.
+function formatTime(ms) {
+	const d = new Date(ms);
+	const p = (n, w) => String(n).padStart(w || 2, '0');
+	return '%s-%s-%s %s:%s:%s:%s'.format(d.getFullYear(), p(d.getMonth() + 1), p(d.getDate()),
+		p(d.getHours()), p(d.getMinutes()), p(d.getSeconds()), p(d.getMilliseconds(), 3));
+}
+
+// "t" is the time of the browser (performance.now()) for the graph. "at" is
+// the time of the status on the router, for the box of the cursor.
+function sample(ls, t, at) {
+	const s = { t: t, at: at };
 	for (const [ key, dir ] of DIRECTIONS) {
 		const st = ls[key] || {};
 		s[dir] = {
@@ -193,12 +211,18 @@ return view.extend({
 	// a selection. A refresh shows the two cursors again.
 	selection: null,
 
+	// Shows the cursors again on the graphs of a link, or on all graphs if
+	// name is null.
+	showCursors: function(name) {
+		for (const g of this.container.querySelectorAll('svg[data-plot]'))
+			if (g.showCursor && (name == null || g.dataset.link === name))
+				g.showCursor();
+	},
+
 	// Removes the cursor of the pointer from all graphs.
 	leavePointer: function() {
 		this.pointer = null;
-		for (const g of this.container.querySelectorAll('svg[data-plot]'))
-			if (g.showCursor)
-				g.showCursor();
+		this.showCursors(null);
 	},
 
 	// Adds one sample for each link if the program wrote a new status, and
@@ -208,10 +232,11 @@ return view.extend({
 			return;
 		this.lastSampled = status.updated;
 		const now = performance.now();
+		const at = parseTime(status.updated);
 		const history = new Map();
 		for (const ls of status.links) {
 			const samples = (this.history.get(ls.name) || []).filter((s) => now - s.t <= HISTORY_SECONDS * 1000);
-			samples.push(sample(ls, now));
+			samples.push(sample(ls, now, at));
 			history.set(ls.name, samples);
 		}
 		this.history = history;
@@ -219,9 +244,10 @@ return view.extend({
 
 	// Returns a graph of the series. Each series has a key, a color, a dash
 	// pattern and a function that gets the value from a sample. "floor" is
-	// the smallest maximum of the y axis.
-	renderGraph: function(name, kind, title, unit, samples, series, floor) {
-		const now = performance.now();
+	// the smallest maximum of the y axis. "now" is the time at the right
+	// side. All graphs of a link must use the same time, so that a cursor
+	// finds the same sample in each graph.
+	renderGraph: function(name, kind, title, unit, samples, series, floor, now) {
 		const span = this.period * 1000;
 		const visible = samples.filter((s) => now - s.t <= span);
 		let max = floor;
@@ -266,7 +292,8 @@ return view.extend({
 		}
 
 		// The cursor: a vertical line at the sample nearest to the pointer,
-		// and a box with the values of this sample.
+		// and a box with the values of this sample. The other graphs of the
+		// link show a dashed line and a box at the same sample.
 		const cursor = svg('line', {
 			'y1': 0, 'y2': GRAPH_HEIGHT,
 			'stroke': 'currentColor', 'stroke-opacity': 0.6,
@@ -283,6 +310,13 @@ return view.extend({
 		const xOf = (s) => GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
 
 		const mine = (c) => c && c.name == name && c.kind == kind;
+		const sameLink = (c) => c && c.name == name;
+
+		// Returns the cursor of this graph: the pointer, else the selection.
+		const own = () => mine(this.pointer) ? this.pointer : mine(this.selection) ? this.selection : null;
+		// Returns the cursor to show: the cursor of this graph, else the
+		// cursor of another graph of the link.
+		const active = () => own() || (sameLink(this.pointer) ? this.pointer : sameLink(this.selection) ? this.selection : null);
 
 		// Returns the sample nearest to the cursor c, or null.
 		const nearest = (c) => {
@@ -301,7 +335,7 @@ return view.extend({
 		// the selected sample. A selected sample that is out of the period
 		// now changes to the oldest sample in the period.
 		const showCursor = () => {
-			const c = mine(this.pointer) ? this.pointer : mine(this.selection) ? this.selection : null;
+			const c = active();
 			const best = c && nearest(c);
 			if (best == null)
 				return hideCursor();
@@ -311,7 +345,14 @@ return view.extend({
 			cursor.setAttribute('x1', bestX.toFixed(1));
 			cursor.setAttribute('x2', bestX.toFixed(1));
 			cursor.setAttribute('visibility', 'visible');
+			const linked = c !== own();
+			cursor.setAttribute('stroke-dasharray', linked ? '3 3' : 'none');
+			// Only the box of the graph with the cursor tells its values to a
+			// screen reader.
+			tip.setAttribute('aria-live', linked ? 'off' : 'polite');
 			const lines = [ E('div', {}, text(_('%d s ago').format(Math.round((now - best.t) / 1000)))) ];
+			if (best.at != null)
+				lines.push(E('div', { 'class': 'graph-time' }, text(formatTime(best.at))));
 			for (const se of series)
 				lines.push(E('div', {}, [
 					E('span', { 'style': 'color:%s'.format(se.color) }, '■'), ' ',
@@ -331,24 +372,24 @@ return view.extend({
 
 		// Returns the index of the shown sample, or -1.
 		const shown = () => {
-			const c = mine(this.pointer) ? this.pointer : mine(this.selection) ? this.selection : null;
+			const c = own();
 			const best = c && nearest(c);
 			return best ? visible.indexOf(best) : -1;
 		};
 		const select = (i) => {
 			this.selection = { name: name, kind: kind, t: visible[i].t };
-			showCursor();
+			this.showCursors(name);
 		};
 
 		graph.addEventListener('pointermove', (ev) => {
 			const r = graph.getBoundingClientRect();
 			this.pointer = { name: name, kind: kind, fx: Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) };
-			showCursor();
+			this.showCursors(name);
 		});
 		graph.addEventListener('pointerleave', () => {
 			if (mine(this.pointer))
 				this.pointer = null;
-			showCursor();
+			this.showCursors(name);
 		});
 		// For leavePointer(): a refresh replaces the graph under the
 		// pointer, and the new graph does not always get "pointerleave".
@@ -365,7 +406,7 @@ return view.extend({
 		graph.addEventListener('blur', () => {
 			if (mine(this.selection))
 				this.selection = null;
-			showCursor();
+			this.showCursors(name);
 		});
 		graph.addEventListener('keydown', (ev) => {
 			if (!visible.length)
@@ -414,6 +455,7 @@ return view.extend({
 
 	renderGraphs: function(name) {
 		const samples = this.history.get(name) || [];
+		const now = performance.now();
 		const v = (dir, field) => (s) => s[dir][field];
 		return E('div', { 'class': 'cake-autorate-graphs', 'style': 'display:flex; flex-wrap:wrap; gap:1em; margin:1em 0' }, [
 			this.renderGraph(name, 'rate', _('Rates'), 'Mbit/s', samples, [
@@ -421,13 +463,13 @@ return view.extend({
 				{ key: 'dl-achieved', title: _('Download achieved'), color: COLORS.dl, value: v('dl', 'achieved') },
 				{ key: 'ul-shaper', title: _('Upload shaper'), color: COLORS.ul, dash: '4 3', value: v('ul', 'shaper') },
 				{ key: 'ul-achieved', title: _('Upload achieved'), color: COLORS.ul, value: v('ul', 'achieved') }
-			], 1),
+			], 1, now),
 			this.renderGraph(name, 'delay', _('Delay delta'), 'ms', samples, [
 				{ key: 'dl-delta', title: _('Download delta'), color: COLORS.dl, value: v('dl', 'delta') },
 				{ key: 'dl-threshold', title: _('Download threshold'), color: COLORS.dl, dash: '1 3', value: v('dl', 'threshold') },
 				{ key: 'ul-delta', title: _('Upload delta'), color: COLORS.ul, value: v('ul', 'delta') },
 				{ key: 'ul-threshold', title: _('Upload threshold'), color: COLORS.ul, dash: '1 3', value: v('ul', 'threshold') }
-			], 1)
+			], 1, now)
 		]);
 	},
 
