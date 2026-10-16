@@ -178,6 +178,8 @@ return baseclass.extend({
 	start: function(link, compare, limit) {
 		this.running = true;
 		this.cancelled = false;
+		// Only the shaping that this test turns off goes on again.
+		this.unshaped = false;
 		this.load = new calibration.Load();
 		this.load.limit = limit;
 		this.load.onLimit = () => { this.cancelled = true; };
@@ -199,7 +201,7 @@ return baseclass.extend({
 					// requests. Then the shaping comes back without this page.
 					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
 					this.unshaped = true;
-					runs.push(await this.run(link, _('Without shaping'), 2, total));
+					runs.push(await this.run(link, _('Without shaping'), 2, total, true));
 				}
 			}
 			catch (e) {
@@ -230,9 +232,11 @@ return baseclass.extend({
 			this.load.stop();
 	},
 
-	// Reads the status of the link, or null.
-	readLink: function(link) {
-		return L.resolveDefault(fs.read(STATUS_FILE), null).then((data) => {
+	// Reads the status of the link, or null. A request that takes longer
+	// than ms gives null.
+	readLink: function(link, ms) {
+		const timeout = new Promise((resolve) => setTimeout(() => resolve(null), Math.max(0, ms)));
+		return Promise.race([ L.resolveDefault(fs.read(STATUS_FILE), null), timeout ]).then((data) => {
 			try {
 				const s = JSON.parse(data);
 				const ls = (s.links || []).find((l) => l.name == link);
@@ -254,7 +258,11 @@ return baseclass.extend({
 
 	// Runs the phases once. Returns { title, phases: [ { key, samples,
 	// dl, ul, seconds } ] }.
-	run: async function(link, title, number, total) {
+	// Runs the phases once. Returns { title, phases: [ { key, dl, ul, idle,
+	// bytes, seconds } ] }. The phases end at their time: a slow status
+	// request does not make a phase longer. unshaped is true for the run
+	// without shaping: then each status must show the unshaped link.
+	run: async function(link, title, number, total, unshaped) {
 		const result = { title: title, phases: [] };
 		for (const p of this.phases) {
 			if (this.cancelled)
@@ -263,15 +271,23 @@ return baseclass.extend({
 			result.phases.push(ph);
 			this.load.set(p.load);
 			const start = performance.now();
+			const end = start + p.seconds * 1000;
+			const warmEnd = start + (p.load ? this.warmup * 1000 : 0);
 			let lastUpdated = null, warm = null;
-			for (let s = 0; s < p.seconds && !this.cancelled; s++) {
-				await sleep(Math.max(0, start + (s + 1) * 1000 - performance.now()));
+			for (let s = 1; !this.cancelled; s++) {
+				await sleep(Math.max(0, Math.min(start + s * 1000, end) - performance.now()));
 				// A failed load request (for example, the speed test is
 				// blocked): the delay without load would get a good grade.
 				if (this.load.errors > 0)
 					throw new Error(_('The load failed: %s').format(this.load.lastError));
-				const st = await this.readLink(link);
-				const measuring = !p.load || s + 1 > this.warmup;
+				if (performance.now() >= end - 50)
+					break;
+				const st = await this.readLink(link, end - performance.now());
+				if (performance.now() >= end)
+					break;
+				if (unshaped && st && !st.ls.unshaped)
+					throw new Error(_('The shaping came back before the end of the run without shaping.'));
+				const measuring = performance.now() >= warmEnd;
 				if (measuring && warm == null)
 					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
 				// Only a new status of a link with pings: in Idle and Stall,
@@ -288,7 +304,7 @@ return baseclass.extend({
 				if (st)
 					lastUpdated = st.updated;
 				this.renderRunning(_('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key)),
-					p.seconds - s - 1, st && st.ls);
+					Math.max(0, Math.round((end - performance.now()) / 1000)), st && st.ls);
 			}
 			if (warm) {
 				ph.seconds = (performance.now() - warm.t) / 1000;
