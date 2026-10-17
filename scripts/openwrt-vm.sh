@@ -19,6 +19,18 @@
 #   eth1 (wan, DHCP): QEMU user network with internet access. QEMU sends
 #        ICMP echo with host ping sockets (net.ipv4.ping_group_range).
 #        ICMP timestamps do not go through.
+#        With VM_WAN_TAP=TAP, eth1 uses the tap device TAP of the host. The
+#        host routes and NATs it: then ICMP timestamps go through too. The
+#        VM gets a static address: the address of TAP plus 1. Set up TAP
+#        before the start (as root, once after each boot of the host):
+#          ip tuntap add dev TAP mode tap user USER
+#          ip addr add 10.77.0.1/24 dev TAP && ip link set TAP up
+#          sysctl -w net.ipv4.ip_forward=1
+#          nft add table ip cavnat
+#          nft add chain ip cavnat post '{ type nat hook postrouting priority 100; }'
+#          nft add rule ip cavnat post ip saddr 10.77.0.0/24 masquerade
+#        The static address stays on the disk. For the user network again,
+#        set network.wan.proto=dhcp in the VM, or use "reset".
 #
 # Requirements: qemu-system-x86_64, qemu-img, /dev/kvm, python3, curl.
 # The state (image, disk, SSH key, serial socket) is in
@@ -37,6 +49,7 @@ SERIAL="$DIR/serial.sock"
 MONITOR="$DIR/monitor.sock"
 PIDFILE="$DIR/qemu.pid"
 DISK="$DIR/disk-$VERSION.img"
+WAN_TAP="${VM_WAN_TAP:-}"
 
 ssh_vm() {
 	ssh -q -i "$KEY" -p "$SSH_PORT" -o StrictHostKeyChecking=no \
@@ -91,18 +104,52 @@ prepare_disk() {
 	[ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -f "$KEY"
 }
 
+# wan_netdev: prints the QEMU netdev of the WAN.
+wan_netdev() {
+	if [ -z "$WAN_TAP" ]; then
+		echo "user,id=wan"
+		return
+	fi
+	if ! ip -4 -o addr show dev "$WAN_TAP" 2>/dev/null | grep -q inet; then
+		echo "error: tap device $WAN_TAP has no IPv4 address (see the setup in $0)" >&2
+		exit 1
+	fi
+	echo "tap,id=wan,ifname=$WAN_TAP,script=no,downscript=no"
+}
+
+# wan_static: sets a static WAN in the VM, from the address of the tap
+# device: the host is the gateway, the VM has the next address.
+wan_static() {
+	local cidr ip prefix last
+	cidr=$(ip -4 -o addr show dev "$WAN_TAP" | awk '{ print $4; exit }')
+	ip=${cidr%/*}
+	prefix=${cidr#*/}
+	last=${ip##*.}
+	ssh_vm "uci set network.wan.proto=static &&
+		uci set network.wan.ipaddr=${ip%.*}.$((last + 1)) &&
+		uci set network.wan.netmask=$(python3 -c "import ipaddress; print(ipaddress.ip_network('0.0.0.0/$prefix').netmask)") &&
+		uci set network.wan.gateway=$ip &&
+		{ uci -q delete network.wan.dns || true; } &&
+		uci add_list network.wan.dns=1.1.1.1 &&
+		uci add_list network.wan.dns=9.9.9.9 &&
+		uci set network.wan6.disabled=1 &&
+		uci commit network && /etc/init.d/network reload"
+}
+
 cmd_start() {
 	if running; then
 		echo "VM runs already"
 		return
 	fi
+	local wan
+	wan=$(wan_netdev)
 	prepare_disk
 	rm -f "$SERIAL" "$MONITOR"
 	qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 512 \
 		-drive "file=$DISK,format=raw,if=virtio" \
 		-netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,hostfwd=tcp:127.0.0.1:$SSH_PORT-192.168.1.1:22,hostfwd=tcp:127.0.0.1:$HTTP_PORT-192.168.1.1:80" \
 		-device virtio-net-pci,netdev=lan \
-		-netdev user,id=wan -device virtio-net-pci,netdev=wan \
+		-netdev "$wan" -device virtio-net-pci,netdev=wan \
 		-serial "unix:$SERIAL,server,nowait" \
 		-monitor "unix:$MONITOR,server,nowait" \
 		-display none -daemonize -pidfile "$PIDFILE"
@@ -112,6 +159,7 @@ cmd_start() {
 	serial_run "mkdir -p /etc/dropbear && echo '$pub' > /etc/dropbear/authorized_keys && chmod 600 /etc/dropbear/authorized_keys"
 	for _ in $(seq 60); do
 		if ssh_vm true 2>/dev/null; then
+			[ -z "$WAN_TAP" ] || wan_static
 			echo "VM is ready: ssh -p $SSH_PORT root@localhost (key $KEY), LuCI http://localhost:$HTTP_PORT"
 			return
 		fi
