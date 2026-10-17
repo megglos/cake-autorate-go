@@ -45,7 +45,9 @@ if ! docker container inspect "$NAME" >/dev/null 2>&1; then
 			-e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
 			feeds.conf.default > feeds.conf
 		echo "src-link action /feed/" >> feeds.conf
-		./scripts/feeds update -a
+		# Only the feeds of the packages: base (for example ucode, tc) and
+		# luci (luci.mk). The other feeds are large.
+		./scripts/feeds update base luci action
 		make defconfig'
 else
 	docker start "$NAME" >/dev/null

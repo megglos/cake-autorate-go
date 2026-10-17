@@ -83,8 +83,10 @@ jobs:
   # VM (configuration, service, rpcd), thus they cannot share a VM. The
   # browser tests are split in shards; in a shard, they run one after the
   # other, as on a local run.
+  # Each VM job builds the x86_64 packages itself (the same script as the
+  # package job), in the background while it installs QEMU and the
+  # browser. Thus it does not wait for the package job.
   vm:
-    needs: package-x86
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -93,6 +95,20 @@ jobs:
     name: vm (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Start the package build
+        run: |
+          (
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+              -ldflags="-s -w -X main.version=$(git describe --tags --always)" \
+              -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go . &&
+              scripts/openwrt-build.sh x86_64-25.12.5
+            echo $? > package-build.rc
+          ) > package-build.log 2>&1 &
 
       - name: Enable KVM
         run: |
@@ -105,15 +121,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-node@v4
+        if: matrix.part != 'service'
         with:
-          name: openwrt-x86_64-openwrt-25.12
-          path: apk
+          node-version: 22
+          cache: npm
+          cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
+
+      - name: Install the browser for the LuCI tests
+        if: matrix.part != 'service'
+        working-directory: openwrt/luci-app-cake-autorate-go/tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Wait for the package build
+        run: |
+          for i in $(seq 600); do
+            [ -f package-build.rc ] && break
+            sleep 1
+          done
+          cat package-build.log
+          [ "$(cat package-build.rc 2>/dev/null)" = 0 ]
 
       - name: Start the VM and install the package
         run: |
           scripts/openwrt-vm.sh start
-          scripts/openwrt-vm.sh install apk/*.apk
+          scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
 
       # The VM must finish its start (the WAN gets its address by DHCP)
       # before the browser tests: the start changes the network. Before the
@@ -134,20 +168,6 @@ jobs:
       - name: Test the service
         if: matrix.part == 'service'
         run: scripts/openwrt-vm-test.sh
-
-      - uses: actions/setup-node@v4
-        if: matrix.part != 'service'
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
-
-      - name: Install the browser for the LuCI tests
-        if: matrix.part != 'service'
-        working-directory: openwrt/luci-app-cake-autorate-go/tests
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
 
       # --fully-parallel splits the shards by test, not by file. With one
       # worker, the tests of a shard still run one after the other.
