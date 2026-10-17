@@ -95,6 +95,10 @@ func TestPinner_PinAddsRoutesAndRules(t *testing.T) {
 		"ip -4 rule add to 162.159.140.220 lookup 7370 priority 900",
 		"ip -4 rule add to 172.66.0.218 lookup 7370 priority 900",
 		"ip -6 rule add to 2606:4700:7::da lookup 7370 priority 900",
+		// Existing connections to the addresses lose their NAT of another
+		// link.
+		"conntrack -D -d 162.159.140.220",
+		"conntrack -D -d 2606:4700:7::da",
 	} {
 		if !f.has(want) {
 			t.Errorf("no call %q in %q", want, f.calls)
@@ -314,6 +318,56 @@ func TestPinner_FailedUnpinKeepsTimer(t *testing.T) {
 	f.fail = ""
 	p.mu.Unlock()
 	waitPinGone(t, p, f)
+}
+
+// Extend moves the end of a pin: the old time does not remove it.
+func TestPinner_Extend(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	if err := p.Pin(PinOwnerCalibration, "wan", 50*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Extend(PinOwnerCalibration, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Extend(PinOwnerControl, "wan", time.Minute); err == nil {
+		t.Error("extend of another owner: no error")
+	}
+	time.Sleep(150 * time.Millisecond)
+	p.mu.Lock()
+	link, rules := p.link, f.rules["-4"]
+	p.mu.Unlock()
+	if link != "wan" || rules != 1 {
+		t.Errorf("after the old time: link %q, rules %d; want the pin", link, rules)
+	}
+}
+
+// A failed removal at the start (rules of a crashed process) tries again:
+// with the timer, and with Unpin.
+func TestPinner_FailedClearRetries(t *testing.T) {
+	old := pinRetry
+	pinRetry = 20 * time.Millisecond
+	t.Cleanup(func() { pinRetry = old })
+	f := newFakeIP(t, map[string]string{"-4": "", "-6": ""})
+	f.rules["-4"] = 2 // rules of the crashed process
+	f.failDel = true
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	p.Clear()
+	if err := p.Unpin(PinOwnerControl, ""); err == nil {
+		t.Error("unpin with a failed removal: no error")
+	}
+	p.mu.Lock()
+	f.failDel = false
+	p.mu.Unlock()
+	waitPinGone(t, p, f)
+	p.mu.Lock()
+	pending := p.pending
+	p.mu.Unlock()
+	if pending {
+		t.Error("removal still pending after the retry")
+	}
 }
 
 // After Close, Pin refuses: a control command that is still open at the

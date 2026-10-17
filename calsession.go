@@ -274,8 +274,10 @@ type Calibrator struct {
 	// first block.
 	probe probeFunc
 	// pin, if set, sends the traffic to the load hosts through the link of
-	// the session (see Pinner), until the end of the session.
-	pin PinControl
+	// the session (see Pinner), until the end of the session. pinned is
+	// true while the session has its pin.
+	pin    PinControl
+	pinned bool
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -404,12 +406,12 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	// The load of the session goes through the link. Without it, the
 	// session runs: on a router with one WAN link, the load uses the link.
 	var pinErr error
-	pinned := false
+	k.pinned = false
 	if k.pin != nil {
 		if pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, pinErr)
 		} else {
-			pinned = true
+			k.pinned = true
 		}
 	}
 	// The session restores the rate control after the last block, before
@@ -435,7 +437,8 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	}
 	// Unpin before the final state: after it, a new session of the link
 	// can start and pin the link again.
-	if pinned {
+	if k.pinned {
+		k.pinned = false
 		if err := k.pin.Unpin(PinOwnerCalibration, link); err != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, err)
 		}
@@ -517,7 +520,14 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		start := k.now()
 		k.mu.Lock()
 		k.end = start.Add(time.Duration(len(calSessionBlocks)-i) * (times.Idle + times.Load + times.Tail))
+		left := k.end.Sub(start)
 		k.mu.Unlock()
+		// The pin lasts until the new end (a slow setup moves it).
+		if k.pinned {
+			if perr := k.pin.Extend(PinOwnerCalibration, link, left+calPinMargin); perr != nil {
+				k.logger.Errorf("[%s] calibration: %v", link, perr)
+			}
+		}
 		var loadStart, loadEnd time.Time
 		if err == nil && i == 0 && k.probe != nil {
 			probe, err = k.idleWithProbe(ctx, target.CalConfig(), start.Add(times.Idle), times.Idle)

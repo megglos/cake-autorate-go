@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,11 @@ type Pinner struct {
 	gen int
 	// closed is true after Close: Pin refuses.
 	closed bool
+	// pending is true after a failed removal without a pin (Clear): a
+	// timer tries again, and Unpin tries again.
+	pending bool
+	// addrs are the addresses of the pin.
+	addrs []string
 }
 
 // NewPinner returns a Pinner for the links. The traffic goes through the
@@ -184,9 +190,44 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 			return err
 		}
 	}
+	p.pending = false
+	p.addrs = append(v4, v6...)
 	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
-	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(append(v4, v6...), " "))
+	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(p.addrs, " "))
+	p.flushConntrack()
 	return nil
+}
+
+// Extend sets the time of the pin of the owner and the link to d from now.
+// A calibration session uses it when its end moves.
+func (p *Pinner) Extend(owner, link string, d time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.link != link || p.owner != owner {
+		return fmt.Errorf("link %q has no pin of the %s", link, owner)
+	}
+	p.stopTimer()
+	gen := p.gen
+	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
+	return nil
+}
+
+// flushConntrack removes the connection tracking entries of the addresses
+// of the pin. An existing connection keeps the NAT of the link of its
+// start: after a change of the route, its packets go through the new link
+// with the address of the old link, and the provider can refuse them.
+// Without the tool conntrack (package conntrack), the entries stay: the
+// browser then opens a new connection after a timeout.
+func (p *Pinner) flushConntrack() {
+	for _, a := range p.addrs {
+		out, err := execCommand("conntrack", "-D", "-d", a)
+		if errors.Is(err, exec.ErrNotFound) {
+			p.logger.Infof("no conntrack tool: existing connections to %s keep their link", strings.Join(pinHosts, ", "))
+			return
+		}
+		// conntrack fails when it finds no entry: not important.
+		_ = out
+	}
 }
 
 // Unpin removes the rules of the link. With link "", it removes the rules
@@ -201,6 +242,12 @@ func (p *Pinner) Unpin(owner, link string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.link == "" {
+		if p.pending {
+			if err := clearPin(); err != nil {
+				return err
+			}
+			p.pending = false
+		}
 		return nil
 	}
 	if link != "" && link != p.link {
@@ -223,10 +270,31 @@ func (p *Pinner) Clear() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopTimer()
-	if err := clearPin(); err != nil {
-		p.logger.Errorf("%v", err)
-	}
 	p.link, p.owner = "", ""
+	if err := clearPin(); err != nil {
+		// Rules can stay: try again later (also at the next Unpin).
+		p.logger.Errorf("%v (next try in %v)", err, pinRetry)
+		p.pending = true
+		p.timer = time.AfterFunc(pinRetry, p.retryClear)
+		return
+	}
+	p.pending = false
+}
+
+// retryClear tries again a failed removal of Clear.
+func (p *Pinner) retryClear() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.pending || p.link != "" {
+		return
+	}
+	p.timer = nil
+	if err := clearPin(); err != nil {
+		p.logger.Errorf("%v (next try in %v)", err, pinRetry)
+		p.timer = time.AfterFunc(pinRetry, p.retryClear)
+		return
+	}
+	p.pending = false
 }
 
 // Close removes all rules and routes, and Pin refuses after it. The
@@ -266,7 +334,8 @@ func (p *Pinner) unpinLocked() error {
 	}
 	p.stopTimer()
 	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
-	p.link, p.owner = "", ""
+	p.flushConntrack()
+	p.link, p.owner, p.addrs = "", "", nil
 	return nil
 }
 

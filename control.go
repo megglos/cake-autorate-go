@@ -76,6 +76,7 @@ type LinkControl interface {
 type PinControl interface {
 	Pin(owner, link string, d time.Duration) error
 	Unpin(owner, link string) error
+	Extend(owner, link string, d time.Duration) error
 }
 
 // CalControl is the part of the Calibrator that the control socket uses.

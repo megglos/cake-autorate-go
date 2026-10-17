@@ -665,6 +665,8 @@ type fakePin struct {
 	err   error
 	// onUnpin, if set, runs in Unpin.
 	onUnpin func()
+	// extends is the number of Extend calls.
+	extends int
 }
 
 func (f *fakePin) Pin(owner, link string, d time.Duration) error {
@@ -672,6 +674,13 @@ func (f *fakePin) Pin(owner, link string, d time.Duration) error {
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fmt.Sprintf("pin %s %s %v", owner, link, d))
 	return f.err
+}
+
+func (f *fakePin) Extend(owner, link string, d time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.extends++
+	return nil
 }
 
 func (f *fakePin) Unpin(owner, link string) error {
@@ -718,6 +727,11 @@ func TestCalibrationPinsTheLink(t *testing.T) {
 		}
 		if !failed && stateAtUnpin != "running" {
 			t.Errorf("state at the unpin %q, want running", stateAtUnpin)
+		}
+		// The end of the session moves with the setup of each block: the
+		// session extends its pin each time.
+		if want := len(calSessionBlocks); !failed && pin.extends != want {
+			t.Errorf("extends %d, want %d (one for each block)", pin.extends, want)
 		}
 		note := strings.Contains(strings.Join(st.Result.Notes, "\n"), "not pinned to the link: no IPv4 default route")
 		if note != failed {
