@@ -54,10 +54,26 @@ func TestProposeFromProbe(t *testing.T) {
 	}
 }
 
+// Half of the reflectors have a noisy path. The median is a noisy
+// reflector: the limit must come from the good reflectors.
+func TestProposeFromProbe_HalfNoisy(t *testing.T) {
+	probes := []tsProbe{
+		goodProbe("a", 2), goodProbe("b", 2), goodProbe("c", 2), goodProbe("d", 3),
+		goodProbe("n1", 18), goodProbe("n2", 19), goodProbe("n3", 22), goodProbe("n4", 22),
+	}
+	method, refl, why := proposeFromProbe(probes, 6, 15*time.Second)
+	if method != PingMethodTimestamp || !slices.Equal(refl, []string{"a", "b", "c", "d"}) {
+		t.Errorf("method %q, reflectors %v", method, refl)
+	}
+	if !strings.Contains(why, "fewer than pinger_count") {
+		t.Errorf("why %q, want a note about pinger_count 6", why)
+	}
+}
+
 func TestProbeCandidates(t *testing.T) {
 	link := &LinkConfig{Reflectors: []string{"1.1.1.1", defaultTimestampReflectors[0]}}
 	got := probeCandidates(link)
-	want := append([]string{"1.1.1.1"}, defaultTimestampReflectors...)
+	want := slices.Concat([]string{"1.1.1.1"}, defaultTimestampReflectors, worldTimestampReflectors)
 	if !slices.Equal(got, want) {
 		t.Errorf("candidates: %v", got)
 	}

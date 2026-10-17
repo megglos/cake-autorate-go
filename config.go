@@ -214,6 +214,29 @@ var defaultTimestampReflectors = []string{
 	"fsn1-speed.hetzner.com",
 	"nbg1-speed.hetzner.com",
 	"hel1-speed.hetzner.com",
+	"lon-gb-ping.vultr.com",
+	"waw-pl-ping.vultr.com",
+	"ping.online.net",
+}
+
+// worldTimestampReflectors reply to ICMP timestamp requests in other
+// regions. They are not in the default list: the program selects the
+// active reflectors at random, and a far reflector has a long RTT. The
+// calibration probe tests them, and its proposal has the reflectors with
+// the lowest jitter.
+var worldTimestampReflectors = []string{
+	"sto-se-ping.vultr.com",
+	"mad-es-ping.vultr.com",
+	"nj-us-ping.vultr.com",
+	"il-us-ping.vultr.com",
+	"tx-us-ping.vultr.com",
+	"wa-us-ping.vultr.com",
+	"ash-speed.hetzner.com",
+	"hil-speed.hetzner.com",
+	"sgp-ping.vultr.com",
+	"sin-speed.hetzner.com",
+	"hnd-jp-ping.vultr.com",
+	"syd-au-ping.vultr.com",
 }
 
 // defaultReflectors returns the default reflectors for a ping method. The

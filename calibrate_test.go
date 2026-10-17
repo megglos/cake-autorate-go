@@ -42,6 +42,9 @@ type calTestLink struct {
 	// dipEvery: each dipEvery seconds, the capacity is 75 % for one
 	// second (a new connection of the load). 0: no dips.
 	dipEvery int
+	// noisyCount: the last noisyCount reflectors have 9 times the idle
+	// jitter (a congested path to the reflector).
+	noisyCount int
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -115,6 +118,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				}
 				r := reflectors[(ms/150)%len(reflectors)]
 				jit := l.idleJitterMs * rng.Float64()
+				if l.noisyCount > 0 && slices.Index(reflectors, r) >= len(reflectors)-l.noisyCount {
+					jit *= 9
+				}
 				if l.noisyReflector && r == "r5" {
 					jit *= 5
 				}
@@ -315,6 +321,31 @@ func TestCalibrateSession_StableLinkLearnedCrossDelay(t *testing.T) {
 	c := res.CrossDelayMs
 	if want := math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
 		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p50 %.1f, p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, c.P50, c.P95)
+	}
+}
+
+// Three of five reflectors have a noisy path (9 times the jitter). The
+// thresholds come from the jitter of the good reflectors, and the noisy
+// reflectors are not in the list.
+func TestCalibrateSession_NoisyReflectors(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, noisyCount: 3,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IdleJitterMs.P50 < 10 {
+		t.Fatalf("idle jitter median %.1f ms, want a noisy reflector (the test needs it)", res.IdleJitterMs.P50)
+	}
+	p := res.propose(cfg)
+	if p.DlThrMs != 10 {
+		t.Errorf("download threshold %.0f ms, want 10 (jitter of the good reflectors)", p.DlThrMs)
+	}
+	for _, r := range []string{"r3", "r4", "r5"} {
+		if slices.Contains(p.Reflectors, r) {
+			t.Errorf("reflectors %v contain the noisy reflector %s", p.Reflectors, r)
+		}
 	}
 }
 

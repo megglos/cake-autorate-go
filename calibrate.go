@@ -645,8 +645,15 @@ const (
 	// calSpareReflectors is the number of reflectors in the list more than
 	// pinger_count (spares for misbehaving reflectors).
 	calSpareReflectors = 2
+	// calReflectorJitterMarginMs is added to the jitter limit of a
+	// reflector: on a line with 1 to 2 ms of jitter, 2 x the reference
+	// alone leaves out good reflectors.
+	calReflectorJitterMarginMs = 2.0
 	// calReflectorMaxJitter: a reflector with an idle jitter of more than
-	// this factor times the median is not in the list.
+	// this factor times the reference (+ calReflectorJitterMarginMs) is
+	// not in the list. The reference is the p25 of the jitter of all
+	// reflectors (the good ones): with the median, half of the reflectors
+	// can be noisy, and then the limit is too high.
 	calReflectorMaxJitter = 2.0
 )
 
@@ -660,6 +667,33 @@ func mbit(kbps float64) string {
 		return fmt.Sprintf("%.1f", kbps/1000)
 	}
 	return fmt.Sprintf("%.0f", kbps/1000)
+}
+
+// jitterLimit returns the maximum idle jitter of a reflector in the
+// proposal, from the idle jitter of all reflectors (ms).
+func jitterLimit(jitter []float64) float64 {
+	return calReflectorMaxJitter*newCalDist(jitter).P25 + calReflectorJitterMarginMs
+}
+
+// lowJitter returns the idle jitter of the reflectors with one-way delays
+// and a jitter below jitterLimit.
+func (r *calResult) lowJitter() (kept []float64, limit float64) {
+	var all []float64
+	for _, rf := range r.Reflectors {
+		if rf.OWD {
+			all = append(all, rf.IdleP95Ms)
+		}
+	}
+	if len(all) == 0 {
+		return nil, 0
+	}
+	limit = jitterLimit(all)
+	for _, j := range all {
+		if j <= limit {
+			kept = append(kept, j)
+		}
+	}
+	return kept, limit
 }
 
 // propose makes the config proposal from the result.
@@ -724,11 +758,15 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	}
 	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
 	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
-	if j := r.IdleJitterMs; j.N > 0 {
+	// The jitter of the reflectors in the proposal: a noisy reflector is
+	// not in the list and does not increase the thresholds.
+	if kept, limit := r.lowJitter(); len(kept) > 0 {
+		j := newCalDist(kept)
 		jit := math.Ceil(calJitterFactor * j.P50)
 		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
-		p.Why["download threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, dlFloor, calJitterFactor)
-		p.Why["upload threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, ulFloor, calJitterFactor)
+		src := fmt.Sprintf("idle jitter (p95 of each reflector, %d of %d at or below %.1f ms): median %.1f ms", len(kept), r.IdleJitterMs.N, limit, j.P50)
+		p.Why["download threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, dlFloor, calJitterFactor)
+		p.Why["upload threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, ulFloor, calJitterFactor)
 	}
 	if c := r.CrossDelayMs; c.N > 0 {
 		p.LearnCrossDelay = c.P50 > calCrossDelayMinMs
@@ -767,10 +805,11 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// The program selects the active reflectors at random from the list
 	// (and the spares from the rest). Thus, the list must not contain the
 	// reflectors with a high jitter: keep the best pinger_count + 2, and
-	// leave out the ones with more than 2 x the median jitter.
+	// leave out the ones above the jitter limit.
+	_, limit := r.lowJitter()
 	var owd []string
 	for _, rf := range r.Reflectors {
-		if rf.OWD && (r.IdleJitterMs.N == 0 || rf.IdleP95Ms <= calReflectorMaxJitter*r.IdleJitterMs.P50) {
+		if rf.OWD && rf.IdleP95Ms <= limit {
 			owd = append(owd, rf.Addr)
 		}
 	}
@@ -780,6 +819,9 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		n := len(owd)
 		p.Reflectors = owd[:min(len(owd), max(pingerCount+calSpareReflectors, calMinReflectors))]
 		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), min(pingerCount, len(p.Reflectors)))
+		if len(p.Reflectors) < pingerCount {
+			p.Why["reflectors"] += fmt.Sprintf("; fewer than pinger_count (%d): add reflectors with a low jitter, or set a lower pinger_count", pingerCount)
+		}
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}

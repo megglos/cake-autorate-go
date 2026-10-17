@@ -27,7 +27,7 @@ import (
 // uses the result of the probe.
 
 // calProbeMaxReflectors is the maximum number of reflectors in the probe.
-const calProbeMaxReflectors = 16
+const calProbeMaxReflectors = 32
 
 // calProbeInterval is the time between two requests to a reflector. It
 // does not come from ping_interval_ms: with 1 s, the idle time of a block
@@ -58,10 +58,11 @@ type calProbe struct {
 type probeFunc func(ctx context.Context, cfg *Config, logger *Logger) ([]tsProbe, error)
 
 // probeCandidates returns the reflectors for the probe: the configured
-// reflectors of the link, then the default reflectors for ICMP timestamps.
+// reflectors of the link, the default reflectors for ICMP timestamps, then
+// the reflectors in other regions.
 func probeCandidates(link *LinkConfig) []string {
 	var out []string
-	for _, r := range append(slices.Clone(link.Reflectors), defaultTimestampReflectors...) {
+	for _, r := range slices.Concat(link.Reflectors, defaultTimestampReflectors, worldTimestampReflectors) {
 		if !slices.Contains(out, r) && len(out) < calProbeMaxReflectors {
 			out = append(out, r)
 		}
@@ -217,7 +218,7 @@ func proposeFromProbe(probes []tsProbe, pingerCount int, dur time.Duration) (met
 		for i, p := range good {
 			j[i] = p.JitterP95Ms
 		}
-		limit := calReflectorMaxJitter * newCalDist(j).P50
+		limit := jitterLimit(j)
 		good = slices.DeleteFunc(good, func(p tsProbe) bool { return p.JitterP95Ms > limit })
 	}
 	sort.SliceStable(good, func(a, b int) bool { return good[a].JitterP95Ms < good[b].JitterP95Ms })
@@ -230,6 +231,10 @@ func proposeFromProbe(probes []tsProbe, pingerCount int, dur time.Duration) (met
 	for _, p := range good[:n] {
 		reflectors = append(reflectors, p.Addr)
 	}
-	return PingMethodTimestamp, reflectors, fmt.Sprintf("probe of %d s: %d of %d reflectors reply to ICMP timestamps with a low jitter; the %d with the lowest jitter (the program selects %d of them at random)",
+	why = fmt.Sprintf("probe of %d s: %d of %d reflectors reply to ICMP timestamps with a low jitter; the %d with the lowest jitter (the program selects %d of them at random)",
 		secs, len(good), len(probes), n, min(pingerCount, n))
+	if n < pingerCount {
+		why += fmt.Sprintf("; fewer than pinger_count (%d): add reflectors with a low jitter, or set a lower pinger_count", pingerCount)
+	}
+	return PingMethodTimestamp, reflectors, why
 }
