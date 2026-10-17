@@ -121,6 +121,24 @@ scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
 scripts/openwrt-vm.sh stop
 ```
 
+The WAN of the VM is the QEMU user network. It sends only ICMP echo, not ICMP timestamps. For a live test with ICMP timestamps, give the VM a tap device of your computer as WAN. The comment at the start of `scripts/openwrt-vm.sh` shows the commands to set up the tap device and the NAT. Then start the VM with `VM_WAN_TAP`:
+
+```bash
+VM_WAN_TAP=cavtap0 scripts/openwrt-vm.sh start
+```
+
+The script sets a static WAN address in the VM. If a firewall on your computer drops forwarded packets (for example ufw or Docker), let the traffic of the tap device through.
+
+The calibration and the bufferbloat test need the load of the browser on the WAN of the VM. `scripts/openwrt-vm-client.sh` makes a client behind the VM: a network namespace on your computer, with a tap device on the LAN of the VM. A browser in the namespace uses the VM as its router:
+
+```bash
+sudo scripts/openwrt-vm-client.sh up "$USER"
+VM_WAN_TAP=cavtap0 VM_LAN_TAP=cavlan0 VM_CPUS=4 scripts/openwrt-vm.sh start
+scripts/openwrt-vm-client.sh firefox   # LuCI: http://192.168.1.1
+```
+
+Do not use an SSH tunnel to the VM as a proxy for these tests. The tunnel sends all connections in one encrypted TCP connection. Then the delay of the browser can increase with the load, also without a queue in the shaper.
+
 ## Without the package: setup.sh
 
 Run [`setup.sh`](../setup.sh) on your router. It installs the binary, makes a default config and makes a procd service:
