@@ -109,15 +109,17 @@ const maxClockSlewGap = 2 * time.Second
 
 // minClockStepUs is the minimum clock step that owdDeltas finds from one
 // reply to the next. ntpd steps the clock for an offset of more than
-// 128 ms, and slews it for a smaller offset. A smaller value can come from
-// noise.
-const minClockStepUs = 50000
+// 128 ms (busybox ntpd of OpenWrt: more than 1 s), and slews it for a
+// smaller offset. A smaller change can be a queue that moves from one
+// direction to the other at the same RTT: the replies cannot show the
+// difference.
+const minClockStepUs = 128000
 
 // maxOWDRTTDiffUs is the maximum difference between the sum of the two
 // one-way delays and the RTT. A larger difference shows a clock step while
 // the ping was in flight. The one-way delays have whole milliseconds, and
 // the reflector can reply later than it received the request.
-const maxOWDRTTDiffUs = minClockStepUs / 2
+const maxOWDRTTDiffUs = 25000
 
 // clockMaxLoad is the maximum load (achieved rate / shaper rate) of each
 // direction for a clock step and for the move of the baselines with
@@ -127,6 +129,13 @@ const clockMaxLoad = 0.5
 // maxStepRTTChangeUs is the maximum change of the RTT from one reply to
 // the next at a clock step (noise and whole milliseconds).
 const maxStepRTTChangeUs = 5000
+
+// maxClockQueueUs is the maximum difference of the RTT without the time in
+// the reflector from its baseline for a clock step and for the move of the
+// baselines with clockSplitGain. A larger difference shows a queue on the
+// path: a low load does not exclude a queue, for example after a capacity
+// decrease below the shaper rate.
+const maxClockQueueUs = 10000
 
 // clockSplitGain is the part of a delta that owdDeltas moves to the
 // baseline for each reply while the RTT is near its baseline.
@@ -163,6 +172,9 @@ type Core struct {
 	// unshaped is true while a user turned the shaping off. Then Core does
 	// not go to IDLE: the delay measurement continues.
 	unshaped bool
+	// rateSeen is true after the first throughput sample (HandleRate).
+	// Before it, the load is not known.
+	rateSeen bool
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -304,6 +316,7 @@ func (c *Core) ResetReflector(reflector string) {
 
 // HandleRate processes a sample of the measured throughput.
 func (c *Core) HandleRate(stats RateStats) {
+	c.rateSeen = true
 	c.dl.achievedKbps = stats.DlRateKbps
 	c.ul.achievedKbps = stats.UlRateKbps
 
@@ -473,8 +486,9 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// delta until the load is low: then the rule below removes it.
 	// With the shaping off (unshape, the unshaped blocks of a calibration),
 	// the load is against unshapedKbps: a low load does not show that there
-	// is no queue.
-	lowLoad := c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad &&
+	// is no queue. Before the first throughput sample, the load is not
+	// known.
+	lowLoad := c.rateSeen && c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad &&
 		!c.unshaped && c.dl.shaperRateKbps < unshapedKbps && c.ul.shaperRateKbps < unshapedKbps
 	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
 	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
@@ -492,7 +506,10 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// delay: the delays have noise. With a higher load, a path change and
 	// a queue can look like a clock change.
 	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
-	if rttExcess := math.Abs(pathUs - rd.pathBaselineUs); lowLoad &&
+	// Also with a low load, the path can have a queue (for example after a
+	// capacity decrease below the shaper rate): the RTT without the time in
+	// the reflector must also be near its baseline.
+	if rttExcess := math.Abs(pathUs - rd.pathBaselineUs); lowLoad && rttExcess <= maxClockQueueUs &&
 		rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
 		rd.dlBaselineUs += clockSplitGain * dlExcessUs
 		rd.ulBaselineUs += clockSplitGain * ulExcessUs

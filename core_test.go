@@ -940,6 +940,15 @@ func TestCore_DeterministicForSameEvents(t *testing.T) {
 	}
 }
 
+// newOWDTestCore returns a test core after a first throughput sample
+// without load: the clock rules need a known load.
+func newOWDTestCore(t *testing.T) *Core {
+	t.Helper()
+	c, _ := newTestCore(t)
+	c.HandleRate(RateStats{Timestamp: time.Now()})
+	return c
+}
+
 // owdPing returns a ping result with one-way delays in ms.
 func owdPing(reflector string, ts time.Time, ulMs, dlMs float64) PingResult {
 	ms := func(v float64) time.Duration { return time.Duration(v * float64(time.Millisecond)) }
@@ -996,7 +1005,7 @@ func owdRun(c *Core, d time.Duration, owd func(t time.Duration) (ulMs, dlMs floa
 // upload to the download delay. Without load, the deltas must stay 0.
 func TestOWDDeltas_ClockSlewIsNotDelay(t *testing.T) {
 	for _, sign := range []float64{1, -1} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
 			drift := sign * 10 * math.Min(t.Seconds()/30, 1)
 			return 10 - drift, 10 + drift
@@ -1011,7 +1020,7 @@ func TestOWDDeltas_ClockSlewIsNotDelay(t *testing.T) {
 // limit: here 150 ms in 30 s. Without load, the deltas must stay small.
 func TestOWDDeltas_FastClockSlewIsNotDelay(t *testing.T) {
 	for _, sign := range []float64{1, -1} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		start := time.Now()
 		var maxDl, maxUl, dl, ul float64
 		for t := time.Duration(0); t <= 40*time.Second; t += 300 * time.Millisecond {
@@ -1033,7 +1042,7 @@ func TestOWDDeltas_FastClockSlewIsNotDelay(t *testing.T) {
 func TestOWDDeltas_QuantizedClockSlewIsNotDelay(t *testing.T) {
 	for _, total := range []float64{10, 150} {
 		for _, sign := range []float64{1, -1} {
-			c, _ := newTestCore(t)
+			c := newOWDTestCore(t)
 			dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
 				drift := sign * total * math.Min(t.Seconds()/30, 1)
 				return math.Round(10 - drift), math.Round(10 + drift)
@@ -1051,7 +1060,7 @@ func TestOWDDeltas_QuantizedClockSlewIsNotDelay(t *testing.T) {
 // the step in the two delays.
 func TestOWDDeltas_ClockStepDuringPing(t *testing.T) {
 	for _, sign := range []float64{1, -1} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		start := time.Now()
 		var dl, ul float64
 		for i := 0; i <= 40; i++ {
@@ -1080,7 +1089,7 @@ func TestOWDDeltas_ClockStepDuringPing(t *testing.T) {
 func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
 	for _, queue := range []float64{0, 40} {
 		for _, sign := range []float64{1, -1} {
-			c, _ := newTestCore(t)
+			c := newOWDTestCore(t)
 			dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
 				step, q := 0.0, 0.0
 				if t >= 5*time.Second {
@@ -1104,7 +1113,7 @@ func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
 // load end, the deltas go back to 0.
 func TestOWDDeltas_ClockStepWithNewQueueRecovers(t *testing.T) {
 	for _, sign := range []float64{1, -1} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		start := time.Now()
 		var dl, ul float64
 		for ts := time.Duration(0); ts <= 30*time.Second; ts += 300 * time.Millisecond {
@@ -1131,7 +1140,7 @@ func TestOWDDeltas_ClockStepWithNewQueueRecovers(t *testing.T) {
 // The first reply spans a clock step of -650 ms: it has the step only in
 // the download delay. It must not set the baselines.
 func TestOWDDeltas_FirstReplyDuringClockStep(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 20; i++ {
@@ -1154,7 +1163,7 @@ func TestOWDDeltas_FirstReplyDuringClockStep(t *testing.T) {
 // contains this time, the one-way delays do not. The replies are valid,
 // and a new download queue must show in the download delta.
 func TestOWDDeltas_ReflectorTime(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 40; i++ {
@@ -1178,7 +1187,7 @@ func TestOWDDeltas_ReflectorTime(t *testing.T) {
 // the RTT is near its baseline, but the download delta must keep the
 // queue.
 func TestOWDDeltas_PathChangeUnderLoadKeepsQueue(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	c.dl.loadPercent = 0.9
 	dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
 		ul, queue := 100.0, 0.0
@@ -1202,7 +1211,7 @@ func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
 	// 40 ms, and 80 ms (more than a clock step). The baselines start with
 	// the queue: the program starts under load.
 	for _, q := range []float64{40, 80} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
 		dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
 			if int(t.Seconds()/30)%2 == 0 {
@@ -1220,7 +1229,7 @@ func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
 // 40 ms comes at the same time: the RTT does not change. The load is low
 // (the queue is in the network). The download delta must keep the queue.
 func TestOWDDeltas_ReflectorTimeReplacedByQueue(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 40; i++ {
@@ -1244,7 +1253,7 @@ func TestOWDDeltas_ReflectorTimeReplacedByQueue(t *testing.T) {
 // download queue of 40 ms comes, at a high load. The slew limit must not
 // grow with the gap: the download delta keeps the queue.
 func TestOWDDeltas_GapDoesNotMoveQueue(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
 	start := time.Now()
 	var dl, ul float64
@@ -1270,7 +1279,7 @@ func TestOWDDeltas_GapDoesNotMoveQueue(t *testing.T) {
 // by the same value, and their sum stays correct. The reply must not be
 // used. The next replies have the step in the upload delay.
 func TestOWDDeltas_ReflectorClockStep(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 100; i++ {
@@ -1297,7 +1306,7 @@ func TestOWDDeltas_ReflectorClockStep(t *testing.T) {
 // the RTT minus one day. The replies are valid, and a download queue must
 // show.
 func TestOWDDeltas_HalfDayOffset(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	start := time.Now()
 	var dl, ul float64
 	const offset = -43_200_000.0 // ms
@@ -1317,13 +1326,59 @@ func TestOWDDeltas_HalfDayOffset(t *testing.T) {
 	}
 }
 
+// A queue moves from the upload to the download at the same RTT, in the
+// replies before the first throughput sample: the load is not known. It is
+// not a clock step, and the download delta must show the queue.
+func TestOWDDeltas_QueueMoveBeforeFirstRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	dl, ul := owdRun(c, 9*time.Second, func(t time.Duration) (float64, float64) {
+		switch {
+		case t < 2*time.Second:
+			return 10, 10
+		case t < 8*time.Second:
+			return 210, 10 // upload queue 200 ms
+		default:
+			return 10, 210 // download queue 200 ms
+		}
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
+// After a capacity decrease, the link is saturated at a load below 50 %
+// of the shaper rate. A queue of 80 ms moves from the upload to the
+// download at the same RTT: the download delta must show it.
+func TestOWDDeltas_QueueMoveAfterCapacityDrop(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 50; i++ {
+		ulMs, dlMs := 10.0, 10.0
+		switch {
+		case i >= 40:
+			ulMs, dlMs = 10, 90
+		case i >= 20:
+			ulMs, dlMs = 90, 10
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 70 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 80 and 0", dl, ul)
+	}
+}
+
 // With the shaping off, the load is against 10 Gbit/s and stays low also
 // with a queue. A queue that moves from the upload to the download at the
 // same RTT must stay in the delta: it is not a clock step. Two paths: the
 // command unshape, and the unshaped blocks of a calibration (fixed rate).
 func TestOWDDeltas_UnshapedQueueStays(t *testing.T) {
 	for _, mode := range []string{"unshape", "fixed rate"} {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		if mode == "unshape" {
 			c.SetUnshaped(true, time.Now())
 		}
@@ -1351,7 +1406,7 @@ func TestOWDDeltas_UnshapedQueueStays(t *testing.T) {
 // increases slowly in the two runs.)
 func TestOWDDeltas_QueueWithJitterStays(t *testing.T) {
 	run := func(jitterMs float64) float64 {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		dl, _ := owdRun(c, 60*time.Second, func(t time.Duration) (float64, float64) {
 			jitter := float64(int(t/(300*time.Millisecond))%5) * jitterMs
 			queue := 0.0
@@ -1373,7 +1428,7 @@ func TestOWDDeltas_QueueWithJitterStays(t *testing.T) {
 // only by the path change of the download (10 ms).
 func TestOWDDeltas_PathChangeIsNotClockChange(t *testing.T) {
 	run := func(changeMs float64) float64 {
-		c, _ := newTestCore(t)
+		c := newOWDTestCore(t)
 		dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
 			base, queue := 20.0, 0.0
 			if t >= 5*time.Second {
@@ -1394,7 +1449,7 @@ func TestOWDDeltas_PathChangeIsNotClockChange(t *testing.T) {
 // A shorter route decreases the two delays: no clock change, the two
 // baselines follow.
 func TestOWDDeltas_ShorterRouteInBothDirections(t *testing.T) {
-	c, _ := newTestCore(t)
+	c := newOWDTestCore(t)
 	rd := &reflectorDelay{}
 	ts := time.Now()
 	c.owdDeltas(rd, owdPing("1.1.1.1", ts, 20, 20))
