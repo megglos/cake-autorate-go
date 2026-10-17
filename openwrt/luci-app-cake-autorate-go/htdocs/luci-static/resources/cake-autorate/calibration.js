@@ -49,10 +49,10 @@ const ECHO_REFLECTORS = [
 // convert.uc reads them; an empty value is on).
 const LINK_ON = [ '', '1', 'true', 'yes', 'on' ];
 
-// The key in the session storage for the data limit of the running
-// session and the data that the load used. Thus, a reload of the page
-// keeps the limit.
-const LIMIT_KEY = 'cake-autorate-calibration-limit';
+// The key in the session storage for the running session of this page
+// and the data that the load used. Thus, a reload of the page continues
+// the load without a question and keeps the data volume.
+const SESSION_KEY = 'cake-autorate-calibration-session';
 
 // The load times that the user can select (s).
 const LOAD_TIMES = [ 20, 40, 80 ];
@@ -118,16 +118,11 @@ const Load = baseclass.extend({
 		this.abort = null;
 		this.bytes = { dl: 0, ul: 0 };
 		// sent are the bytes that went through the link (an upload counts
-		// with its progress): for the rates. bytes is for the data limit.
+		// with its progress): for the rates. bytes is for the data volume.
 		this.sent = { dl: 0, ul: 0 };
 		this.errors = 0;
 		this.lastError = null;
 		this.upload = null;
-		// limit is the maximum data volume of the load (bytes). At the
-		// limit, the load stops and calls onLimit.
-		this.limit = Infinity;
-		this.onLimit = null;
-		this.overLimit = false;
 	},
 
 	// Returns the data that the load used (bytes). An upload counts from
@@ -136,19 +131,9 @@ const Load = baseclass.extend({
 		return this.bytes.dl + this.bytes.ul;
 	},
 
-	// Stops the load at the data limit.
-	limitReached: function() {
-		if (this.overLimit)
-			return;
-		this.overLimit = true;
-		this.stop();
-		if (this.onLimit)
-			this.onLimit();
-	},
-
 	// Sets the load: dl, ul, both or empty (no load).
 	set: function(mode) {
-		mode = this.overLimit ? '' : (mode || '');
+		mode = mode || '';
 		if (mode == this.mode)
 			return;
 		this.stop();
@@ -224,20 +209,10 @@ const Load = baseclass.extend({
 							break;
 						this.bytes.dl += r.value.length;
 						this.sent.dl += r.value.length;
-						if (this.used() >= this.limit) {
-							this.limitReached();
-							return;
-						}
 					}
 				}
 				else {
 					const data = this.uploadData();
-					// Count the upload before it starts: then the parallel
-					// uploads cannot go above the limit.
-					if (this.used() + data.size > this.limit) {
-						this.limitReached();
-						return;
-					}
 					this.bytes.ul += data.size;
 					await this.post(data, signal);
 				}
@@ -266,7 +241,6 @@ return baseclass.extend({
 		this.node = null;
 		this.lastBytes = null;
 		this.rates = { dl: 0, ul: 0 };
-		this.limitReached = false;
 		this.onUnload = (ev) => {
 			ev.preventDefault();
 			ev.returnValue = '';
@@ -281,13 +255,6 @@ return baseclass.extend({
 		return loadS * (DL_BLOCKS * dl + UL_BLOCKS * ul);
 	},
 
-	// Returns the default data limit for the estimate in bytes: 1.5 times
-	// the estimate (the capacity can be above the maximum rate), up to the
-	// next 100 MB.
-	defaultLimit: function(estimate) {
-		return Math.max(1, Math.ceil(1.5 * estimate / 1e8)) * 1e8;
-	},
-
 	// Opens the dialog to start a calibration of the link with the status
 	// ls.
 	open: function(ls) {
@@ -296,18 +263,11 @@ return baseclass.extend({
 		const select = E('select', { 'class': 'cbi-input-select', 'id': 'cake-autorate-calibrate-load' },
 			LOAD_TIMES.map((s) => E('option', { 'value': s, 'selected': s == 40 ? '' : null }, _('%d s').format(s))));
 		const info = E('p', { 'class': 'cake-autorate-estimate' });
-		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-calibrate-limit', 'min': 1, 'step': 1 });
-		const limitProblem = E('div', { 'class': 'cake-autorate-problem' });
-		let edited = false;
-		limit.addEventListener('input', () => { edited = true; });
 		const update = () => {
 			const s = +select.value;
 			const minutes = Math.ceil(BLOCKS * (s + BLOCK_EXTRA_S) / 60);
-			const estimate = this.estimate(ls, s);
-			info.replaceChildren(text(_('Time: approximately %d minutes. Data volume: approximately %s (with the maximum rates of the link).')
-				.format(minutes, volume(estimate))));
-			if (!edited)
-				limit.value = Math.round(this.defaultLimit(estimate) / 1e6);
+			info.replaceChildren(text(_('Time: approximately %d minutes. Data volume: approximately %s with the maximum rates of the link. In the blocks without a shaper limit, a link that is faster than its maximum rate uses more data.')
+				.format(minutes, volume(this.estimate(ls, s)))));
 		};
 		select.addEventListener('change', update);
 		update();
@@ -316,33 +276,20 @@ return baseclass.extend({
 			E('ul', {}, [
 				E('li', {}, text(_('Keep this page open until the end.'))),
 				E('li', {}, text(_('Do not use the network during the calibration: other traffic makes the result less accurate.'))),
-				E('li', {}, text(_('On a mobile data plan, the data volume can be expensive.')))
+				E('li', {}, text(_('On a mobile data plan, the data volume can be expensive. The dialog shows the data that the load used. Click "Stop" to stop the calibration: then you get no result.')))
 			]),
 			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-calibrate-load' }, _('Load time of each block')),
 				E('div', { 'class': 'cbi-value-field' }, select)
 			]),
 			info,
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-calibrate-limit' }, _('Data limit (MB)')),
-				E('div', { 'class': 'cbi-value-field' }, [
-					limit,
-					E('div', { 'class': 'cbi-value-description' },
-						_('The calibration stops when the load of this browser reaches this limit. A link that is faster than its maximum rate needs more data.'))
-				])
-			]),
-			limitProblem,
 			E('div', { 'class': 'right' }, [
 				E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Cancel')),
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-positive',
 					'click': ui.createHandlerFn(this, function() {
-						const mb = Math.floor(+limit.value);
-						limitProblem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
-						if (!(mb >= 1))
-							return;
-						return this.start(ls.name, +select.value, mb * 1e6);
+						return this.start(ls.name, +select.value);
 					})
 				}, _('Start'))
 			])
@@ -350,12 +297,12 @@ return baseclass.extend({
 	},
 
 	// Starts a session and shows its progress.
-	start: function(link, loadS, limit) {
+	start: function(link, loadS) {
 		return callStart(link, loadS).then((res) => {
 			if (!res || res.error)
 				throw new Error((res && res.error) || _('No answer from the service'));
 			// The first status gives the identifier of the session.
-			this.saveLimit({ link: link, session: null, limit: limit, dl: 0, ul: 0 });
+			this.saveSession({ link: link, session: null, dl: 0, ul: 0 });
 			this.attach(link, null, true);
 		}).catch((e) => {
 			ui.addNotification(null, E('p', {}, text(_('The calibration did not start: %s').format(e.message || e))), 'danger');
@@ -369,27 +316,20 @@ return baseclass.extend({
 		this.link = link;
 		this.session = session;
 		this.lastBytes = null;
-		this.limitReached = false;
 		this.runningView = null;
 		// A new load for each session. After a reload, the load continues
-		// with the limit and the used data of the same session (not of an
-		// older session of the link).
-		const saved = this.readLimit();
+		// with the used data of the same session (not of an older session
+		// of the link).
+		const saved = this.readSession();
 		this.load.stop();
 		this.load = new Load();
 		const same = saved && saved.link == link && (own || (saved.session && saved.session == session));
-		if (same) {
-			this.load.limit = saved.limit;
+		if (same)
 			this.load.bytes = { dl: saved.dl, ul: saved.ul };
-		}
-		this.load.onLimit = () => {
-			this.limitReached = true;
-			this.stop();
-		};
 		this.stopping = false;
 		this.node = E('div', { 'id': 'cake-autorate-calibration' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
-		// Without the data limit of this session (another page or browser
+		// If this page did not start the session (another page or browser
 		// started it), the load waits for the decision of the user.
 		if (!same)
 			return this.renderTakeover(link);
@@ -398,18 +338,11 @@ return baseclass.extend({
 		this.poll();
 	},
 
-	// Asks the user for a data limit before this page makes the load of a
-	// session that it did not start.
+	// Asks the user before this page makes the load of a session that it
+	// did not start.
 	renderTakeover: function(link) {
-		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-calibrate-takeover-limit', 'min': 1, 'step': 1, 'value': 1000 });
-		const problem = E('div', { 'class': 'cake-autorate-problem' });
 		this.node.replaceChildren(
-			E('p', { 'class': 'alert-message notice' }, text(_('A calibration of the link %s runs, but this page did not start it (another page or browser, or a page without session storage). Continue the load from this page with a data limit, or stop the calibration. Close the other pages of the calibration first: each page makes its own load. Without status requests, the service stops the calibration after 15 s.').format(link))),
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-calibrate-takeover-limit' }, _('Data limit (MB)')),
-				E('div', { 'class': 'cbi-value-field' }, limit)
-			]),
-			problem,
+			E('p', { 'class': 'alert-message notice' }, text(_('A calibration of the link %s runs, but this page did not start it (another page or browser, or a page without session storage). Continue the load from this page, or stop the calibration. Close the other pages of the calibration first: each page makes its own load. Without status requests, the service stops the calibration after 15 s.').format(link))),
 			E('div', { 'class': 'right' }, [
 				E('button', {
 					'class': 'cbi-button cbi-button-negative',
@@ -422,12 +355,7 @@ return baseclass.extend({
 				E('button', {
 					'class': 'cbi-button cbi-button-positive',
 					'click': ui.createHandlerFn(this, function() {
-						const mb = Math.floor(+limit.value);
-						problem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
-						if (!(mb >= 1))
-							return;
-						this.load.limit = mb * 1e6;
-						this.saveLimit({ link: link, session: this.session, limit: this.load.limit, dl: 0, ul: 0 });
+						this.saveSession({ link: link, session: this.session, dl: 0, ul: 0 });
 						this.active = true;
 						window.addEventListener('beforeunload', this.onUnload);
 						return this.poll();
@@ -473,15 +401,14 @@ return baseclass.extend({
 				if (!this.stopping)
 					this.load.set(st.load);
 				this.measure();
-				if (this.load.limit < Infinity)
-					this.saveLimit({ link: this.link, session: this.session, limit: this.load.limit, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
+				this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
 				this.renderRunning(st);
 				if (!this.stopping)
 					this.timer = setTimeout(() => this.poll(), POLL_MS);
 				return;
 			}
 			// A failed status request does not end the session: keep the
-			// data limit for a reload of the page.
+			// session for a reload of the page.
 			this.finish(st.state == 'error');
 			this.renderEnd(st);
 		});
@@ -502,42 +429,43 @@ return baseclass.extend({
 		this.lastBytes = { t: now, dl: b.dl, ul: b.ul };
 	},
 
-	// Ends the load and the status requests. keepLimit keeps the data
-	// limit of the session in the session storage.
-	finish: function(keepLimit) {
+	// Ends the load and the status requests. keepSession keeps the session
+	// in the session storage.
+	finish: function(keepSession) {
 		this.active = false;
 		if (this.timer)
 			clearTimeout(this.timer);
 		this.timer = null;
 		this.load.stop();
 		window.removeEventListener('beforeunload', this.onUnload);
-		if (!keepLimit)
-			this.saveLimit(null);
+		if (!keepSession)
+			this.saveSession(null);
 	},
 
-	// Reads the data limit of the running session from the session
-	// storage, or null.
-	readLimit: function() {
+	// Reads the running session of this page from the session storage, or
+	// null.
+	readSession: function() {
 		try {
-			const v = JSON.parse(sessionStorage.getItem(LIMIT_KEY));
+			const v = JSON.parse(sessionStorage.getItem(SESSION_KEY));
 			return (v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
-				v.limit > 0 && v.dl >= 0 && v.ul >= 0) ? v : null;
+				v.dl >= 0 && v.ul >= 0) ? v : null;
 		}
 		catch (e) {
 			return null;
 		}
 	},
 
-	// Saves the data limit of the running session (null removes it).
-	saveLimit: function(v) {
+	// Saves the running session of this page (null removes it).
+	saveSession: function(v) {
 		try {
 			if (v)
-				sessionStorage.setItem(LIMIT_KEY, JSON.stringify(v));
+				sessionStorage.setItem(SESSION_KEY, JSON.stringify(v));
 			else
-				sessionStorage.removeItem(LIMIT_KEY);
+				sessionStorage.removeItem(SESSION_KEY);
 		}
 		catch (e) {
-			// No storage (private mode): a reload loses the limit.
+			// No storage (private mode): after a reload, the page asks
+			// before it makes the load.
 		}
 	},
 
@@ -582,9 +510,7 @@ return baseclass.extend({
 			E('p', { 'class': 'cake-autorate-load' }, text(st.load
 				? _('Load from this browser: download %s, upload %s.').format(mbit(this.rates.dl), mbit(this.rates.ul))
 				: _('No load in this phase.'))),
-			E('p', { 'class': 'cake-autorate-used' }, text(this.load.limit < Infinity
-				? _('Data: %s of %s.').format(volume(this.load.used()), volume(this.load.limit))
-				: _('Data: %s (no limit after the reload of the page).').format(volume(this.load.used()))))
+			E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s.').format(volume(this.load.used()))))
 		];
 		if (this.load.errors > 0)
 			nodes.push(E('p', { 'class': 'alert-message warning' },
@@ -609,9 +535,7 @@ return baseclass.extend({
 		if (st.state == 'done' && st.result)
 			return this.renderResult(st.result, close);
 		const message = {
-			stopped: this.limitReached
-				? _('The calibration stopped: the load reached the data limit of %s.').format(volume(this.load.limit))
-				: _('The calibration stopped.'),
+			stopped: _('The calibration stopped.'),
 			failed: _('The calibration failed: %s').format(st.error || ''),
 			error: _('Cannot read the status of the calibration: %s').format(st.error || '')
 		}[st.state] || _('No calibration runs.');

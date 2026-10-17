@@ -106,12 +106,6 @@ async function openDialog(page) {
 	return page.locator('.modal');
 }
 
-// Sets a high data limit: the local answers are fast, the uploads use
-// approximately 600 Mbit/s.
-async function noLimit(modal) {
-	await modal.locator('#cake-autorate-bufferbloat-limit').fill('100000');
-}
-
 // Returns the "unshaped" value of the link in the status file.
 function unshapedInFile() {
 	return vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" 2>/dev/null || true').trim();
@@ -148,7 +142,9 @@ test('the test measures the delay in each phase and gives a grade', async ({ pag
 	const modal = await openDialog(page);
 	await expect(modal).toContainText('Bufferbloat test of the link wan');
 	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 8 s');
-	await noLimit(modal);
+	await expect(modal.locator('.cake-autorate-estimate')).toContainText('uses more data');
+	// No data limit: the test is short, and the user can stop it.
+	await expect(modal.locator('input[type=number]')).toHaveCount(0);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 1 of 1 (With shaping)');
 	const table = modal.locator('table.cake-autorate-bufferbloat-result');
@@ -189,7 +185,6 @@ test('the comparison turns the shaping off for the second run, with a time limit
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
 		await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 19 s');
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 2 of 2 (Without shaping)', { timeout: 20000 });
 		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('true');
@@ -211,7 +206,6 @@ test('Stop in the second run turns the shaping on again', async ({ page }) => {
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 2 of 2', { timeout: 20000 });
 		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('true');
@@ -225,20 +219,6 @@ test('Stop in the second run turns the shaping on again', async ({ page }) => {
 	}
 });
 
-test('the test stops at the data limit', async ({ page }) => {
-	const calls = await routeUbus(page);
-	const load = await routeLoad(page);
-	const modal = await openDialog(page);
-	await modal.locator('#cake-autorate-bufferbloat-compare').check();
-	// One upload is 4 MiB: more than the limit of 1 MB.
-	await modal.locator('#cake-autorate-bufferbloat-limit').fill('1');
-	await modal.getByRole('button', { name: 'Start' }).click();
-	await expect(modal).toContainText('The test stopped: the load reached the data limit of 1 MB.', { timeout: 20000 });
-	expect(load.up).toBe(0);
-	// The second run does not start.
-	expect(calls).toEqual([]);
-});
-
 test('the button is disabled while the shaping is off', async ({ page }) => {
 	await routeUbus(page, (s) => { s.links[0].unshaped = true; });
 	await page.goto(PAGE);
@@ -250,7 +230,6 @@ test('Stop in the pause between the runs does not change the shaping', async ({ 
 	await routeLoad(page);
 	const modal = await openDialog(page);
 	await modal.locator('#cake-autorate-bufferbloat-compare').check();
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('.cake-autorate-phase')).toContainText('Pause between the runs', { timeout: 20000 });
 	await modal.getByRole('button', { name: 'Stop' }).click();
@@ -264,7 +243,6 @@ test('a failed "shape" after the test shows an error', async ({ page }) => {
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal.locator('[data-shape-error]')).toContainText('The shaping did not come back: tc failed', { timeout: 30000 });
 	}
@@ -277,7 +255,6 @@ test('a failed load stops the test without grades', async ({ page }) => {
 	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; });
 	await routeLoad(page, 403);
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('The test stopped with an error: The load failed: HTTP 403', { timeout: 20000 });
 	await expect(modal.locator('[data-grade]')).toHaveCount(0);
@@ -325,7 +302,6 @@ test('the upload rate counts the uploads while they run', async ({ page }) => {
 		};
 	});
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const ul = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="ul"] td').nth(2);
 	await expect(ul).toContainText('Mbit/s', { timeout: 30000 });
@@ -338,7 +314,6 @@ test('slow status requests do not make the phases longer', async ({ page }) => {
 	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; }, false, 3000);
 	await routeLoad(page);
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	const start = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('table.cake-autorate-bufferbloat-result')).toHaveCount(1, { timeout: 60000 });
@@ -353,7 +328,6 @@ test('the run without shaping waits until the status shows the shaping off', asy
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal).toContainText('The status does not show the shaping off.', { timeout: 30000 });
 		await expect(modal.locator('#cake-autorate-bufferbloat h4')).toHaveText([ 'With shaping' ]);
@@ -374,7 +348,6 @@ test('the run without shaping stops when the shaping comes back', async ({ page 
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal).toContainText('The shaping came back before the end of the run without shaping.', { timeout: 30000 });
 	}
@@ -389,7 +362,6 @@ test('after a failed "shape", the next test does not send "shape"', async ({ pag
 	try {
 		let modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal.locator('[data-shape-error]')).toBeVisible({ timeout: 30000 });
 		await modal.getByRole('button', { name: 'Close' }).click();
@@ -398,7 +370,6 @@ test('after a failed "shape", the next test does not send "shape"', async ({ pag
 		// dialog from the module.
 		await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => b.open({ name: 'wan', download: {}, upload: {} })));
 		modal = page.locator('.modal');
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		// The shaping is still off: the run with shaping does not start.
 		await expect(modal).toContainText('The shaping is off: the run with shaping needs it on.', { timeout: 30000 });
@@ -425,7 +396,6 @@ test('a failed "unshape" turns the shaping on again', async ({ page }) => {
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal).toContainText('The test stopped with an error: tc failed', { timeout: 30000 });
 		expect(calls.map((c) => c[0])).toEqual([ 'unshape', 'shape' ]);
@@ -439,7 +409,6 @@ test('the Stop button shows before the first status answer', async ({ page }) =>
 	await routeUbus(page, null, false, 5000);
 	await routeLoad(page);
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.getByRole('button', { name: 'Stop' })).toBeVisible({ timeout: 1500 });
 });
@@ -458,7 +427,6 @@ test('the run with shaping stops when the shaping is off', async ({ page }) => {
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('The shaping is off: the run with shaping needs it on.', { timeout: 20000 });
 });
@@ -481,7 +449,6 @@ test('a status that was asked in the warm-up is not a sample', async ({ page }) 
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	t0 = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const dl = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"]');
@@ -502,7 +469,6 @@ test('the test stops when a calibration runs', async ({ page }) => {
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
 	await expect(modal.locator('[data-grade]')).toHaveCount(0);
@@ -514,7 +480,6 @@ test('a load that transfers no data stops the test', async ({ page }) => {
 	// The downloads hang: no answer, no error.
 	await page.route('https://speed.cloudflare.com/__down*', () => new Promise(() => {}));
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('The load did not transfer data (download).', { timeout: 20000 });
 	await expect(modal.locator('[data-grade]')).toHaveCount(0);
@@ -531,7 +496,6 @@ test('the Stop button keeps the keyboard focus during the refreshes', async ({ p
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const stop = modal.getByRole('button', { name: 'Stop' });
 	await stop.focus();
@@ -552,7 +516,6 @@ test('the rates count from the end of the warm-up, also with slow status request
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const rate = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"] td').nth(1);
 	await expect(rate).toContainText('Mbit/s', { timeout: 30000 });
@@ -568,7 +531,6 @@ test('a load phase that does not use the link gets no grade', async ({ page }) =
 	});
 	await routeLoad(page);
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const table = modal.locator('table.cake-autorate-bufferbloat-result');
 	await expect(table).toHaveCount(1, { timeout: 20000 });
@@ -608,7 +570,6 @@ test('a load error during the last status request of a phase stops the test', as
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	t0 = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('The load failed: HTTP 403', { timeout: 20000 });
@@ -624,7 +585,6 @@ test('a status in Idle is not a sample, also with new replies', async ({ page })
 	});
 	await routeLoad(page);
 	const modal = await openDialog(page);
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const table = modal.locator('table.cake-autorate-bufferbloat-result');
 	await expect(table).toHaveCount(1, { timeout: 20000 });
@@ -646,7 +606,6 @@ test('a stopped phase is not in the result', async ({ page }) => {
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('.cake-autorate-phase')).toContainText('download', { timeout: 10000 });
 	await page.waitForTimeout(3000);
@@ -675,7 +634,6 @@ test('the first status of a run stops the test before the load', async ({ page }
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	t0 = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
@@ -706,7 +664,6 @@ test('a status that comes after the end of the phase is also checked', async ({ 
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	t0 = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
@@ -734,7 +691,6 @@ test('replies from the warm-up are not samples, also in a late status', async ({
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
-	await noLimit(modal);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	t0 = Date.now();
 	const dl = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"]');

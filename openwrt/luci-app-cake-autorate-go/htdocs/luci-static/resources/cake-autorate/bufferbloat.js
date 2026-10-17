@@ -134,20 +134,11 @@ return baseclass.extend({
 	// Opens the dialog of the test for the link with the status ls.
 	open: function(ls) {
 		const compare = E('input', { 'type': 'checkbox', 'id': 'cake-autorate-bufferbloat-compare' });
-		const limit = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'id': 'cake-autorate-bufferbloat-limit', 'min': 1, 'step': 1 });
 		const info = E('p', { 'class': 'cake-autorate-estimate' });
-		const problem = E('div', { 'class': 'cake-autorate-problem' });
-		let edited = false;
-		limit.addEventListener('input', () => { edited = true; });
 		const update = () => {
 			const runs = compare.checked ? 2 : 1;
-			const estimate = runs * this.estimate(ls);
-			info.replaceChildren(text(_('Time: approximately %d s. Data volume: approximately %s (with the maximum rates of the link).')
-				.format(runs * this.runSeconds() + (runs - 1) * PAUSE_S, volume(estimate))));
-			// Without the shaper, the link can be faster than its maximum
-			// rate: 1.5 times the volume, up to the next 100 MB.
-			if (!edited)
-				limit.value = Math.max(1, Math.ceil(1.5 * estimate / 1e8)) * 100;
+			info.replaceChildren(text(_('Time: approximately %d s. Data volume: approximately %s with the maximum rates of the link. Without the shaping, a link that is faster than its maximum rate uses more data.')
+				.format(runs * this.runSeconds() + (runs - 1) * PAUSE_S, volume(runs * this.estimate(ls)))));
 		};
 		compare.addEventListener('change', update);
 		update();
@@ -162,24 +153,13 @@ return baseclass.extend({
 				])
 			]),
 			info,
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-limit' }, _('Data limit (MB)')),
-				E('div', { 'class': 'cbi-value-field' }, [
-					limit,
-					E('div', { 'class': 'cbi-value-description' }, _('The test stops when the load of this browser reaches this limit.'))
-				])
-			]),
-			problem,
 			E('div', { 'class': 'right' }, [
 				E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Cancel')),
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-positive',
 					'click': ui.createHandlerFn(this, function() {
-						const mb = Math.floor(+limit.value);
-						problem.replaceChildren(...(mb >= 1 ? [] : [ E('p', { 'class': 'alert-message danger' }, text(_('The data limit must be at least 1 MB.'))) ]));
-						if (mb >= 1)
-							this.start(ls.name, compare.checked, mb * 1e6);
+						this.start(ls.name, compare.checked);
 					})
 				}, _('Start'))
 			])
@@ -187,14 +167,12 @@ return baseclass.extend({
 	},
 
 	// Runs the test and shows the result. The dialog stays open.
-	start: function(link, compare, limit) {
+	start: function(link, compare) {
 		this.running = true;
 		this.cancelled = false;
 		// Only the shaping that this test turns off goes on again.
 		this.unshaped = false;
 		this.load = new calibration.Load();
-		this.load.limit = limit;
-		this.load.onLimit = () => { this.cancelled = true; };
 		this.node = E('div', { 'id': 'cake-autorate-bufferbloat' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Bufferbloat test of the link %s').format(link), [ this.node ]);
 		window.addEventListener('beforeunload', this.onUnload);
@@ -437,7 +415,7 @@ return baseclass.extend({
 		if (ls)
 			nodes.push(E('p', { 'class': 'cake-autorate-delay' }, text(_('Delay delta now: download %.1f ms, upload %.1f ms. State: %s.')
 				.format(+ls.download.delta_ms || 0, +ls.upload.delta_ms || 0, ls.state))));
-		nodes.push(E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s of %s.').format(volume(this.load.used()), volume(this.load.limit)))));
+		nodes.push(E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s.').format(volume(this.load.used())))));
 		// The Stop button stays in the page: then it keeps the keyboard
 		// focus during the refreshes.
 		if (!this.runningView || !this.node.contains(this.runningView.info)) {
@@ -489,8 +467,6 @@ return baseclass.extend({
 			nodes.push(E('p', { 'class': 'alert-message danger', 'data-shape-error': '' }, text(_('The shaping did not come back: %s. Click "Turn shaping on" on the status page. Else the service turns it on after the time limit of the test.').format(shapeError))));
 		if (error)
 			nodes.push(E('p', { 'class': 'alert-message warning' }, text(_('The test stopped with an error: %s').format(error))));
-		else if (this.load.overLimit)
-			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped: the load reached the data limit of %s.').format(volume(this.load.limit)))));
 		else if (this.cancelled)
 			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped.'))));
 		nodes.push(E('p', {}, text(_('The delay is the delay delta of the reflectors of the service (the increase above the baseline) in each direction: the median and the p95. The grade is for the larger median: A+ below 5 ms, A below 30 ms, B below 60 ms, C below 200 ms, D below 400 ms, else F. The rates are the rates of this browser. A load phase with a rate of the link below half the rate of the browser gets no grade: the load did not go through this link.'))));
