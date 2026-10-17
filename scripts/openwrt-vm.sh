@@ -155,7 +155,7 @@ cmd_start() {
 		echo "VM runs already"
 		return
 	fi
-	local wan lan=()
+	local wan lan=() lan_ipv6=""
 	wan=$(wan_netdev)
 	if [ -n "$LAN_TAP" ]; then
 		if ! ip link show dev "$LAN_TAP" >/dev/null 2>&1; then
@@ -163,12 +163,16 @@ cmd_start() {
 			exit 1
 		fi
 		lan=(-netdev "tap,id=client,ifname=$LAN_TAP,script=no,downscript=no" -device virtio-net-pci,netdev=client)
+		# The user network on eth0 sends IPv6 router advertisements. A
+		# client in the LAN bridge then sends its IPv6 traffic through
+		# QEMU, not through the WAN of the VM.
+		lan_ipv6=",ipv6=off"
 	fi
 	prepare_disk
 	rm -f "$SERIAL" "$MONITOR"
 	qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m 512 \
 		-drive "file=$DISK,format=raw,if=virtio" \
-		-netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,hostfwd=tcp:127.0.0.1:$SSH_PORT-192.168.1.1:22,hostfwd=tcp:127.0.0.1:$HTTP_PORT-192.168.1.1:80" \
+		-netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,hostfwd=tcp:127.0.0.1:$SSH_PORT-192.168.1.1:22,hostfwd=tcp:127.0.0.1:$HTTP_PORT-192.168.1.1:80$lan_ipv6" \
 		-device virtio-net-pci,netdev=lan \
 		-netdev "$wan" -device virtio-net-pci,netdev=wan \
 		"${lan[@]}" \
