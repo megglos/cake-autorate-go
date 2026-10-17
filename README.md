@@ -22,16 +22,16 @@ cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of
 
 ## Features
 
-- **The algorithm of the original:** delay baselines with EWMA, bufferbloat detection, the states Running, Idle and Stall, replacement of a reflector that misses too many replies, and compensation for the serialization delay.
+- **The algorithm of the original:** delay baselines with EWMA, bufferbloat detection, and the states Running, Idle and Stall. Also the replacement of a reflector that misses too many replies, and the compensation for the serialization delay.
 - **One process for all links**, in one static binary. Netlink sets the CAKE bandwidth: no new process for each change.
 - **One-way delays with ICMP timestamps** in the program (`ping_method: icmp-timestamp`), without an external pinger. A queue in one direction decreases only the rate of that direction.
 - **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease`. Their default is off. Thus, the default behavior stays near the original.
-- **OpenWrt package with a LuCI app:** configuration of all settings and links, a status page with graphs, pause and resume of the rate control, a button to turn the shaping off, and calibration and a bufferbloat test of a link from the browser.
+- **OpenWrt package with a LuCI app:** configuration of all settings and links, and a status page with graphs. From the browser, you can pause the rate control, turn the shaping off, calibrate a link and do a bufferbloat test.
 - **`calibrate`** makes a proposed config from a test session on your link.
 - **Config checks:** a warning for each unknown key, and for each reflector that is known to not reply to ICMP timestamp requests.
 - **Recording and replay** of the controller inputs and decisions, a link simulator, and link emulations for the tests.
 
-On an emulated 5G link, the delay under load (p95) of cake-autorate-go is approximately 30 to 50 % lower than the delay of the original, with a similar throughput. These results are from emulations. For the details, the differences from the original and the resource use on a router, see [docs/comparison.md](docs/comparison.md).
+On an emulated 5G link, the delay under load (p95) of cake-autorate-go is approximately 30 to 50 % lower than with the original. The throughput is similar. These results are from emulations. For the details, the differences from the original and the resource use on a router, see [docs/comparison.md](docs/comparison.md).
 
 ## Installation on OpenWrt
 

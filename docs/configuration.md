@@ -93,7 +93,7 @@ On a router with more than one WAN (for example with mwan3), set `ping_interface
 
 ## Link overrides
 
-A link can override four top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms` and `learn_cross_delay`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. If a link sets `ping_method` and no reflectors, and the config sets no top-level reflectors, the link uses the default list for its own ping method.
+A link can override four top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms` and `learn_cross_delay`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
 
 ```yaml
 ping_method: icmp
@@ -130,7 +130,7 @@ pinger_count: 6          # Number of reflectors that the program pings at the sa
 ping_interval_ms: 300    # Time between two pings to one reflector (ms)
 ```
 
-The program counts the missed replies of each active reflector. When a reflector misses too many replies (`reflector_misbehaving_detection_thr` in the last `reflector_misbehaving_detection_window` pings), the program replaces it with a spare reflector: a reflector from the list that is not active. The list must thus have more reflectors than `pinger_count`. Else, the reflector stays active. The program does not examine the delay of a reflector: a reflector with a high or unstable delay stays active.
+The program counts the missed replies of each active reflector. A reflector misses too many replies when it misses `reflector_misbehaving_detection_thr` of the last `reflector_misbehaving_detection_window` pings. Then the program replaces it with a spare reflector: a reflector from the list that is not active. The list must thus have more reflectors than `pinger_count`. Else, the reflector stays active. The program does not examine the delay of a reflector: a reflector with a high or unstable delay stays active.
 
 ## Ping method
 
@@ -231,7 +231,7 @@ global_ping_response_timeout_s: 10.0    # Minimum time since the last ping reply
 connection_stall_thr_kbps: 10           # Traffic at or above this ends the stall
 ```
 
-The controller goes into the **Stall** state when the two conditions are true: `stall_detection_thr` ping timeouts in sequence, and no ping reply for more than `global_ping_response_timeout_s`. In the Stall state, it stops the pings and makes no rate adjustments. When the traffic in one direction is at `connection_stall_thr_kbps` or more, it goes back to **Running**, sets the rates to `base_rate_kbps` and starts the pings again.
+The controller goes into the **Stall** state when the two conditions are true: `stall_detection_thr` ping timeouts in sequence, and no ping reply for more than `global_ping_response_timeout_s`. In the Stall state, it stops the pings and makes no rate adjustments. When the traffic in one direction is at `connection_stall_thr_kbps` or more, it goes back to **Running**. Then it sets the rates to `base_rate_kbps` and starts the pings again.
 
 ## Timing
 
@@ -259,7 +259,16 @@ Set `status_file` to a path, for example `/var/run/cake-autorate/status.json`. T
 
 The program writes the file each second. Thus, use a path on a RAM file system, for example `/var/run` on OpenWrt, so that the flash memory does not wear out.
 
-The file is JSON. The key `schema` is the version of the format. For each link, it shows the state, whether the shaping is off (`unshaped`), the number of ping replies since the start (`replies`; the delay deltas change only with a new reply), and for each direction whether the rate control is paused, the shaper rate, the measured rate, the load, the last delay delta, its threshold, whether the last delta was above the threshold (`high_delay`; the threshold includes the time to send one packet at the shaper rate), the number of pings with a high delay in the detection window, the learned cross delay and the number of rate changes. It also shows the baseline RTT and the health of each reflector.
+The file is JSON. The key `schema` is the version of the format. For each link, it shows the state and whether the shaping is off (`unshaped`). It also shows the number of ping replies since the start (`replies`): the delay deltas change only with a new reply. For each direction, it shows:
+
+- whether the rate control is paused
+- the shaper rate, the measured rate and the load
+- the last delay delta and its threshold (the threshold includes the time to send one packet at the shaper rate)
+- whether the last delta was above the threshold (`high_delay`)
+- the number of pings with a high delay in the detection window
+- the learned cross delay and the number of rate changes.
+
+The file also shows the baseline RTT and the health of each reflector.
 
 ## Control socket
 
@@ -279,13 +288,13 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
 
-Each `unshape` sets the rates again, also when the shaping is already off; after an error answer of `unshape` or `shape`, send the command again. Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue: an idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`) and, for `unshape LINK SECONDS`, the time left (`unshaped_left_s`). A program that turns the shaping off for a test (for example a web page) should send `SECONDS`: then the shaping comes back also when the program stops. A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
+Each `unshape` sets the rates again, also when the shaping is already off; after an error answer of `unshape` or `shape`, send the command again. Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue. An idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`) and, for `unshape LINK SECONDS`, the time left (`unshaped_left_s`). A program that turns the shaping off for a test (for example a web page) should send `SECONDS`. Then the shaping comes back also when that program stops. A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock
 ```
 
-The answer of `history` has the fields `schema`, `updated` (the time of the last sample), `interval_ms`, `fields` (the names of the values of a sample) and `links`. Each link has a `name` and `samples`, the oldest sample first. A sample is an array in the order of `fields`: the time in ms since 1970 (`t_ms`), then for the download and the upload the shaper rate and the achieved rate in kbit/s, and the delay delta and the threshold in ms. The program keeps the history only in memory: a restart starts with an empty history. The history is off by default (`status_history`). On, it uses approximately 40 bytes for each sample: approximately 36 kB for each link.
+The answer of `history` has the fields `schema`, `updated` (the time of the last sample), `interval_ms`, `fields` and `links`. The field `fields` has the names of the values of a sample. Each link has a `name` and `samples`, the oldest sample first. A sample is an array in the order of `fields`. First the time in ms since 1970 (`t_ms`). Then, for the download and the upload: the shaper rate and the achieved rate in kbit/s, and the delay delta and the threshold in ms. The program keeps the history only in memory: a restart starts with an empty history. The history is off by default (`status_history`). On, it uses approximately 40 bytes for each sample: approximately 36 kB for each link.
 
 ## 5G links
 
@@ -307,10 +316,10 @@ refractory_on_decrease: true
 learn_cross_delay: true
 ```
 
-- `learn_cross_delay` learns the cross delay and ignores it. It learns only while the download is active and the upload load was below 50 % of the upload shaper rate for 2 s or more. Thus, it needs times with download load and a low upload. If the load starts in the two directions at the same time, the learned value can stay too low. In the tests, 30 s of download load came before the upload load. On the test link, it gave approximately 1.6 to 2 times the upload throughput under load in the two directions, for 20 to 30 ms more upload delay (p95).
+- `learn_cross_delay` learns the cross delay and ignores it. It learns only while the download is active. Also, the upload load must be below 50 % of the upload shaper rate for 2 s or more. Thus, it needs times with download load and a low upload. If the load starts in the two directions at the same time, the learned value can stay too low. In the tests, 30 s of download load came before the upload load. On the test link, with load in the two directions, it gave approximately 1.6 to 2 times the upload throughput. The cost was 20 to 30 ms more upload delay (p95).
 - A lower upload threshold (20 ms) with `learn_cross_delay` gave the same upload throughput as 30 ms, with approximately 7 ms less upload delay (p95). Do not set the upload threshold below the grant delay: then the upload rate collapses.
 - The results change much from one test to the next (the 5G capacity changes). Make a test on your link before you change the defaults.
-- `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity instead of 87 to 88 %, for approximately 2 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays. It has no effect when `refractory_on_decrease` is `true`. The tests on the 5G link used `refractory_on_decrease` and not this option. A test of `repeat_decrease_on_rise` on the 5G link is not done yet.
+- `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity. Without it: 87 to 88 %. The cost was approximately 2 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays. It has no effect when `refractory_on_decrease` is `true`. The tests on the 5G link used `refractory_on_decrease` and not this option. A test of `repeat_decrease_on_rise` on the 5G link is not done yet.
 
 ## Configuration reference
 

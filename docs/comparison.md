@@ -1,6 +1,6 @@
 # Comparison with the original
 
-This page compares cake-autorate-go with the original [cake-autorate](https://github.com/lynxthecat/cake-autorate): the reasons for the rewrite, the differences, the delay and the throughput on emulated links, and the resource use on a router.
+This page compares cake-autorate-go with the original [cake-autorate](https://github.com/lynxthecat/cake-autorate). It shows the reasons for the rewrite and the differences. It also shows the delay and the throughput on emulated links, and the resource use on a router.
 
 ## Why a Go rewrite?
 
@@ -27,10 +27,10 @@ These functions are only in cake-autorate-go:
 - **Netlink** sets the CAKE bandwidth. The original starts `tc` for each change.
 - **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease` (see [5G links](configuration.md#5g-links)). Their default is off. Thus, the default behavior stays near the original.
 - **`calibrate`** makes a proposed config from a test session on your link.
-- **Config checks:** a warning for each unknown key (with a similar known key), and a warning for each reflector that is known to not reply to ICMP timestamp requests. If all reflectors of a link are known to not reply, the program does not start.
+- **Config checks:** a warning for each unknown key (with a similar known key). Also a warning for each reflector that is known to not reply to ICMP timestamp requests. If all reflectors of a link are known to not reply, the program does not start.
 - **Recording and replay** (`--record`, `--no-adjust`): the same events always give the same decisions. A simulator, emulations and session scripts use this to compare configs and versions, also with the original (see [Tests and tools](development.md#tests-and-tools)).
 
-These functions are only in the original: the pingers irtt and tsping, a reflector list from a URL, the MQTT publisher, the CPU statistics, and the export of the log.
+These functions are only in the original: the pingers irtt and tsping, a reflector list from a URL, and the MQTT publisher. Also the CPU statistics and the export of the log.
 
 ## Delay and throughput
 
@@ -38,7 +38,7 @@ These tests compare the delay and the throughput of the two controllers on the s
 
 The delay is the excess RTT under load: the RTT minus the minimum RTT. The throughput is a percentage of the mean capacity of the emulated link.
 
-**Emulation of a 5G link** with [`scripts/emulate-link.sh`](emulation.md) on a fiber connection: a capacity trace with download 30 to 400 Mbit/s and upload 5 to 80 Mbit/s, with deep fades. A queue of 1000 packets in the emulated modem. 2 rounds.
+**Emulation of a 5G link** with [`scripts/emulate-link.sh`](emulation.md) on a fiber connection. A capacity trace with download 30 to 400 Mbit/s and upload 5 to 80 Mbit/s, with deep fades. A queue of 1000 packets in the emulated modem. 2 rounds.
 
 | Load | Controller | Delay p50 / p95 / p99 | Throughput |
 |---|---|---|---|
@@ -49,7 +49,7 @@ The delay is the excess RTT under load: the RTT minus the minimum RTT. The throu
 | Two directions | cake-autorate-go with `repeat_decrease_on_rise` | 21–22 / 63 / 475–505 ms | DL 69–70 %, UL 81–82 % |
 | Two directions | cake-autorate | 21–23 / 85–89 / 251–425 ms | DL 75–78 %, UL 75–78 % |
 
-**CI emulation** ([`scripts/ci-emulation.sh`](development.md), each CI run): a square wave (download 40 and 20 Mbit/s, upload 10 and 5 Mbit/s, 15 s each), load in the two directions.
+**CI emulation** ([`scripts/ci-emulation.sh`](development.md), each CI run). A square wave: download 40 and 20 Mbit/s, upload 10 and 5 Mbit/s, 15 s each. Load in the two directions.
 
 | Controller | Delay p95 | Throughput |
 |---|---|---|
@@ -102,7 +102,7 @@ Many routers have **more than one WAN interface** (failover, load balancing, or 
 
 The Bash version starts **a full set of processes for each interface** (Bash, fping, awk and monitor processes). Thus, its resource usage increases linearly with the number of interfaces. The Go version controls all interfaces in one process with goroutines. A second WAN link adds almost no overhead.
 
-On a router with 128 to 256 MB of RAM, 23 MB or 11 MB for one daemon is an important difference, because other services (dnsmasq, firewall, VPN) also need memory.
+On a router with 128 to 256 MB of RAM, 23 MB or 11 MB for one daemon is an important difference. Other services (dnsmasq, firewall, VPN) also need memory.
 
 ### Decisions
 
