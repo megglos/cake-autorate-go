@@ -69,6 +69,14 @@ function hidePasswordWarning(page) {
 		const row = page.locator('tr[data-link]').first();
 		await row.waitFor({ timeout: 30000 });
 		await page.waitForTimeout(SETTLE_MS);
+		// A new installation asks once if it can check for firmware
+		// upgrades (attended sysupgrade). The dialog opens after the
+		// page. Close it.
+		const close = page.locator('#modal_overlay .modal :is(button, .btn)', { hasText: /^Close$/ });
+		if (await close.isVisible()) {
+			await close.click();
+			await page.waitForTimeout(SETTLE_MS);
+		}
 		await row.locator('xpath=ancestor::div[contains(@class,"cbi-section")][1]').screenshot({ path: path.join(OUT, 'luci-overview.png') });
 
 		console.log('screenshots in %s', OUT);
