@@ -675,9 +675,9 @@ func jitterLimit(jitter []float64) float64 {
 	return calReflectorMaxJitter*newCalDist(jitter).P25 + calReflectorJitterMarginMs
 }
 
-// lowJitter returns the idle jitter of the reflectors with one-way delays
-// and a jitter below jitterLimit.
-func (r *calResult) lowJitter() (kept []float64, limit float64) {
+// reflectorLimit returns the jitter limit of the reflectors with one-way
+// delays (ms), 0 without them.
+func (r *calResult) reflectorLimit() float64 {
 	var all []float64
 	for _, rf := range r.Reflectors {
 		if rf.OWD {
@@ -685,15 +685,21 @@ func (r *calResult) lowJitter() (kept []float64, limit float64) {
 		}
 	}
 	if len(all) == 0 {
-		return nil, 0
+		return 0
 	}
-	limit = jitterLimit(all)
-	for _, j := range all {
-		if j <= limit {
-			kept = append(kept, j)
+	return jitterLimit(all)
+}
+
+// recordedJitter returns the idle jitter of the reflectors addrs from the
+// recordings (ms).
+func (r *calResult) recordedJitter(addrs []string) []float64 {
+	var j []float64
+	for _, rf := range r.Reflectors {
+		if rf.OWD && slices.Contains(addrs, rf.Addr) {
+			j = append(j, rf.IdleP95Ms)
 		}
 	}
-	return kept, limit
+	return j
 }
 
 // calStable reports whether a direction has a stable capacity (for
@@ -701,10 +707,12 @@ func (r *calResult) lowJitter() (kept []float64, limit float64) {
 func calStable(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
 
 // setThresholds sets the delay thresholds and learn_cross_delay of the
-// proposal. lowJitterList is true if the proposal has a list of
-// low-jitter reflectors (from the recordings or from the probe): then the
-// thresholds come from the jitter of these reflectors.
-func (r *calResult) setThresholds(p *calProposal, lowJitterList bool) {
+// proposal. jitter is the idle jitter of the reflectors in the list of the
+// proposal (ms), from the recordings or from the probe; src tells where it
+// comes from. Without a list (the proposal keeps the configured
+// reflectors), jitter is nil: then the thresholds come from the jitter of
+// all reflectors of the recordings.
+func (r *calResult) setThresholds(p *calProposal, jitter []float64, src string) {
 	delete(p.Why, "download threshold")
 	delete(p.Why, "upload threshold")
 	// A stable direction has a lower minimum.
@@ -716,27 +724,16 @@ func (r *calResult) setThresholds(p *calProposal, lowJitterList bool) {
 	}
 	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
 	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
-	// The jitter of the reflectors in the proposal: a noisy reflector is
-	// not in the list and does not increase the thresholds. Without a list
-	// of low-jitter reflectors (the proposal keeps the configured ones):
-	// the jitter of all reflectors.
-	kept, limit := r.lowJitter()
-	if !lowJitterList {
-		kept, limit = nil, math.Inf(1)
-		for _, rf := range r.Reflectors {
-			if rf.OWD {
-				kept = append(kept, rf.IdleP95Ms)
-			}
-		}
+	// A noisy reflector is not in the list and does not increase the
+	// thresholds.
+	j := newCalDist(jitter)
+	if len(jitter) == 0 {
+		j, src = r.IdleJitterMs, fmt.Sprintf("all %d reflectors of the recordings", r.IdleJitterMs.N)
 	}
-	if len(kept) > 0 {
-		j := newCalDist(kept)
+	if j.N > 0 {
 		jit := math.Ceil(calJitterFactor * j.P50)
 		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
-		src := fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms", j.P50)
-		if !math.IsInf(limit, 1) {
-			src = fmt.Sprintf("idle jitter (p95 of each reflector, %d of %d at or below %.1f ms): median %.1f ms", len(kept), r.IdleJitterMs.N, limit, j.P50)
-		}
+		src := fmt.Sprintf("idle jitter (p95 of each reflector, %s): median %.1f ms", src, j.P50)
 		p.Why["download threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, dlFloor, calJitterFactor)
 		p.Why["upload threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, ulFloor, calJitterFactor)
 	}
@@ -832,7 +829,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// (and the spares from the rest). Thus, the list must not contain the
 	// reflectors with a high jitter: keep the best pinger_count + 2, and
 	// leave out the ones above the jitter limit.
-	_, refLimit := r.lowJitter()
+	refLimit := r.reflectorLimit()
 	var owd []string
 	for _, rf := range r.Reflectors {
 		if rf.OWD && rf.IdleP95Ms <= refLimit {
@@ -851,7 +848,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}
-	r.setThresholds(&p, len(p.Reflectors) > 0)
+	r.setThresholds(&p, r.recordedJitter(p.Reflectors), fmt.Sprintf("the %d reflectors in the list", len(p.Reflectors)))
 	return p
 }
 

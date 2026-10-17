@@ -353,6 +353,60 @@ func TestCalibrateSession_NoisyReflectorsWithProbe(t *testing.T) {
 	}
 }
 
+// The probe can select other reflectors than the recordings: here the
+// recorded reflectors (low jitter) are far, and the near ones have a high
+// jitter. The thresholds must come from the jitter of the proposed list.
+func TestCalibrateSession_ProbeSelectsOtherReflectors(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &calProbe{Duration: 15 * time.Second}
+	for _, a := range []string{"r1", "r2", "r3", "r4", "r5"} {
+		pr := goodProbe(a, 2)
+		pr.MinRTTMs = 100
+		probe.Reflectors = append(probe.Reflectors, pr)
+	}
+	for _, a := range []string{"n1", "n2", "n3", "n4"} {
+		pr := goodProbe(a, 18)
+		pr.MinRTTMs = 10
+		probe.Reflectors = append(probe.Reflectors, pr)
+	}
+	out := newCalOutput("wan", time.Now(), res, cfg, probe)
+	if slices.Contains(out.Reflectors, "r1") || !slices.Contains(out.Reflectors, "n1") {
+		t.Fatalf("reflectors %v, want the near ones", out.Reflectors)
+	}
+	if out.Download.ThresholdMs < 36 {
+		t.Errorf("download threshold %.0f ms, want 36 or more (jitter 18 ms of the proposed reflectors)", out.Download.ThresholdMs)
+	}
+}
+
+// The list has pinger_count + 2 reflectors (at least 4). The thresholds
+// come from the jitter of the reflectors in the list, not of all
+// reflectors below the jitter limit.
+func TestPropose_ThresholdsFromCappedList(t *testing.T) {
+	stable := newCalDist([]float64{100000, 100000, 100000, 100000})
+	r := &calResult{DlCapacity: stable, UlCapacity: stable}
+	var jitter []float64
+	for i, j := range []float64{4, 4, 4, 4, 9, 9, 9, 9} {
+		r.Reflectors = append(r.Reflectors, calReflector{Addr: fmt.Sprintf("r%d", i), OWD: true, IdleP95Ms: j, Replies: 40, Sent: 40})
+		jitter = append(jitter, j)
+	}
+	r.IdleJitterMs = newCalDist(jitter)
+	cfg := testConfig()
+	cfg.PingerCount = 2
+	p := r.propose(cfg)
+	if len(p.Reflectors) != 4 {
+		t.Fatalf("reflectors %v, want 4", p.Reflectors)
+	}
+	if p.DlThrMs != 10 {
+		t.Errorf("download threshold %.0f ms, want 10 (jitter 4 ms of the 4 reflectors in the list)", p.DlThrMs)
+	}
+}
+
 // Fewer than calMinReflectors stay below the jitter limit: the proposal
 // keeps the configured reflectors (ping_method icmp). The thresholds must
 // then come from the jitter of all reflectors, also the noisy ones.

@@ -48,6 +48,18 @@ type tsProbe struct {
 	MinRTTMs float64
 }
 
+// probeJitter returns the jitter of the reflectors addrs from the probe
+// (ms).
+func probeJitter(probes []tsProbe, addrs []string) []float64 {
+	var j []float64
+	for _, p := range probes {
+		if slices.Contains(addrs, p.Addr) {
+			j = append(j, p.JitterP95Ms)
+		}
+	}
+	return j
+}
+
 // calProbeMaxRTTFactor and calProbeMaxRTTMarginMs: a reflector is in the
 // proposal if its lowest RTT is at most the larger of factor x and
 // margin + the lowest RTT of all reflectors. A far reflector can have a
