@@ -704,7 +704,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		if b := r.UlCapacityBoth; b.N > 0 {
 			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
 			p.UlBase = min(p.UlBase, round(b.P50, 500))
-			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(p25, p50 with download load))", mbit(b.P5), mbit(b.P50))
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(base, p50 with download load))", mbit(b.P5), mbit(b.P50))
 		}
 		p.UlBase = max(p.UlBase, p.UlMin)
 	}
