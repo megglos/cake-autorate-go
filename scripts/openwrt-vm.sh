@@ -136,8 +136,11 @@ wan_addr() {
 	python3 - "$cidr" <<'PY' || exit 1
 import ipaddress, sys
 iface = ipaddress.ip_interface(sys.argv[1])
+net = iface.network
 vm = iface.ip + 1
-if vm not in list(iface.network.hosts()):
+# In a /31 and a /32, all addresses are host addresses.
+usable = vm in net and (net.prefixlen >= 31 or vm not in (net.network_address, net.broadcast_address))
+if not usable:
     sys.exit("error: tap device %s: the next address %s is not a usable host address of %s" % (sys.argv[1], vm, iface.network))
 print(vm, iface.network.netmask, iface.ip)
 PY
