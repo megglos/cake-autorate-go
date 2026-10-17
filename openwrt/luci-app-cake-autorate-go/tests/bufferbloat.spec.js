@@ -42,8 +42,12 @@ async function routeLoad(page, status) {
 
 // Changes the status file that the page reads (the file on the router
 // does not change), and records the calls of unshape and shape.
+// Each status read gets one more ping reply ("replies"), as a link with
+// pings; mutate(status, asked) can change it. asked is the time of the
+// request (Date.now()).
 async function routeUbus(page, mutate, failShape, statusDelay) {
 	const calls = [];
+	let replies = 1000;
 	await page.route('**/ubus/**', async (route) => {
 		const request = route.request().postDataJSON();
 		const requests = Array.isArray(request) ? request : [ request ];
@@ -56,6 +60,7 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 			const answer = { jsonrpc: '2.0', id: shape.id, result: [ 0, { error: 'tc failed' } ] };
 			return route.fulfill({ json: Array.isArray(request) ? [ answer ] : answer });
 		}
+		const asked = Date.now();
 		const readsStatus = requests.some((q) => q && q.params && q.params[1] == 'file' && q.params[3] && q.params[3].path == '/var/run/cake-autorate/status.json');
 		if (statusDelay && readsStatus)
 			await new Promise((resolve) => setTimeout(resolve, statusDelay));
@@ -67,13 +72,16 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 			return;
 		}
 		const body = await response.json();
-		if (mutate)
-			for (const res of Array.isArray(body) ? body : [ body ]) {
+		for (const res of Array.isArray(body) ? body : [ body ]) {
 				const p = (requests.find((q) => q && q.id === res.id) || {}).params;
 				const data = res.result && res.result[1] && res.result[1].data;
 				if (p && p[1] == 'file' && p[2] == 'read' && p[3] && p[3].path == '/var/run/cake-autorate/status.json' && data) {
 					const status = JSON.parse(data);
-					mutate(status);
+					for (const ls of status.links || [])
+						ls.replies = replies;
+					replies++;
+					if (mutate)
+						mutate(status, asked);
 					res.result[1].data = JSON.stringify(status);
 				}
 			}
@@ -152,14 +160,18 @@ test('the test measures the delay in each phase and gives a grade', async ({ pag
 	expect(load.up).toBeGreaterThan(0);
 });
 
-test('a link in Idle shows no delay', async ({ page }) => {
-	await routeUbus(page, (s) => { s.links[0].state = 'IDLE'; });
+test('a link without new ping replies shows no delay', async ({ page }) => {
+	// RUNNING, but the reflectors do not reply: the delay deltas are old.
+	await routeUbus(page, (s) => {
+		Object.assign(s.links[0], { state: 'RUNNING', replies: 7 });
+		s.links[0].download.delta_ms = 0.1;
+	});
 	await routeLoad(page);
 	const modal = await openDialog(page);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	const table = modal.locator('table.cake-autorate-bufferbloat-result');
 	await expect(table).toHaveCount(1, { timeout: 20000 });
-	await expect(table.locator('tr[data-phase="dl"]')).toContainText('no pings (Idle)');
+	await expect(table.locator('tr[data-phase="dl"]')).toContainText('no ping replies');
 	await expect(table.locator('[data-grade]')).toHaveCount(0);
 });
 
@@ -327,7 +339,7 @@ test('slow status requests do not make the phases longer', async ({ page }) => {
 	expect(Date.now() - start).toBeLessThan(16000);
 });
 
-test('the run without shaping stops when the shaping comes back', async ({ page }) => {
+test('the run without shaping waits until the status shows the shaping off', async ({ page }) => {
 	// The status always shows a shaped link.
 	await routeUbus(page, (s) => { s.links[0].unshaped = false; });
 	await routeLoad(page);
@@ -336,8 +348,28 @@ test('the run without shaping stops when the shaping comes back', async ({ page 
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
 		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
-		await expect(modal).toContainText('The shaping came back before the end of the run without shaping.', { timeout: 30000 });
+		await expect(modal).toContainText('The status does not show the shaping off.', { timeout: 30000 });
 		await expect(modal.locator('#cake-autorate-bufferbloat h4')).toHaveText([ 'With shaping' ]);
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('the run without shaping stops when the shaping comes back', async ({ page }) => {
+	// After 3 status reads with the shaping off, the status shows it on.
+	let off = 0;
+	await routeUbus(page, (s) => {
+		if (s.links[0].unshaped && ++off > 3)
+			s.links[0].unshaped = false;
+	});
+	await routeLoad(page);
+	try {
+		const modal = await openDialog(page);
+		await modal.locator('#cake-autorate-bufferbloat-compare').check();
+		await noLimit(modal);
+		await modal.getByRole('button', { name: 'Start' }).click();
+		await expect(modal).toContainText('The shaping came back before the end of the run without shaping.', { timeout: 30000 });
 	}
 	finally {
 		resetConfig();
@@ -361,10 +393,89 @@ test('after a failed "shape", the next test does not send "shape"', async ({ pag
 		modal = page.locator('.modal');
 		await noLimit(modal);
 		await modal.getByRole('button', { name: 'Start' }).click();
-		await expect(modal.locator('table.cake-autorate-bufferbloat-result')).toHaveCount(1, { timeout: 30000 });
+		// The shaping is still off: the run with shaping does not start.
+		await expect(modal).toContainText('The shaping is off: the run with shaping needs it on.', { timeout: 30000 });
 		expect(calls).toEqual([]);
 	}
 	finally {
 		resetConfig();
 	}
+});
+
+test('a failed "unshape" turns the shaping on again', async ({ page }) => {
+	const calls = await routeUbus(page);
+	await routeLoad(page);
+	// "unshape" answers with an error (as after a failed rate change).
+	await page.route('**/ubus/**', async (route) => {
+		const request = route.request().postDataJSON();
+		const q = (Array.isArray(request) ? request : [ request ]).find((r) => r && r.params && r.params[2] == 'unshape');
+		if (!q)
+			return route.fallback();
+		calls.push([ 'unshape', q.params[3] ]);
+		const answer = { jsonrpc: '2.0', id: q.id, result: [ 0, { error: 'tc failed' } ] };
+		return route.fulfill({ json: Array.isArray(request) ? [ answer ] : answer });
+	});
+	try {
+		const modal = await openDialog(page);
+		await modal.locator('#cake-autorate-bufferbloat-compare').check();
+		await noLimit(modal);
+		await modal.getByRole('button', { name: 'Start' }).click();
+		await expect(modal).toContainText('The test stopped with an error: tc failed', { timeout: 30000 });
+		expect(calls.map((c) => c[0])).toEqual([ 'unshape', 'shape' ]);
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('the Stop button shows before the first status answer', async ({ page }) => {
+	await routeUbus(page, null, false, 5000);
+	await routeLoad(page);
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal.getByRole('button', { name: 'Stop' })).toBeVisible({ timeout: 1500 });
+});
+
+test('the run with shaping stops when the shaping is off', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].unshaped = true; });
+	await routeLoad(page);
+	// The button is disabled for an unshaped link (another client can turn
+	// the shaping off after the dialog opens): open the dialog from the
+	// module.
+	await page.goto(PAGE);
+	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = phases;
+		b.warmup = 0;
+		b.open({ name: 'wan', download: {}, upload: {} });
+	}), PHASES);
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The shaping is off: the run with shaping needs it on.', { timeout: 20000 });
+});
+
+test('a status that was asked in the warm-up is not a sample', async ({ page }) => {
+	// Status answers come 2.5 s late. The delay is 100 ms for a status
+	// asked in the first 3 s of the phase (the warm-up), then 10 ms.
+	let t0 = null;
+	await routeUbus(page, (s, asked) => {
+		Object.assign(s.links[0], { state: 'RUNNING' });
+		const warm = t0 == null || asked - t0 < 3000;
+		s.links[0].download.delta_ms = s.links[0].upload.delta_ms = warm ? 100 : 10;
+	}, false, 2500);
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 9 } ];
+		b.warmup = 3;
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	t0 = Date.now();
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const dl = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"]');
+	await expect(dl).toContainText('ms (p95', { timeout: 30000 });
+	await expect(dl).toContainText('10.0 ms (p95 10.0)');
 });

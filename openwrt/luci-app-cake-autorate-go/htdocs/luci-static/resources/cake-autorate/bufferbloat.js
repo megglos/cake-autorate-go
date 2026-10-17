@@ -28,6 +28,9 @@ const PHASES = [
 // its rate, and the program can leave Idle.
 const WARMUP_S = 3;
 
+// The maximum time until the status shows the shaping off (s).
+const SHAPING_WAIT_S = 5;
+
 // The time between two runs (s): the queues become empty.
 const PAUSE_S = 3;
 
@@ -192,15 +195,19 @@ return baseclass.extend({
 		const total = compare ? 2 : 1;
 		return (async () => {
 			try {
-				runs.push(await this.run(link, _('With shaping'), 1, total));
+				runs.push(await this.run(link, _('With shaping'), 1, total, false));
 				if (compare && !this.cancelled)
 					await this.wait(link, PAUSE_S, _('Pause between the runs'));
 				// A stop in the pause: no change of the shaping.
 				if (compare && !this.cancelled) {
 					// The time limit: the run, and a margin for slow status
 					// requests. Then the shaping comes back without this page.
-					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
+					// Set the flag first: a failed rate change of "unshape"
+					// can leave the shaping off, and the end of the test
+					// must turn it on again.
 					this.unshaped = true;
+					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
+					await this.waitForShaping(link, true);
 					runs.push(await this.run(link, _('Without shaping'), 2, total, true));
 				}
 			}
@@ -223,6 +230,22 @@ return baseclass.extend({
 			}
 			this.renderResult(runs, error, shapeError);
 		})();
+	},
+
+	// Waits until the status shows the link with the shaping off (unshaped
+	// true) or on, at most SHAPING_WAIT_S: the program writes the status
+	// each second.
+	waitForShaping: async function(link, unshaped) {
+		const end = performance.now() + SHAPING_WAIT_S * 1000;
+		while (!this.cancelled && performance.now() < end) {
+			this.renderRunning(_('Turning the shaping off'), Math.max(0, Math.round((end - performance.now()) / 1000)), null);
+			const st = await this.readLink(link, end - performance.now());
+			if (st && !!st.ls.unshaped == unshaped)
+				return;
+			await sleep(500);
+		}
+		if (!this.cancelled)
+			throw new Error(_('The status does not show the shaping off.'));
 	},
 
 	// Stops the load at once; the run ends at its next check.
@@ -264,6 +287,12 @@ return baseclass.extend({
 	// without shaping: then each status must show the unshaped link.
 	run: async function(link, title, number, total, unshaped) {
 		const result = { title: title, phases: [] };
+		// The number of ping replies before the run: a status with more
+		// replies has a new delay. The count goes on across the phases.
+		// The Stop button shows before the first status request.
+		this.renderRunning(_('Run %d of %d (%s)').format(number, total, title), this.runSeconds(), null);
+		const first = await this.readLink(link, 1000);
+		let lastReplies = (first && !isNaN(+first.ls.replies)) ? +first.ls.replies : null;
 		for (const p of this.phases) {
 			if (this.cancelled)
 				break;
@@ -273,7 +302,10 @@ return baseclass.extend({
 			const start = performance.now();
 			const end = start + p.seconds * 1000;
 			const warmEnd = start + (p.load ? this.warmup * 1000 : 0);
-			let lastUpdated = null, warm = null;
+			let warm = null;
+			const what = _('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key));
+			// The Stop button shows before the first status request.
+			this.renderRunning(what, p.seconds, null);
 			for (let s = 1; !this.cancelled; s++) {
 				await sleep(Math.max(0, Math.min(start + s * 1000, end) - performance.now()));
 				// A failed load request (for example, the speed test is
@@ -282,29 +314,33 @@ return baseclass.extend({
 					throw new Error(_('The load failed: %s').format(this.load.lastError));
 				if (performance.now() >= end - 50)
 					break;
-				const st = await this.readLink(link, end - performance.now());
+				// The time of the request, not of the answer: a status that
+				// comes late can be from the warm-up.
+				const asked = performance.now();
+				const st = await this.readLink(link, end - asked);
 				if (performance.now() >= end)
 					break;
-				if (unshaped && st && !st.ls.unshaped)
-					throw new Error(_('The shaping came back before the end of the run without shaping.'));
-				const measuring = performance.now() >= warmEnd;
+				if (st && !!st.ls.unshaped != unshaped)
+					throw new Error(unshaped
+						? _('The shaping came back before the end of the run without shaping.')
+						: _('The shaping is off: the run with shaping needs it on.'));
+				const measuring = asked >= warmEnd;
 				if (measuring && warm == null)
 					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
-				// Only a new status of a link with pings: in Idle and Stall,
-				// the delay delta does not change.
-				if (st && st.updated != lastUpdated && measuring) {
-					if (st.ls.state == 'RUNNING') {
-						ph.dl.push(+st.ls.download.delta_ms || 0);
-						ph.ul.push(+st.ls.upload.delta_ms || 0);
-					}
-					else {
-						ph.idle++;
-					}
+				// Only a status with a new ping reply has a new delay delta
+				// ("replies" increases). Without new replies (Idle, Stall,
+				// reflectors that do not reply), the phase gets no sample.
+				const replies = st ? +st.ls.replies : NaN;
+				if (st && measuring && lastReplies != null && replies > lastReplies) {
+					ph.dl.push(+st.ls.download.delta_ms || 0);
+					ph.ul.push(+st.ls.upload.delta_ms || 0);
 				}
-				if (st)
-					lastUpdated = st.updated;
-				this.renderRunning(_('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key)),
-					Math.max(0, Math.round((end - performance.now()) / 1000)), st && st.ls);
+				else if (st && measuring && lastReplies != null) {
+					ph.idle++;
+				}
+				if (st && !isNaN(replies))
+					lastReplies = replies;
+				this.renderRunning(what, Math.max(0, Math.round((end - performance.now()) / 1000)), st && st.ls);
 			}
 			if (warm) {
 				ph.seconds = (performance.now() - warm.t) / 1000;
@@ -353,7 +389,7 @@ return baseclass.extend({
 			text(ph.key == 'idle' ? '-' : rate('ul')),
 			text(delay(ph.dl)),
 			text(delay(ph.ul)),
-			g ? E('span', { 'class': 'label ' + ({ 'A+': 'success', 'A': 'success', 'B': 'notice' }[g] || 'warning'), 'data-grade': g }, g) : text(ph.idle ? _('no pings (Idle)') : '')
+			g ? E('span', { 'class': 'label ' + ({ 'A+': 'success', 'A': 'success', 'B': 'notice' }[g] || 'warning'), 'data-grade': g }, g) : text(!ph.dl.length ? _('no ping replies') : '')
 		];
 	},
 
