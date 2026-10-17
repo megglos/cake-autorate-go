@@ -7,7 +7,17 @@ on:
   workflow_call:
     inputs:
       arch:
-        description: SDK image tag, for example x86_64-openwrt-25.12
+        description: >-
+          Name of the architecture in the file names and the artifact,
+          for example x86_64-openwrt-25.12
+        required: true
+        type: string
+      sdk:
+        description: >-
+          SDK image tag, for example x86_64-25.12.5. A release image has
+          the SDK in it. The image of a branch (x86_64-openwrt-25.12)
+          downloads the SDK from the OpenWrt mirror at each start (in CI
+          up to 15 minutes).
         required: true
         type: string
       goarch:
@@ -65,13 +75,11 @@ jobs:
           go build -trimpath -ldflags="-s -w -X main.version=$desc" \
             -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go .
 
+      # The local build script, not openwrt/gh-action-sdk: the action runs
+      # setup.sh of the image, which downloads the SDK from the OpenWrt
+      # mirror also with a release image (up to 15 minutes).
       - name: Build
-        uses: openwrt/gh-action-sdk@v11
-        env:
-          ARCH: ${{ inputs.arch }}
-          PACKAGES: cake-autorate-go luci-app-cake-autorate-go
-          # The prebuilt program and the LuCI app need no other feeds.
-          NO_DEFAULT_FEEDS: 1
+        run: scripts/openwrt-build.sh "${{ inputs.sdk }}"
 
       # The apk file names do not have the architecture. Add it, because
       # the names of the release files must be unique.
@@ -80,7 +88,7 @@ jobs:
           ARCH: ${{ inputs.arch }}
         run: |
           mkdir dist
-          for f in bin/packages/*/action/*.apk; do
+          for f in bin/openwrt/${{ inputs.sdk }}/*.apk; do
             b=$(basename "$f" .apk)
             cp "$f" "dist/${b}_${ARCH}.apk"
           done

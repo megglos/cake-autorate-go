@@ -268,9 +268,9 @@ To build the packages on your computer with Docker, run `scripts/openwrt-build.s
 To test the package without a router, use an OpenWrt x86-64 VM (QEMU with KVM). The CI does the same test:
 
 ```bash
-scripts/openwrt-build.sh x86_64-openwrt-25.12
+scripts/openwrt-build.sh x86_64-25.12.5
 scripts/openwrt-vm.sh start
-scripts/openwrt-vm.sh install bin/openwrt/x86_64-openwrt-25.12/*.apk
+scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
 scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
 (cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI pages in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080

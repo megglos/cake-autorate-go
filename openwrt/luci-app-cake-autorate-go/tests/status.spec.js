@@ -253,9 +253,15 @@ test('page warns about an interface without CAKE', async ({ page }) => {
 
 	vm('tc qdisc replace dev eth1 root fq_codel');
 	try {
-		// The page checks the qdiscs each 10 seconds.
+		// The page checks the qdiscs each 10 seconds. The qdisc must stay
+		// fq_codel until then: show it if something changes it.
 		const warning = link.locator('[data-cake-warning="ul"]');
-		await expect(warning).toContainText('Upload: the interface eth1 has no CAKE (root qdisc: fq_codel).', { timeout: 20000 });
+		try {
+			await expect(warning).toContainText('Upload: the interface eth1 has no CAKE (root qdisc: fq_codel).', { timeout: 20000 });
+		}
+		catch (e) {
+			throw new Error(e.message + '\nqdisc of eth1 now: ' + vm('tc qdisc show dev eth1 root; logread | tail -20'));
+		}
 		await expect(warning).toContainText('package luci-app-sqm');
 		await expect(link.locator('[data-cake-warning="dl"]')).toHaveCount(0);
 

@@ -6,5 +6,5 @@
 recordings/
 /bin/
 /openwrt/cake-autorate-go/prebuilt/
-/openwrt/luci-app-cake-autorate-go/tests/node_modules/
+/openwrt/luci-app-cake-autorate-go/tests/node_modules
 /openwrt/luci-app-cake-autorate-go/tests/test-results/
