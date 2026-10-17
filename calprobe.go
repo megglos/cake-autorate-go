@@ -44,7 +44,18 @@ type tsProbe struct {
 	// JitterP95Ms is the p95 of the one-way delay above its minimum, in
 	// the direction with the larger value.
 	JitterP95Ms float64
+	// MinRTTMs is the lowest RTT of the replies (ms), 0 without a reply.
+	MinRTTMs float64
 }
+
+// calProbeMaxRTTFactor and calProbeMaxRTTMarginMs: a reflector is in the
+// proposal if its lowest RTT is at most the larger of factor x and
+// margin + the lowest RTT of all reflectors. A far reflector can have a
+// low jitter, but its replies come late, and its path is longer.
+const (
+	calProbeMaxRTTFactor   = 2.0
+	calProbeMaxRTTMarginMs = 30.0
+)
 
 // calProbe is the result of the probe of a session.
 type calProbe struct {
@@ -135,6 +146,7 @@ func summarizeProbe(candidates []string, sent map[string]int, results []PingResu
 	type samples struct {
 		replies int
 		ul, dl  []float64
+		minRTT  time.Duration
 	}
 	data := make(map[string]*samples, len(candidates))
 	for _, r := range candidates {
@@ -146,6 +158,9 @@ func summarizeProbe(candidates []string, sent map[string]int, results []PingResu
 			continue
 		}
 		s.replies++
+		if s.minRTT == 0 || res.RTT < s.minRTT {
+			s.minRTT = res.RTT
+		}
 		if res.OWD {
 			s.ul = append(s.ul, float64(res.UlOWD)/float64(time.Millisecond))
 			s.dl = append(s.dl, float64(res.DlOWD)/float64(time.Millisecond))
@@ -155,7 +170,7 @@ func summarizeProbe(candidates []string, sent map[string]int, results []PingResu
 	for _, r := range candidates {
 		s := data[r]
 		out = append(out, tsProbe{Addr: r, Sent: max(sent[r], s.replies), Replies: s.replies, OWD: len(s.ul),
-			JitterP95Ms: pairedJitterP95(s.ul, s.dl)})
+			JitterP95Ms: pairedJitterP95(s.ul, s.dl), MinRTTMs: float64(s.minRTT) / float64(time.Millisecond)})
 	}
 	return out
 }
@@ -213,6 +228,18 @@ func proposeFromProbe(probes []tsProbe, pingerCount int, dur time.Duration) (met
 			good = append(good, p)
 		}
 	}
+	// First leave out the far reflectors: their low jitter would also
+	// make the jitter limit lower.
+	rttLimit := 0.0
+	for _, p := range good {
+		if p.MinRTTMs > 0 && (rttLimit == 0 || p.MinRTTMs < rttLimit) {
+			rttLimit = p.MinRTTMs
+		}
+	}
+	if rttLimit > 0 {
+		rttLimit = math.Max(calProbeMaxRTTFactor*rttLimit, rttLimit+calProbeMaxRTTMarginMs)
+		good = slices.DeleteFunc(good, func(p tsProbe) bool { return p.MinRTTMs > rttLimit })
+	}
 	if len(good) > 0 {
 		j := make([]float64, len(good))
 		for i, p := range good {
@@ -233,6 +260,9 @@ func proposeFromProbe(probes []tsProbe, pingerCount int, dur time.Duration) (met
 	}
 	why = fmt.Sprintf("probe of %d s: %d of %d reflectors reply to ICMP timestamps with a low jitter; the %d with the lowest jitter (the program selects %d of them at random)",
 		secs, len(good), len(probes), n, min(pingerCount, n))
+	if rttLimit > 0 {
+		why += fmt.Sprintf("; reflectors with an RTT above %.0f ms are far and not in the list", rttLimit)
+	}
 	if n < pingerCount {
 		why += fmt.Sprintf("; fewer than pinger_count (%d): add reflectors with a low jitter, or set a lower pinger_count", pingerCount)
 	}

@@ -70,6 +70,27 @@ func TestProposeFromProbe_HalfNoisy(t *testing.T) {
 	}
 }
 
+// Far reflectors can have a low jitter, but their replies come late. The
+// proposal has only the reflectors with an RTT near the lowest RTT.
+func TestProposeFromProbe_FarReflectors(t *testing.T) {
+	near := func(addr string, jit, rtt float64) tsProbe {
+		p := goodProbe(addr, jit)
+		p.MinRTTMs = rtt
+		return p
+	}
+	probes := []tsProbe{
+		near("fra", 2, 9), near("nbg", 2, 13), near("hel", 2, 36), near("lon", 3, 33),
+		near("waw", 2, 42), near("nj", 1, 91), near("sin", 1, 244), near("syd", 1, 328),
+	}
+	_, refl, why := proposeFromProbe(probes, 2, 15*time.Second)
+	if !slices.Equal(refl, []string{"fra", "nbg", "hel", "lon"}) {
+		t.Errorf("reflectors %v, want fra nbg hel lon (RTT at most 39 ms)", refl)
+	}
+	if !strings.Contains(why, "RTT above 39 ms") {
+		t.Errorf("why %q, want the RTT limit", why)
+	}
+}
+
 func TestProbeCandidates(t *testing.T) {
 	link := &LinkConfig{Reflectors: []string{"1.1.1.1", defaultTimestampReflectors[0]}}
 	got := probeCandidates(link)
