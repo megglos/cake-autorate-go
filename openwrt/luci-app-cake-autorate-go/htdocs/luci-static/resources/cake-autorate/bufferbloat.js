@@ -32,6 +32,10 @@ const WARMUP_S = 3;
 // the rate of the browser: else the browser traffic uses another link.
 const LINK_SHARE = 0.5;
 
+// The maximum age of the replies in a status (s): the program publishes
+// the status each second and writes it to the file each second.
+const STATUS_LAG_S = 2;
+
 // The maximum time until the status shows the shaping off (s).
 const SHAPING_WAIT_S = 5;
 
@@ -101,6 +105,7 @@ return baseclass.extend({
 		// The phases and the warm-up time (tests make them shorter).
 		this.phases = PHASES;
 		this.warmup = WARMUP_S;
+		this.statusLag = STATUS_LAG_S;
 		this.onUnload = (ev) => {
 			ev.preventDefault();
 			ev.returnValue = '';
@@ -312,10 +317,13 @@ return baseclass.extend({
 			// The rates count from the end of the warm-up, independent of the
 			// status requests.
 			let warm = null;
-			// The first status after the warm-up sets the reply count of the
-			// phase: the program writes the status up to 2 s late, thus its
-			// replies can be from the warm-up. Samples come only after it.
-			let baseline = !p.load || this.warmup == 0;
+			// The reply count of the phase comes from the first status that
+			// was asked statusLag after the warm-up (or the start of a phase
+			// without load): the program publishes the status each second
+			// and writes it each second, thus a status can show replies of
+			// up to 2 s before. Samples come only after this status.
+			const baseFrom = warmEnd + this.statusLag * 1000;
+			let baseline = this.statusLag == 0 && (!p.load || this.warmup == 0);
 			const takeWarm = () => {
 				if (warm == null)
 					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
@@ -359,7 +367,8 @@ return baseclass.extend({
 					// Only in RUNNING: before IDLE or STALL, the counter can
 					// increase, and the delay delta stays from before.
 					if (st && measuring && !baseline) {
-						baseline = true;
+						// Before baseFrom, a status only updates the count.
+						baseline = asked >= baseFrom;
 					}
 					else if (st && measuring && st.ls.state == 'RUNNING' && lastReplies != null && replies > lastReplies) {
 						ph.dl.push(+st.ls.download.delta_ms || 0);

@@ -98,6 +98,7 @@ async function openDialog(page) {
 	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = phases;
 		b.warmup = 0;
+		b.statusLag = 0;
 	}), PHASES);
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	return page.locator('.modal');
@@ -451,6 +452,7 @@ test('the run with shaping stops when the shaping is off', async ({ page }) => {
 	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = phases;
 		b.warmup = 0;
+		b.statusLag = 0;
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
@@ -473,6 +475,7 @@ test('a status that was asked in the warm-up is not a sample', async ({ page }) 
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = [ { key: 'dl', load: 'dl', seconds: 9 } ];
 		b.warmup = 3;
+		b.statusLag = 0;
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
@@ -493,6 +496,7 @@ test('the test stops when a calibration runs', async ({ page }) => {
 	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = phases;
 		b.warmup = 0;
+		b.statusLag = 0;
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
@@ -521,6 +525,7 @@ test('the Stop button keeps the keyboard focus during the refreshes', async ({ p
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = [ { key: 'idle', load: '', seconds: 8 } ];
 		b.warmup = 0;
+		b.statusLag = 0;
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
@@ -541,6 +546,7 @@ test('the rates count from the end of the warm-up, also with slow status request
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = [ { key: 'dl', load: 'dl', seconds: 6 } ];
 		b.warmup = 1;
+		b.statusLag = 0;
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
@@ -587,6 +593,7 @@ test('a load error during the last status request of a phase stops the test', as
 		// 1.8 s: the status request at 1 s waits until the end of the phase.
 		b.phases = [ { key: 'dl', load: 'dl', seconds: 1.8 } ];
 		b.warmup = 0;
+		b.statusLag = 0;
 		const read = b.readLink;
 		b.readLink = function(...args) {
 			window.readStart = performance.now();
@@ -633,6 +640,7 @@ test('a stopped phase is not in the result', async ({ page }) => {
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = [ { key: 'idle', load: '', seconds: 2 }, { key: 'dl', load: 'dl', seconds: 20 } ];
 		b.warmup = 0;
+		b.statusLag = 0;
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
@@ -661,6 +669,7 @@ test('the first status of a run stops the test before the load', async ({ page }
 	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = phases;
 		b.warmup = 0;
+		b.statusLag = 0;
 		b.open({ name: 'wan', download: {}, upload: {} });
 	}), PHASES);
 	const modal = page.locator('.modal');
@@ -686,6 +695,7 @@ test('a status that comes after the end of the phase is also checked', async ({ 
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
 		b.phases = [ { key: 'dl', load: 'dl', seconds: 1.8 } ];
 		b.warmup = 0;
+		b.statusLag = 0;
 		const read = b.readLink;
 		// A busy page: each answer comes 1 s after the request.
 		b.readLink = function(...args) {
@@ -702,28 +712,29 @@ test('a status that comes after the end of the phase is also checked', async ({ 
 });
 
 test('replies from the warm-up are not samples, also in a late status', async ({ page }) => {
-	// The replies stop at the end of the warm-up (3 s); the status after
-	// the warm-up still has a new reply (with a delay of the warm-up).
+	// The program publishes and writes the status each second: a status
+	// shows the replies of up to 2 s before (the mock: 1.9 s). The link
+	// has a reply each 300 ms until the end of the warm-up (3 s after the
+	// start of the phase), then no reply.
 	let t0 = Infinity;
-	let replies = 0;
 	await routeUbus(page, (s, asked) => {
 		s.links[0].state = 'RUNNING';
 		Object.assign(s.links[0].download, { delta_ms: 100, achieved_kbps: 1e7 });
-		if (asked - t0 < 3400)
-			replies++;
-		s.links[0].replies = replies;
+		const shown = Math.min(asked - 1900, t0 + 3000) - t0;
+		s.links[0].replies = Math.max(0, Math.floor(shown / 300));
 	});
 	await routeLoad(page);
 	await page.goto(PAGE);
 	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
-		b.phases = [ { key: 'dl', load: 'dl', seconds: 6 } ];
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 9 } ];
 		b.warmup = 3;
+		b.statusLag = 2;
 	}));
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
 	const modal = page.locator('.modal');
 	await noLimit(modal);
-	t0 = Date.now();
 	await modal.getByRole('button', { name: 'Start' }).click();
+	t0 = Date.now();
 	const dl = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"]');
 	await expect(dl).toContainText('no ping replies', { timeout: 30000 });
 	await expect(dl.locator('[data-grade]')).toHaveCount(0);
