@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/binary"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -299,5 +301,38 @@ func TestBuildCakeRateMsg_NestedOptions(t *testing.T) {
 	rateType := binary.NativeEndian.Uint16(buf[offRateType:])
 	if rateType != tcaCakeBaseRate64 {
 		t.Errorf("TCA_CAKE_BASE_RATE64 nla_type = %d, want %d", rateType, tcaCakeBaseRate64)
+	}
+}
+
+// The tc fallback changes only a CAKE root qdisc: the tc of OpenWrt
+// replaces another root qdisc with a new CAKE qdisc on "tc qdisc change".
+func TestShaper_TcChangesOnlyCake(t *testing.T) {
+	old := execCommand
+	t.Cleanup(func() { execCommand = old })
+	root := "qdisc fq_codel 800b: root refcnt 2 limit 10240p flows 1024\n"
+	var calls []string
+	execCommand = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		if slices.Contains(args, "show") {
+			return []byte(root), nil
+		}
+		return nil, nil
+	}
+	s := &Shaper{logger: testLogger(t), fd: -1, ifIndices: map[string]int32{}, lastRates: map[string]int{}}
+	err := s.setRateTc("eth1", 12000)
+	if err == nil || !strings.Contains(err.Error(), "not CAKE") {
+		t.Errorf("fq_codel: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Errorf("calls with fq_codel: %v (want only the show)", calls)
+	}
+
+	root = "qdisc cake 8004: root refcnt 2 bandwidth 20Mbit diffserv3\n"
+	calls = nil
+	if err := s.setRateTc("eth1", 12000); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[1] != "tc qdisc change dev eth1 root cake bandwidth 12000kbit" {
+		t.Errorf("calls with cake: %v", calls)
 	}
 }
