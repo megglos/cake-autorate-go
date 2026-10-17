@@ -67,6 +67,10 @@ type ReflectorDelayStatus struct {
 type LinkStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
+	// Replies is the number of ping replies of the link since the start.
+	// The delay deltas change only with a new reply: a reader compares two
+	// values to find a new delay.
+	Replies int `json:"replies"`
 	// Calibrating is true during a calibration session of the link.
 	Calibrating bool `json:"calibrating"`
 	// Unshaped is true while a user turned the shaping of the link off
@@ -92,7 +96,7 @@ type StatusFile struct {
 // Snapshot returns the status of a link. Call it from the goroutine that
 // uses the Core. It does not change the Core.
 func (c *Core) Snapshot() LinkStatus {
-	st := LinkStatus{Name: c.name, State: c.state.String(), Calibrating: c.calibrating, Unshaped: c.unshaped}
+	st := LinkStatus{Name: c.name, State: c.state.String(), Replies: c.replies, Calibrating: c.calibrating, Unshaped: c.unshaped}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
 		out := DirStatus{

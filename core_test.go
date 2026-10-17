@@ -1290,3 +1290,23 @@ func TestUnshapedDoesNotLearnCrossDelay(t *testing.T) {
 		t.Errorf("after shape: learned %.0f us at once", c.ul.crossDelayUs)
 	}
 }
+
+// The status counts the ping replies that Core uses: not the timeouts,
+// and not the replies outside RUNNING.
+func TestSnapshotCountsReplies(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.state = StateRunning
+	ts := time.Now()
+	for i := range 3 {
+		c.HandlePing(owdPing("1.1.1.1", ts.Add(time.Duration(i)*time.Second), 10, 10))
+	}
+	c.HandlePing(PingResult{Reflector: "1.1.1.1", Timestamp: ts.Add(4 * time.Second), Timeout: true})
+	if got := c.Snapshot().Replies; got != 3 {
+		t.Errorf("replies %d, want 3", got)
+	}
+	c.state = StateIdle
+	c.HandlePing(owdPing("1.1.1.1", ts.Add(5*time.Second), 10, 10))
+	if got := c.Snapshot().Replies; got != 3 {
+		t.Errorf("replies in IDLE: %d, want 3", got)
+	}
+}
