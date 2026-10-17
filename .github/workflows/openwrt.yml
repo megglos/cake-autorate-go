@@ -55,12 +55,14 @@ jobs:
   # Build the apk packages with the OpenWrt SDK, one job for each
   # architecture. The VM tests need only x86_64; the aarch64 build takes
   # much longer and runs at the same time.
-  # Do not build or publish packages with a converter that fails its tests.
+  # The packages build at the same time as the converter tests; the
+  # release job publishes them only after these tests passed.
+  # The SDK version is the OpenWrt version of the VM (scripts/openwrt-vm.sh).
   package-x86:
-    needs: converter
     uses: ./.github/workflows/package.yml
     with:
       arch: x86_64-openwrt-25.12
+      sdk: x86_64-25.12.5
       goarch: amd64
 
   # Not for pull requests: the CI workflow already builds the program for
@@ -68,10 +70,10 @@ jobs:
   # runs on main and the releases build it.
   package-arm:
     if: github.event_name != 'pull_request'
-    needs: converter
     uses: ./.github/workflows/package.yml
     with:
       arch: aarch64_cortex-a53-openwrt-25.12
+      sdk: aarch64_cortex-a53-25.12.5
       goarch: arm64
 
   # Install the x86_64 packages in an OpenWrt VM and test the service:
@@ -87,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [service, 1/3, 2/3, 3/3]
+        part: [service, 1/6, 2/6, 3/6, 4/6, 5/6, 6/6]
     name: vm (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4
@@ -176,7 +178,7 @@ jobs:
   # Attach the packages to the release, only after all tests passed.
   release:
     if: github.event_name == 'release'
-    needs: [package-x86, package-arm, vm]
+    needs: [converter, package-x86, package-arm, vm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

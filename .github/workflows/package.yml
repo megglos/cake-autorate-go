@@ -7,7 +7,17 @@ on:
   workflow_call:
     inputs:
       arch:
-        description: SDK image tag, for example x86_64-openwrt-25.12
+        description: >-
+          Name of the architecture in the file names and the artifact,
+          for example x86_64-openwrt-25.12
+        required: true
+        type: string
+      sdk:
+        description: >-
+          SDK image tag, for example x86_64-25.12.5. A release image has
+          the SDK in it. The image of a branch (x86_64-openwrt-25.12)
+          downloads the SDK from the OpenWrt mirror at each start: that
+          took up to 9 minutes.
         required: true
         type: string
       goarch:
@@ -68,7 +78,7 @@ jobs:
       - name: Build
         uses: openwrt/gh-action-sdk@v11
         env:
-          ARCH: ${{ inputs.arch }}
+          ARCH: ${{ inputs.sdk }}
           PACKAGES: cake-autorate-go luci-app-cake-autorate-go
           # The prebuilt program and the LuCI app need no other feeds.
           NO_DEFAULT_FEEDS: 1

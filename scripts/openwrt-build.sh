@@ -5,8 +5,10 @@
 # (Docker image openwrt/sdk). It does the same steps as the CI workflow.
 #
 # Usage: scripts/openwrt-build.sh [ARCH] [PACKAGES]
-#   ARCH      SDK image tag, default aarch64_cortex-a53-openwrt-25.12
-#             (GL-MT6000). For x86 use x86_64-openwrt-25.12.
+#   ARCH      SDK image tag, default aarch64_cortex-a53-25.12.5
+#             (GL-MT6000). For x86 use x86_64-25.12.5. A release image
+#             has the SDK in it; the image of a branch (for example
+#             x86_64-openwrt-25.12) downloads it at the first start.
 #   PACKAGES  packages to build, default "cake-autorate-go
 #             luci-app-cake-autorate-go"
 #
@@ -17,7 +19,7 @@
 
 set -euo pipefail
 
-ARCH="${1:-aarch64_cortex-a53-openwrt-25.12}"
+ARCH="${1:-aarch64_cortex-a53-25.12.5}"
 PACKAGES="${2:-cake-autorate-go luci-app-cake-autorate-go}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="cake-autorate-sdk-${ARCH//[^A-Za-z0-9_.-]/_}"
