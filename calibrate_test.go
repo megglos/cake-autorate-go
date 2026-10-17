@@ -276,6 +276,26 @@ func TestCalibrateSession_StableLink(t *testing.T) {
 	}
 }
 
+// A stable link with a short upload delay from download activity (below
+// the limit of learn_cross_delay): the upload threshold must be above it.
+// Else the download pushes the upload rate down to the minimum.
+func TestCalibrateSession_StableLinkCrossDelay(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, crossDelayMs: 8,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if p.LearnCrossDelay {
+		t.Fatal("learn_cross_delay = true, want false (cross delay 8 ms)")
+	}
+	if want := math.Ceil(res.CrossDelayMs.P95 + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, res.CrossDelayMs.P95)
+	}
+}
+
 // On a slow stable link, the rounding step must not round the base up to
 // the capacity.
 func TestCalibrateSession_StableSlowLinkBaseBelowCapacity(t *testing.T) {

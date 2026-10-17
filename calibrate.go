@@ -620,6 +620,12 @@ const (
 	// calCrossDelayMinMs: above this median upload delay from download
 	// activity, learn_cross_delay is useful.
 	calCrossDelayMinMs = 10.0
+	// calCrossMarginMs: without learn_cross_delay, the upload threshold is
+	// at least the p95 of the cross delay plus this margin. On a fiber
+	// line (cross delay p50 1 ms, p95 14 ms), an upload threshold of 10 ms
+	// pushed the upload rate to the minimum during the download: 246
+	// instead of 334 Mbit/s in the upload test.
+	calCrossMarginMs = 10.0
 	// calGrantMarginMs: the upload threshold is at least the median of the
 	// grant delay plus this margin. Below it, the upload rate collapses. On
 	// the 5G link, the median was 13 to 15 ms; a threshold of 15 ms gave
@@ -737,6 +743,15 @@ func (r *calResult) propose(cfg *Config) calProposal {
 			p.Why["upload threshold"] = grant + fmt.Sprintf("; threshold = max(%.0f, floor)", ulFloor)
 		}
 		p.UlThrMs = math.Max(p.UlThrMs, floor)
+	}
+	// Without learn_cross_delay, the upload delay from download activity
+	// stays in the upload delta. Below its p95, the download pushes the
+	// upload rate down to the minimum.
+	if c := r.CrossDelayMs; c.N > 0 && !p.LearnCrossDelay {
+		if floor := math.Ceil(c.P95 + calCrossMarginMs); floor > p.UlThrMs {
+			p.UlThrMs = floor
+			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p95 %.1f ms, floor p95 + %.0f ms = %.0f ms", c.P95, calCrossMarginMs, floor)
+		}
 	}
 
 	// Ping method and reflectors.
