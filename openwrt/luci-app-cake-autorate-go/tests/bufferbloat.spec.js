@@ -66,15 +66,12 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 		const delay = typeof statusDelay == 'function' ? statusDelay(asked) : statusDelay;
 		if (delay && readsStatus)
 			await new Promise((resolve) => setTimeout(resolve, delay));
-		let response;
+		// After a delay, the page can be closed: then the request, its
+		// answer and the route are gone. Ignore the errors that this causes.
 		try {
-			response = await route.fetch();
-		}
-		catch (e) {
-			return;
-		}
-		const body = await response.json();
-		for (const res of Array.isArray(body) ? body : [ body ]) {
+			const response = await route.fetch();
+			const body = await response.json();
+			for (const res of Array.isArray(body) ? body : [ body ]) {
 				const p = (requests.find((q) => q && q.id === res.id) || {}).params;
 				const data = res.result && res.result[1] && res.result[1].data;
 				if (p && p[1] == 'file' && p[2] == 'read' && p[3] && p[3].path == '/var/run/cake-autorate/status.json' && data) {
@@ -87,7 +84,12 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 					res.result[1].data = JSON.stringify(status);
 				}
 			}
-		await route.fulfill({ response, json: body });
+			await route.fulfill({ response, json: body });
+		}
+		catch (e) {
+			if (!page.isClosed())
+				throw e;
+		}
 	});
 	return calls;
 }
