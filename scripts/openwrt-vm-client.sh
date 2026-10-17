@@ -45,6 +45,9 @@ cmd_up() {
 	ip link set "$VETH" up
 	ip link set "$BR" up
 	ip -n "$NS" link set lo up
+	# The VM has no IPv6 on its WAN. Without IPv6, all traffic of the
+	# client goes through the WAN of the VM.
+	ip netns exec "$NS" sysctl -q -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1
 	ip -n "$NS" addr add "$ADDR" dev "$VETH-ns"
 	ip -n "$NS" link set "$VETH-ns" up
 	ip -n "$NS" route add default via "$GW"
