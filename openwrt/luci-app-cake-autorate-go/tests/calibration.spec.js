@@ -193,14 +193,16 @@ test('the load stops the session at the data limit', async ({ page }) => {
 });
 
 test('the browser makes the load that the session asks for', async ({ page }) => {
-	// Each status is shown approximately one second.
+	// Each status is shown approximately one second. The test sees a phase
+	// up to one status late, and then counts the requests for 2 s. Thus,
+	// each phase has 6 statuses: the count must end before the next phase.
 	const steps = [];
 	const add = (n, st) => { for (let i = 0; i < n; i++) steps.push(st); };
-	add(3, running(1, 'dl', 'unshaped', 'idle', ''));
-	add(4, running(1, 'dl', 'unshaped', 'load', 'dl'));
-	add(3, running(2, 'dl', 'autorate', 'tail', ''));
-	add(4, running(3, 'ul', 'unshaped', 'load', 'ul'));
-	add(4, running(5, 'both', 'unshaped', 'load', 'both'));
+	add(6, running(1, 'dl', 'unshaped', 'idle', ''));
+	add(6, running(1, 'dl', 'unshaped', 'load', 'dl'));
+	add(6, running(2, 'dl', 'autorate', 'tail', ''));
+	add(6, running(3, 'ul', 'unshaped', 'load', 'ul'));
+	add(6, running(5, 'both', 'unshaped', 'load', 'both'));
 	add(30, running(5, 'both', 'unshaped', 'tail', ''));
 	const session = fakeSession(steps);
 	await routeSession(page, session);
