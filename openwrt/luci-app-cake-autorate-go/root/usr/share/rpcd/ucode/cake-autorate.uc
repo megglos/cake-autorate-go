@@ -103,6 +103,18 @@ function pause_resume(verb, args) {
 	return command(verb + ' ' + link + (dir ? ' ' + dir : ''));
 }
 
+// Checks the arguments and sends "unshape LINK [SECONDS]" or "shape LINK".
+// With seconds, the program turns the shaping on again after this time
+// (the program checks the range).
+function shaping(verb, args) {
+	const link = args?.link, seconds = args?.seconds;
+	if (type(link) != 'string' || !match(link, LINK_NAME_RE))
+		return { error: 'Invalid link name' };
+	if (verb == 'unshape' && seconds != null && (type(seconds) != 'int' || seconds < 1 || seconds > 3600))
+		return { error: 'Invalid time' };
+	return command(verb + ' ' + link + ((verb == 'unshape' && seconds != null) ? ' ' + seconds : ''));
+}
+
 // Returns the history of the program as a JSON text in "data". The page
 // parses it: a JSON text is smaller in a ubus message than a table.
 function history() {
@@ -157,6 +169,18 @@ return {
 		history: {
 			call: function() {
 				return history();
+			}
+		},
+		unshape: {
+			args: { link: 'link', seconds: 0 },
+			call: function(req) {
+				return shaping('unshape', req.args);
+			}
+		},
+		shape: {
+			args: { link: 'link' },
+			call: function(req) {
+				return shaping('shape', req.args);
 			}
 		},
 		calibrate_start: {

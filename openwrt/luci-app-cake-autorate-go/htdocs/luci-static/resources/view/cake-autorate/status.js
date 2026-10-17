@@ -81,6 +81,11 @@ const callQdisc = rpc.declare({
 	params: [ 'interface' ]
 });
 
+const callShaping = {
+	unshape: rpc.declare({ object: 'cake-autorate', method: 'unshape', params: [ 'link' ] }),
+	shape: rpc.declare({ object: 'cake-autorate', method: 'shape', params: [ 'link' ] })
+};
+
 const callResume = rpc.declare({
 	object: 'cake-autorate',
 	method: 'resume',
@@ -91,8 +96,20 @@ const callResume = rpc.declare({
 // string as HTML.
 const text = common.text;
 
+// The shaper rate of the program without a useful limit (unshaped blocks
+// of a calibration, command "unshape"): 10 Gbit/s, in Mbit/s.
+const NO_LIMIT_MBITS = 10000;
+
 function rate(kbps) {
 	return text('%.1f Mbit/s'.format((+kbps || 0) / 1000));
+}
+
+// Returns a shaper rate in Mbit/s for the graphs, or null for a shaper
+// without a useful limit (exactly the rate of the program for it; a
+// configured rate can be higher). Else the y axis goes to 10 Gbit/s.
+function shaperMbits(kbps) {
+	const v = (+kbps || 0) / 1000;
+	return v == NO_LIMIT_MBITS ? null : v;
 }
 
 function ms(v) {
@@ -149,7 +166,7 @@ function sample(ls, t, at) {
 	for (const [ key, dir ] of DIRECTIONS) {
 		const st = ls[key] || {};
 		s[dir] = {
-			shaper: (+st.shaper_kbps || 0) / 1000,
+			shaper: shaperMbits(st.shaper_kbps),
 			achieved: (+st.achieved_kbps || 0) / 1000,
 			delta: +st.delta_ms || 0,
 			threshold: +st.threshold_ms || 0
@@ -197,7 +214,7 @@ function historySamples(h, now, at) {
 			const s = { t: now - (at - t_ms), at: t_ms };
 			for (const [ , dir ] of DIRECTIONS)
 				s[dir] = {
-					shaper: v(row, dir + '_shaper_kbps') / 1000,
+					shaper: shaperMbits(v(row, dir + '_shaper_kbps')),
 					achieved: v(row, dir + '_achieved_kbps') / 1000,
 					delta: v(row, dir + '_delta_ms'),
 					threshold: v(row, dir + '_threshold_ms')
@@ -311,9 +328,11 @@ return view.extend({
 		const span = this.period * 1000;
 		const visible = samples.filter((s) => now - s.t <= span);
 		let max = floor;
+		// A value of null (a shaper without a limit) has no point.
 		for (const s of visible)
 			for (const se of series)
-				max = Math.max(max, se.value(s));
+				if (se.value(s) != null)
+					max = Math.max(max, se.value(s));
 		max = niceMax(max);
 
 		const graph = svg('svg', {
@@ -335,6 +354,10 @@ return view.extend({
 		for (const se of series) {
 			let d = '', prev = null;
 			for (const s of visible) {
+				if (se.value(s) == null) {
+					prev = null;
+					continue;
+				}
 				const x = GRAPH_WIDTH - (now - s.t) / span * GRAPH_WIDTH;
 				const y = GRAPH_HEIGHT - se.value(s) / max * GRAPH_HEIGHT;
 				d += ((prev == null || s.t - prev > GAP_SECONDS * 1000) ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
@@ -416,7 +439,9 @@ return view.extend({
 			for (const se of series)
 				lines.push(E('div', {}, [
 					E('span', { 'style': 'color:%s'.format(se.color) }, '■'), ' ',
-					text('%s: %.1f %s'.format(se.title, se.value(best), unit))
+					text(se.value(best) == null
+						? _('%s: no limit').format(se.title)
+						: '%s: %.1f %s'.format(se.title, se.value(best), unit))
 				]));
 			tip.replaceChildren(...lines);
 			tip.style.display = '';
@@ -599,9 +624,22 @@ return view.extend({
 		return E('div', {}, nodes);
 	},
 
-	renderControl: function(link, dir, st) {
+	// Turns the shaping of the link off (unshape) or on (shape) and shows
+	// the answer of the program.
+	handleShaping: function(verb, link) {
+		return callShaping[verb](link).then(function(res) {
+			if (res && res.error)
+				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
+		}).then(L.bind(this.refresh, this));
+	},
+
+	renderControl: function(link, dir, st, unshaped) {
 		if (!st.adjust)
 			return E('em', {}, _('Off (adjust)'));
+		if (unshaped)
+			return E('span', { 'class': 'label', 'data-control': 'unshaped' }, _('Off (shaping off)'));
 		const verb = st.paused ? 'resume' : 'pause';
 		const nodes = [
 			common.controlLabel(st.paused)
@@ -644,16 +682,31 @@ return view.extend({
 	// calibration, and the button "Calibrate" for a user with write
 	// permission.
 	renderTitle: function(ls) {
-		const nodes = [ text(ls.name), ' ', common.stateLabel(ls.state) ];
+		const nodes = [ text(ls.name), ' ', common.stateLabel(ls.state, ls.unshaped) ];
 		if (ls.calibrating)
 			nodes.push(' ', E('span', { 'class': 'label notice', 'data-calibrating': '' }, _('Calibration')));
-		if (this.canControl)
+		if (this.canControl) {
+			// A calibration changes the shaper: the shaping button waits
+			// for its end. Without shaping, a calibration cannot start.
+			const verb = ls.unshaped ? 'shape' : 'unshape';
+			nodes.push(' ', E('button', {
+				'class': 'cbi-button cake-autorate-shaping ' + (ls.unshaped ? 'cbi-button-apply' : 'cbi-button-negative'),
+				'style': 'font-size:small; vertical-align:middle',
+				'disabled': ls.calibrating ? '' : null,
+				'title': ls.unshaped
+					? _('Turn the shaping on again: the rate control starts from the base rate.')
+					: _('Turn the shaping off, for example to compare the delay without the shaper. A restart of the service turns it on again.'),
+				'data-focus': focusKey(ls.name, 'shaping', ''),
+				'click': ui.createHandlerFn(this, 'handleShaping', verb, ls.name)
+			}, ls.unshaped ? _('Turn shaping on') : _('Turn shaping off')));
 			nodes.push(' ', E('button', {
 				'class': 'cbi-button cbi-button-action cake-autorate-calibrate',
 				'style': 'font-size:small; vertical-align:middle',
+				'disabled': ls.unshaped ? '' : null,
 				'data-focus': focusKey(ls.name, 'calibrate', ''),
 				'click': ui.createHandlerFn(this, function() { calibration.open(ls); })
 			}, _('Calibrate…')));
+		}
 		return nodes;
 	},
 
@@ -689,7 +742,7 @@ return view.extend({
 				E('td', { 'class': 'td', 'data-title': _('Direction') }, title),
 				E('td', { 'class': 'td', 'data-title': _('Interface') }, text(st.interface)),
 				E('td', { 'class': 'td', 'data-title': _('Shaper rate') }, [
-					rate(st.shaper_kbps),
+					shaperMbits(st.shaper_kbps) == null ? text(_('No limit')) : rate(st.shaper_kbps),
 					E('br'),
 					E('small', {}, text(_('%s to %s, base %s').format(
 						'%.1f'.format((+st.min_kbps || 0) / 1000),
@@ -701,7 +754,7 @@ return view.extend({
 				E('td', { 'class': 'td', 'data-title': _('Delay delta / threshold') }, delta),
 				E('td', { 'class': 'td', 'data-title': _('High-delay pings') }, text(st.bufferbloat_count)),
 				E('td', { 'class': 'td', 'data-title': _('Rate changes') }, text(st.rate_changes)),
-				E('td', { 'class': 'td', 'data-title': _('Rate control') }, this.renderControl(ls.name, dir, st))
+				E('td', { 'class': 'td', 'data-title': _('Rate control') }, this.renderControl(ls.name, dir, st, ls.unshaped))
 			]));
 		}
 
@@ -809,7 +862,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

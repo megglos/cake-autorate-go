@@ -116,6 +116,21 @@ a=$(control "resume wan")
 [ "$a" = "ok" ] && ok "resume" || fail "resume (answer: $a)"
 a=$(control "pause nolink")
 case $a in "error: unknown link"*) ok "unknown link" ;; *) fail "unknown link (answer: $a)" ;; esac
+a=$(control "unshape wan")
+[ "$a" = "ok" ] && ok "unshape" || fail "unshape (answer: $a)"
+check "unshape removes the limit" 'tc qdisc show dev br-lan | grep -q "bandwidth 10Gbit"'
+wait_for "status file shows the unshaped link" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" | grep -qx true'
+a=$(control "pause wan")
+case $a in *"shaping is off"*) ok "no pause without shaping" ;; *) fail "no pause without shaping (answer: $a)" ;; esac
+a=$(control "shape wan")
+[ "$a" = "ok" ] && ok "shape" || fail "shape (answer: $a)"
+check "shape sets the base rate" 'tc qdisc show dev br-lan | grep -q "bandwidth 20Mbit"'
+# The program shapes the link again before it stops.
+control "unshape wan" >/dev/null
+vm '/etc/init.d/cake-autorate stop; sleep 2'
+check "stop shapes the link again" 'tc qdisc show dev br-lan | grep -q "bandwidth 20Mbit"'
+vm '/etc/init.d/cake-autorate start'
+wait_for "the program runs again" '[ -S /var/run/cake-autorate/control.sock ] && pidof cake-autorate-go'
 
 echo "== rpcd plugin"
 # rpc METHOD ARGS: calls the method of the rpcd plugin of the LuCI app.
@@ -133,6 +148,18 @@ case $a in *'unknown link'*) ok "rpc unknown link" ;; *) fail "rpc unknown link 
 # A line break in the name must not add a second command.
 a=$(rpc pause '{"link":"wan\nresume wan"}')
 case $a in *'Invalid link name'*) ok "rpc invalid link name" ;; *) fail "rpc invalid link name (answer: $a)" ;; esac
+a=$(rpc unshape '{"link":"wan"}')
+case $a in *'"result": "ok"'*) ok "rpc unshape" ;; *) fail "rpc unshape (answer: $a)" ;; esac
+a=$(rpc shape '{"link":"wan"}')
+case $a in *'"result": "ok"'*) ok "rpc shape" ;; *) fail "rpc shape (answer: $a)" ;; esac
+a=$(rpc unshape '{"link":"wan","seconds":6}')
+case $a in *'"result": "ok"'*) ok "rpc unshape with a time" ;; *) fail "rpc unshape with a time (answer: $a)" ;; esac
+wait_for "status file shows the time left" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped_left_s" | grep -q "^[1-6]"'
+wait_for "the shaping comes back after the time" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].unshaped" | grep -qx false'
+a=$(rpc unshape '{"link":"wan","seconds":0}')
+case $a in *'Invalid time'*) ok "rpc unshape: invalid time" ;; *) fail "rpc unshape: invalid time (answer: $a)" ;; esac
+a=$(rpc unshape '{"link":"wan\nunshape wan"}')
+case $a in *'Invalid link name'*) ok "rpc unshape: invalid link name" ;; *) fail "rpc unshape: invalid link name (answer: $a)" ;; esac
 a=$(rpc pause '{"link":"wan","dir":"both"}')
 case $a in *'Invalid direction'*) ok "rpc invalid direction" ;; *) fail "rpc invalid direction (answer: $a)" ;; esac
 # A stopped process does not answer. The plugin must stop after its
@@ -258,6 +285,9 @@ ACL_USER=cakeread access file /var/run/cake-autorate/status.json read && ok "ACL
 ACL_USER=cakeread access ubus cake-autorate history && ok "ACL: read-only user reads the history" || fail "ACL: read-only user reads the history"
 ACL_USER=cakeread access ubus cake-autorate qdisc && ok "ACL: read-only user reads the qdisc" || fail "ACL: read-only user reads the qdisc"
 ACL_USER=cakeread access ubus cake-autorate pause && fail "ACL: read-only user cannot pause" || ok "ACL: read-only user cannot pause"
+access ubus cake-autorate unshape && ok "ACL: unshape" || fail "ACL: unshape"
+access ubus cake-autorate shape && ok "ACL: shape" || fail "ACL: shape"
+ACL_USER=cakeread access ubus cake-autorate unshape && fail "ACL: read-only user cannot unshape" || ok "ACL: read-only user cannot unshape"
 access ubus cake-autorate calibrate_start && ok "ACL: calibrate" || fail "ACL: calibrate"
 ACL_USER=cakeread access ubus cake-autorate calibrate_start && fail "ACL: read-only user cannot calibrate" || ok "ACL: read-only user cannot calibrate"
 ACL_USER=cakeread access ubus cake-autorate calibrate_status && fail "ACL: read-only user cannot read the calibration" || ok "ACL: read-only user cannot read the calibration"
