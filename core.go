@@ -95,6 +95,12 @@ type reflectorDelay struct {
 // change is faster: most of it does not move between the baselines.
 const maxClockSlewUsPerS = 500
 
+// dayUs is one day (µs): ICMP timestamps are the time since midnight UTC.
+const dayUs = 24 * 3600 * 1e6
+
+// tsResolutionUs is the resolution of ICMP timestamps (µs).
+const tsResolutionUs = 1000
+
 // maxClockSlewGap is the maximum time between two replies for the slew
 // limit. After a longer gap (Idle, Stall), a large allowance can move a
 // path change and a queue between the baselines. The rule for a low load
@@ -427,8 +433,20 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// in the download delay. The RTT (monotonic clock) does not have it.
 	// Do not use this reply: the next reply shows the step in the two
 	// delays. The RTT also contains the time in the reflector.
+	// The times have a resolution of 1 ms and wrap at midnight: each
+	// one-way delay can be a day too low or too high. Thus, the check uses
+	// the difference modulo one day.
+	// The time in the reflector is in 0 to RTT. A clock step of the
+	// reflector between its receive and its transmit time gives another
+	// value, and the sum does not show it.
 	inReflectorUs := float64(result.ReflectorTime.Microseconds())
-	if math.Abs(dlUs+ulUs+inReflectorUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
+	rttUs := float64(result.RTT.Microseconds())
+	diffUs := math.Mod(dlUs+ulUs+inReflectorUs-rttUs+dayUs/2, dayUs)
+	if diffUs < 0 {
+		diffUs += dayUs
+	}
+	diffUs -= dayUs / 2
+	if math.Abs(diffUs) > maxOWDRTTDiffUs || inReflectorUs < -tsResolutionUs || inReflectorUs > rttUs+tsResolutionUs {
 		return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
 	}
 	pathUs := float64(result.RTT.Microseconds()) - inReflectorUs

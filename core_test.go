@@ -1265,6 +1265,58 @@ func TestOWDDeltas_GapDoesNotMoveQueue(t *testing.T) {
 	}
 }
 
+// The clock of the reflector steps by +650 ms between its receive and its
+// transmit time: the download delay and the time in the reflector change
+// by the same value, and their sum stays correct. The reply must not be
+// used. The next replies have the step in the upload delay.
+func TestOWDDeltas_ReflectorClockStep(t *testing.T) {
+	c, _ := newTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 100; i++ {
+		ulMs, dlMs, inMs := 10.0, 10.0, 0.0
+		switch {
+		case i == 20:
+			ulMs, dlMs, inMs = 10, -640, 650
+		case i > 20:
+			ulMs, dlMs = 660, -640
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		p.ReflectorTime = time.Duration(inMs) * time.Millisecond
+		p.RTT = 20 * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl > 1 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 0", dl, ul)
+	}
+}
+
+// A clock offset of half a day: the one-way delays wrap, and their sum is
+// the RTT minus one day. The replies are valid, and a download queue must
+// show.
+func TestOWDDeltas_HalfDayOffset(t *testing.T) {
+	c, _ := newTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	const offset = -43_200_000.0 // ms
+	for i := 0; i < 40; i++ {
+		dlMs := 10.0
+		if i >= 20 {
+			dlMs = 50
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10+offset, dlMs+offset)
+		p.RTT = time.Duration(20+dlMs-10) * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
 // With the shaping off, the load is against 10 Gbit/s and stays low also
 // with a queue. A queue that moves from the upload to the download at the
 // same RTT must stay in the delta: it is not a clock step. Two paths: the
