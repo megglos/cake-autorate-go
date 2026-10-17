@@ -677,3 +677,38 @@ test('a good block does not hide the warning of a bad block', async ({ page }) =
 	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
 });
 
+// A read of the status file that ends after a new attach (a stop and a
+// new session) must not add its rates to the new session.
+test('a late read of the status file does not change a new session', async ({ page }) => {
+	await page.goto(PAGE);
+	await page.route('**/ubus/**', async (route) => {
+		const body = route.request().postDataJSON();
+		const requests = Array.isArray(body) ? body : [ body ];
+		if (!requests.every((q) => q && q.params && q.params[1] == 'file'))
+			return route.fallback();
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		try {
+			await route.continue();
+		}
+		catch (e) {
+			// The page closed.
+		}
+	});
+	const sums = await page.evaluate(() => L.require('cake-autorate.calibration').then(async (c) => {
+		c.link = 'wan';
+		c.attachGen = 1;
+		c.resetLinkRates();
+		c.rates = { dl: 50000, ul: 0 };
+		const st = { block: 1, phase: 'load', load: 'dl' };
+		c.phaseKey = '1 load';
+		c.phaseStart = performance.now() - 10000;
+		const read = c.checkLink(st);
+		// A new attach during the read.
+		c.attachGen++;
+		c.resetLinkRates();
+		await read;
+		return JSON.stringify(c.linkRates);
+	}));
+	expect(sums).toBe('{}');
+});
+

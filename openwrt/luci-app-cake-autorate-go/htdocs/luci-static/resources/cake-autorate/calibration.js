@@ -342,6 +342,8 @@ return baseclass.extend({
 		this.session = session;
 		this.lastBytes = null;
 		this.runningView = null;
+		// A late answer of an earlier attach must not change this one.
+		this.attachGen = (this.attachGen || 0) + 1;
 		this.resetLinkRates();
 		// A new load for each session. After a reload, the load continues
 		// with the used data of the same session (not of an older session
@@ -431,8 +433,9 @@ return baseclass.extend({
 				if (!this.stopping)
 					this.load.set(st.load);
 				this.measure();
+				const gen = this.attachGen;
 				return this.checkLink(st).then(() => {
-					if (!this.active)
+					if (!this.active || gen != this.attachGen)
 						return;
 					this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul, linkRates: this.linkRates });
 					this.renderRunning(st);
@@ -483,7 +486,11 @@ return baseclass.extend({
 		if (st.phase != 'load' || !st.load || performance.now() - this.phaseStart < LINK_LAG_MS)
 			return Promise.resolve();
 		const timeout = new Promise((resolve) => setTimeout(() => resolve(null), LINK_READ_MS));
+		const gen = this.attachGen, rates = { dl: this.rates.dl, ul: this.rates.ul };
 		return Promise.race([ L.resolveDefault(fs.read(STATUS_FILE), null), timeout ]).then((data) => {
+			// Another attach (a new session) during the read.
+			if (gen != this.attachGen)
+				return;
 			let ls = null;
 			try {
 				ls = (JSON.parse(data).links || []).find((l) => l.name == this.link);
@@ -500,7 +507,7 @@ return baseclass.extend({
 				const block = this.linkRates[st.block] = this.linkRates[st.block] || {};
 				const sum = block[dir] = block[dir] || { link: 0, browser: 0, n: 0 };
 				sum.link += +r.achieved_kbps || 0;
-				sum.browser += this.rates[dir];
+				sum.browser += rates[dir];
 				sum.n++;
 			}
 		});
