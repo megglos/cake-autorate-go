@@ -195,7 +195,7 @@ sudo ./scripts/record-session.sh -i enp7s0 -c my-5g.yaml -r 2 -W 30 -A calibrate
 
 The daemon can also run a calibration session for one link itself, on the router. Another program makes the load: for example the LuCI page in a browser behind the router. Thus, no PC with the tools of step 1 is necessary. The analysis is the same as in step 2.
 
-The control socket has the commands (see the README, "Control socket"):
+The control socket has the commands (see [Control socket](configuration.md#control-socket)):
 
 - `calibrate start LINK [LOAD_S]`: start a session. One session at a time. Both directions of the link need the rate control (`adjust: true`).
 - `calibrate status`: the status as one line of JSON.

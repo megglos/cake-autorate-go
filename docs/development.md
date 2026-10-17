@@ -2,6 +2,14 @@
 
 This document tells how to test a change to the controller. Each change must show its effect on the bufferbloat **and** on the throughput.
 
+## Tests and tools
+
+- **Unit tests and replay:** `go test ./...`. The core of the controller does not read the clock and starts no goroutines. Thus, the same events always give the same decisions, in the tests and in a replay of a recording.
+- **Link simulator:** a model of a link with a bottleneck queue, TCP flows and ping replies, with scenarios such as a steady link, a capacity drop, 5G and Starlink. A scorecard gives the delay and the throughput for each scenario, and a baseline check finds regressions. See [Simulator](#simulator).
+- **CI emulation:** [`scripts/ci-emulation.sh`](../scripts/ci-emulation.sh) tests the real binary, CAKE and netlink in network namespaces, without an internet connection. Each CI run also runs the original cake-autorate on the same link for comparison (option `-U`).
+- **Link emulation:** [`scripts/emulate-link.sh`](../scripts/emulate-link.sh) emulates a variable link (for example 5G) from a capacity trace on a fast connection, with real TCP traffic. See [emulation.md](emulation.md).
+- **Test sessions on a real link:** [`scripts/record-session.sh`](../scripts/record-session.sh) measures different policies in alternating blocks: no shaper, a fixed shaper, cake-autorate-go, other configs or binaries (`-A`), and the original cake-autorate (`-U`). [`scripts/summarize-session.sh`](../scripts/summarize-session.sh) shows the delay and the throughput of each block. See [recording.md](recording.md).
+
 ## Structure
 
 | Part | File | Function |
