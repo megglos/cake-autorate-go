@@ -39,7 +39,7 @@ links:
     # Reflectors of this link. If you do not set them, the link uses the
     # top-level reflectors, or the default list for the ping_method. With
     # ping_method icmp-timestamp, use only reflectors that reply to timestamp
-    # requests (see the README).
+    # requests (see docs/configuration.md, "Ping method").
     # reflectors:
     #   - 1.1.1.1
     #   - 8.8.8.8
@@ -157,6 +157,6 @@ debug: false
 # Status of all links as JSON, written each second. Empty: no status file.
 # status_file: /var/run/cake-autorate/status.json
 
-# Unix socket for the commands pause, resume and list (see the README).
+# Unix socket for the commands pause, resume and list (see docs/configuration.md, "Control socket").
 # Empty: no control socket.
 # control_socket: /var/run/cake-autorate/control.sock

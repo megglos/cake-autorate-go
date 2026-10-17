@@ -2,6 +2,14 @@
 
 This document tells how to test a change to the controller. Each change must show its effect on the bufferbloat **and** on the throughput.
 
+## Tests and tools
+
+- **Unit tests and replay:** `go test ./...`. The core of the controller does not read the clock and starts no goroutines. Thus, the same events always give the same decisions, in the tests and in a replay of a recording.
+- **Link simulator:** a model of a link with a bottleneck queue, TCP flows and ping replies. Scenarios include a steady link, a capacity drop, 5G and Starlink. A scorecard gives the delay and the throughput for each scenario, and a baseline check finds regressions. See [Simulator](#simulator).
+- **CI emulation:** [`scripts/ci-emulation.sh`](../scripts/ci-emulation.sh) tests the real binary, CAKE and netlink in network namespaces, without an internet connection. Each CI run also runs the original cake-autorate on the same link for comparison (option `-U`).
+- **Link emulation:** [`scripts/emulate-link.sh`](../scripts/emulate-link.sh) emulates a variable link (for example 5G) from a capacity trace on a fast connection, with real TCP traffic. See [emulation.md](emulation.md).
+- **Test sessions on a real link:** [`scripts/record-session.sh`](../scripts/record-session.sh) measures different policies in alternating blocks. The policies are no shaper, a fixed shaper, cake-autorate-go, other configs or binaries (`-A`), and the original cake-autorate (`-U`). [`scripts/summarize-session.sh`](../scripts/summarize-session.sh) shows the delay and the throughput of each block. See [recording.md](recording.md).
+
 ## Structure
 
 | Part | File | Function |
@@ -70,7 +78,7 @@ The columns:
 
 ### Baseline check
 
-`testdata/sim_baseline.json` contains the scores of `autorate` and `autorate-owd` for each scenario (key `policy/scenario`). Each score is the mean of 4 seed variants. One seed can hide a change that occurs only with some traces. The two policies use different rules in `Core`. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance (p95 and p99: 10 % or 5 ms, the larger value; `bloat s`: 10 % or 1 s, the larger value; `dl %` and `ul %`: 3 percentage points). It also shows a table with the changes.
+`testdata/sim_baseline.json` contains the scores of `autorate` and `autorate-owd` for each scenario (key `policy/scenario`). Each score is the mean of 4 seed variants. One seed can hide a change that occurs only with some traces. The two policies use different rules in `Core`. `TestSimBaseline` fails if a score is worse than the baseline by more than the tolerance. The tolerances are: p95 and p99 10 % or 5 ms, `bloat s` 10 % or 1 s (each the larger value), `dl %` and `ul %` 3 percentage points. It also shows a table with the changes.
 
 If a change makes the scores better, write the new baseline and commit it with the change:
 
@@ -105,7 +113,7 @@ sudo ./scripts/ci-emulation.sh -k     # remove the setup after a crash
 
 The simulator has limits (fluid model, simple jitter, no random packet loss on the radio link; it models only the drops of the queues). Thus, examine an important change also on a real link or in an emulation:
 
-- [recording.md](recording.md): sessions on a real link with `scripts/record-session.sh`. The option `-A NAME=CONFIG[,BINARY]` adds a variant. The blocks of all variants alternate. Thus, the blocks of the variants are near in time, and a slow change of the link has a similar effect on each variant (A/B test). The link conditions are not the same in each block.
+- [recording.md](recording.md): sessions on a real link with `scripts/record-session.sh`. The option `-A NAME=CONFIG[,BINARY]` adds a variant. The blocks of all variants alternate. Thus, the blocks of the variants are near in time. A slow change of the link has a similar effect on each variant (A/B test). The link conditions are not the same in each block.
 - [emulation.md](emulation.md): a variable link (for example 5G) on a fast connection, with a repeatable capacity trace.
 
 On a mobile link, the capacity changes much during a session. Compare the variants of the same session, and use two or more rounds.

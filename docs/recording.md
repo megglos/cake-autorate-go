@@ -229,7 +229,7 @@ Before the blocks, the script does a saturation check. It applies the load with 
 
    With the default values, the session has 2 rounds x 3 load modes (`dl`, `ul`, `both`) x 3 policies = 18 blocks. It takes approximately 55 minutes. For a shorter session, use `-r 1` or `-m "dl ul"`.
 
-   In a new block, cake-autorate-go starts again and has no learned values. With `learn_cross_delay`, it learns the upload delay from download activity only while the download is active and the upload load is low. In the mode `both`, the two loads start at the same time. Thus, it learns only in the first seconds of the load, and the learned delay is too small (in a 5G session: 3 to 10 ms instead of approximately 21 ms). Use `-W 30` to apply only the download load for 30 s before the load in the two directions. The measured load time starts after it.
+   In a new block, cake-autorate-go starts again and has no learned values. With `learn_cross_delay`, it learns the upload delay from download activity only while the download is active and the upload load is low. In the mode `both`, the two loads start at the same time. Thus, it learns only in the first seconds of the load, and the learned delay is too small. In a 5G session, it was 3 to 10 ms instead of approximately 21 ms. Use `-W 30` to apply only the download load for 30 s before the load in the two directions. The measured load time starts after it.
 
 4. Do not use the network during the session.
 5. The script writes all files to `recordings/<date>-<interface>/`:

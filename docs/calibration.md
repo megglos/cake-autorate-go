@@ -49,7 +49,7 @@ These values change with the place and with the time of day. Thus, one config fo
   learn_cross_delay: true
   ```
 
-- **Data volume.** The session fills the link many times. On a 5G link with 150 to 380 Mbit/s download, a session of 27 blocks used 68 GB, and one of 12 blocks with load in the two directions used 38 GB. The session below has 12 blocks: expect approximately 30 to 40 GB on such a link. Use an unlimited data plan. For a shorter session, use `-b 60` (60 s of load in each block).
+- **Data volume.** The session fills the link many times. On a 5G link with 150 to 380 Mbit/s download, a session of 27 blocks used 68 GB. A session of 12 blocks with load in the two directions used 38 GB. The session below has 12 blocks: expect approximately 30 to 40 GB on such a link. Use an unlimited data plan. For a shorter session, use `-b 60` (60 s of load in each block).
 
 ## Step 1: record a session
 
@@ -182,8 +182,8 @@ Examine these points:
 - **Cross delay and grant delay.** On fiber, both are near 0. On 5G, the cross delay is approximately 20 to 35 ms and the grant delay approximately 13 to 15 ms (median). Much higher values can show a weak signal or a busy cell.
 - **Notes** (`# NOTE:` at the top). They tell which values were not measured, and why (a missing block type, or pings without one-way delays). For these values:
   - From the session config: the rates (no unshaped blocks), `learn_cross_delay` (no usable autorate `dl` blocks), `reflectors` (fewer than 4 reflectors reply to ICMP timestamps).
-  - Calibration defaults, not the session config: the delay thresholds (30 ms without measured idle jitter), and `ping_method` (`icmp` if fewer than 4 reflectors reply to ICMP timestamps). If your session config has other values, set them again in the output.
-- `pinger_count` and `ping_source_addr` come from the session config. `connection_active_thr_kbps` also comes from the session config, but it is not more than half of the lowest minimum rate: else, on a slow link, the traffic stays below it and the controller cannot leave the idle state. The other keys that the output does not contain get the program defaults.
+  - Calibration defaults, not the session config: the delay thresholds (30 ms without measured idle jitter) and `ping_method`. The default `ping_method` is `icmp` if fewer than 4 reflectors reply to ICMP timestamps. If your session config has other values, set them again in the output.
+- `pinger_count` and `ping_source_addr` come from the session config. `connection_active_thr_kbps` also comes from the session config, but it is not more than half of the lowest minimum rate. Else, on a slow link, the traffic stays below it and the controller cannot leave the idle state. The other keys that the output does not contain get the program defaults.
 
 Then test the proposed config: record a second session with it as a variant, and compare it with your old config:
 
@@ -195,7 +195,7 @@ sudo ./scripts/record-session.sh -i enp7s0 -c my-5g.yaml -r 2 -W 30 -A calibrate
 
 The daemon can also run a calibration session for one link itself, on the router. Another program makes the load: for example the LuCI page in a browser behind the router. Thus, no PC with the tools of step 1 is necessary. The analysis is the same as in step 2.
 
-The control socket has the commands (see the README, "Control socket"):
+The control socket has the commands (see [Control socket](configuration.md#control-socket)):
 
 - `calibrate start LINK [LOAD_S]`: start a session. One session at a time. Both directions of the link need the rate control (`adjust: true`).
 - `calibrate status`: the status as one line of JSON.
@@ -203,7 +203,7 @@ The control socket has the commands (see the README, "Control socket"):
 
 The session has 5 blocks: unshaped `dl`, autorate `dl`, unshaped `ul`, autorate `ul`, unshaped `both`. Each block has 15 s of idle time, `LOAD_S` of load (default 40 s) and 3 s at the end. With 40 s, the session takes approximately 5 minutes. In the unshaped blocks, the shaper rate of the link is 10 Gbit/s (no useful limit) and the rate control stops. In the autorate blocks, the normal rate control runs.
 
-The session records the pings of the link with its configured ping method. Thus, with `ping_method icmp`, the recordings do not show if reflectors reply to ICMP timestamps. In the idle time of the first block, the session also sends ICMP timestamp requests to the configured reflectors and to the default reflectors for `icmp-timestamp` (maximum 16, 4 requests each second to each reflector). The rules for the result of this probe are the same as for the recordings: at least 4 reflectors with 20 replies, 90 % replies and a low jitter give `ping_method icmp-timestamp` and the list of the reflectors with the lowest jitter. Else the proposal is `icmp`, and the reason tells how many reflectors replied. If the probe cannot run (for example, no raw socket) or a reflector got fewer than 20 requests (the probe stopped early, or a DNS lookup was slow), the recordings select the ping method, and a note tells why. After a change from `icmp` to `icmp-timestamp`, calibrate again: only the one-way delays show the upload delay from download activity (`learn_cross_delay`).
+The session records the pings of the link with its configured ping method. Thus, with `ping_method icmp`, the recordings do not show if reflectors reply to ICMP timestamps. In the idle time of the first block, the session also sends ICMP timestamp requests. It sends them to the configured reflectors and to the default reflectors for `icmp-timestamp` (maximum 16, 4 requests each second to each reflector). The rules for the result of this probe are the same as for the recordings. At least 4 reflectors with 20 replies, 90 % replies and a low jitter give `ping_method icmp-timestamp`, with the reflectors that have the lowest jitter. Else the proposal is `icmp`, and the reason tells how many reflectors replied. Sometimes the probe cannot run (for example, no raw socket). Or a reflector gets fewer than 20 requests, because the probe stopped early or a DNS lookup was slow. Then the recordings select the ping method, and a note tells why. After a change from `icmp` to `icmp-timestamp`, calibrate again: only the one-way delays show the upload delay from download activity (`learn_cross_delay`).
 
 The program that makes the load reads `calibrate status` each second:
 
@@ -220,7 +220,7 @@ The program that makes the load reads `calibrate status` each second:
 
 Each status request is also a sign that the load program operates. Without a request for 15 s, the session stops: then there is no load, and the link must not stay without a shaper limit. At the end of the session (also after an error or a stop), the rate control of the link continues as before. A direction that was paused stays paused.
 
-The session writes its files next to the control socket, in the directory `calibration`: the session in `sessions/LINK` (in the format of step 1) and the result in `results/LINK.json`. The directories must belong to the user of the program, and other users must not be able to write to them (the program makes them with mode 0700): else the session fails. The rate control comes back after the last block, before the analysis. The result has the proposed values for each direction (`min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps`, `owd_delta_delay_thr_ms`; a rate that was not measured is not in the result), `learn_cross_delay`, `ping_method`, `reflectors`, `connection_active_thr_kbps`, the reasons (`why`), the notes and the measured distributions (`measured`).
+The session writes its files next to the control socket, in the directory `calibration`. The session goes to `sessions/LINK` (in the format of step 1), and the result goes to `results/LINK.json`. The directories must belong to the user of the program, and other users must not be able to write to them. The program makes them with mode 0700. Else the session fails. The rate control comes back after the last block, before the analysis. The result has the proposed values for each direction: `min_rate_kbps`, `base_rate_kbps`, `max_rate_kbps` and `owd_delta_delay_thr_ms`. A rate that was not measured is not in the result. The result also has `learn_cross_delay`, `ping_method`, `reflectors` and `connection_active_thr_kbps`. Then the reasons (`why`), the notes and the measured distributions (`measured`).
 
 Differences to the session of step 1:
 
