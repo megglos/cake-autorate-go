@@ -1150,6 +1150,30 @@ func TestOWDDeltas_FirstReplyDuringClockStep(t *testing.T) {
 	}
 }
 
+// A reflector that keeps the request for 30 ms before its reply: the RTT
+// contains this time, the one-way delays do not. The replies are valid,
+// and a new download queue must show in the download delta.
+func TestOWDDeltas_ReflectorTime(t *testing.T) {
+	c, _ := newTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 40; i++ {
+		dlMs := 10.0
+		if i >= 20 {
+			dlMs = 50 // a new 40 ms download queue
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10, dlMs)
+		p.ReflectorTime = 30 * time.Millisecond
+		p.RTT += p.ReflectorTime
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
 // A shorter upload path (50 ms) during a download queue with a high load:
 // the RTT is near its baseline, but the download delta must keep the
 // queue.

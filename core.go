@@ -417,8 +417,9 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// A clock step while the ping is in flight: the reply has the step only
 	// in the download delay. The RTT (monotonic clock) does not have it.
 	// Do not use this reply: the next reply shows the step in the two
-	// delays.
-	if math.Abs(dlUs+ulUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
+	// delays. The RTT also contains the time in the reflector.
+	inReflectorUs := float64(result.ReflectorTime.Microseconds())
+	if math.Abs(dlUs+ulUs+inReflectorUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
 		return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
 	}
 	if !rd.owdInit {

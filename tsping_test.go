@@ -53,9 +53,12 @@ func TestTimestampReply_OneWayDelays(t *testing.T) {
 	if !ok || r.id != 1 || r.seq != 2 {
 		t.Fatalf("parse: %+v %v", r, ok)
 	}
-	ul, dl, ok := r.oneWayDelays(5000 + 41)
+	ul, dl, in, ok := r.oneWayDelays(5000 + 41)
 	if !ok {
 		t.Fatal("standard times must give delays")
+	}
+	if in != time.Millisecond {
+		t.Errorf("time in the reflector %v, want 1ms", in)
 	}
 	// The offset is in the two values, with a different sign. The sum is
 	// the RTT without the time in the reflector.
@@ -65,7 +68,7 @@ func TestTimestampReply_OneWayDelays(t *testing.T) {
 
 	put(16, (5000+31)|tsNonStandard)
 	r, _ = parseTimestampReply(b)
-	if _, _, ok := r.oneWayDelays(5041); ok {
+	if _, _, _, ok := r.oneWayDelays(5041); ok {
 		t.Error("non-standard times must not give delays")
 	}
 }
