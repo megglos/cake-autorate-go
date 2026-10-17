@@ -129,13 +129,15 @@ VM_WAN_TAP=cavtap0 scripts/openwrt-vm.sh start
 
 The script sets a static WAN address in the VM. If a firewall on your computer drops forwarded packets (for example ufw or Docker), let the traffic of the tap device through.
 
-The calibration and the bufferbloat test need the load of the browser on the WAN of the VM. Use an SSH tunnel to the VM as SOCKS proxy for a separate browser profile:
+The calibration and the bufferbloat test need the load of the browser on the WAN of the VM. `scripts/openwrt-vm-client.sh` makes a client behind the VM: a network namespace on your computer, with a tap device on the LAN of the VM. A browser in the namespace uses the VM as its router:
 
 ```bash
-ssh -N -D 127.0.0.1:1081 -i ~/.cache/cake-autorate-vm/id_ed25519 -p 2222 root@localhost
+sudo scripts/openwrt-vm-client.sh up "$USER"
+VM_WAN_TAP=cavtap0 VM_LAN_TAP=cavlan0 VM_CPUS=4 scripts/openwrt-vm.sh start
+scripts/openwrt-vm-client.sh firefox   # LuCI: http://192.168.1.1
 ```
 
-In the browser, set the SOCKS5 proxy `127.0.0.1:1081` with DNS through the proxy. Then open LuCI at `http://192.168.1.1`. The tunnel encrypts the data on the CPU of the VM: on a fast link, the tunnel can be slower than the link.
+Do not use an SSH tunnel to the VM as a proxy for these tests. The tunnel sends all connections in one encrypted TCP connection. Then the delay of the browser can increase with the load, also without a queue in the shaper.
 
 ## Without the package: setup.sh
 

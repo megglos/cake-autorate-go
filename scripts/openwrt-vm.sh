@@ -31,6 +31,12 @@
 #          nft add rule ip cavnat post ip saddr 10.77.0.0/24 masquerade
 #        The static address stays on the disk. For the user network again,
 #        set network.wan.proto=dhcp in the VM, or use "reset".
+#   eth2 (lan, only with VM_LAN_TAP=TAP): a port of the LAN bridge on the
+#        tap device TAP of the host. A client on TAP (for example a
+#        network namespace from scripts/openwrt-vm-client.sh) uses the VM
+#        as its router, like a PC behind a router.
+#
+# VM_CPUS sets the number of CPUs of the VM (default 2).
 #
 # Requirements: qemu-system-x86_64, qemu-img, /dev/kvm, python3, curl.
 # The state (image, disk, SSH key, serial socket) is in
@@ -50,6 +56,8 @@ MONITOR="$DIR/monitor.sock"
 PIDFILE="$DIR/qemu.pid"
 DISK="$DIR/disk-$VERSION.img"
 WAN_TAP="${VM_WAN_TAP:-}"
+LAN_TAP="${VM_LAN_TAP:-}"
+CPUS="${VM_CPUS:-2}"
 
 ssh_vm() {
 	ssh -q -i "$KEY" -p "$SSH_PORT" -o StrictHostKeyChecking=no \
@@ -136,20 +144,34 @@ wan_static() {
 		uci commit network && /etc/init.d/network reload"
 }
 
+# lan_port: adds eth2 (the tap device of the client) to the LAN bridge.
+lan_port() {
+	ssh_vm "uci -q get network.@device[0].ports | grep -qw eth2 ||
+		{ uci add_list network.@device[0].ports=eth2 && uci commit network && /etc/init.d/network reload; }"
+}
+
 cmd_start() {
 	if running; then
 		echo "VM runs already"
 		return
 	fi
-	local wan
+	local wan lan=()
 	wan=$(wan_netdev)
+	if [ -n "$LAN_TAP" ]; then
+		if ! ip link show dev "$LAN_TAP" >/dev/null 2>&1; then
+			echo "error: tap device $LAN_TAP does not exist (scripts/openwrt-vm-client.sh up)" >&2
+			exit 1
+		fi
+		lan=(-netdev "tap,id=client,ifname=$LAN_TAP,script=no,downscript=no" -device virtio-net-pci,netdev=client)
+	fi
 	prepare_disk
 	rm -f "$SERIAL" "$MONITOR"
-	qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 512 \
+	qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m 512 \
 		-drive "file=$DISK,format=raw,if=virtio" \
 		-netdev "user,id=lan,net=192.168.1.0/24,host=192.168.1.2,dhcpstart=192.168.1.100,hostfwd=tcp:127.0.0.1:$SSH_PORT-192.168.1.1:22,hostfwd=tcp:127.0.0.1:$HTTP_PORT-192.168.1.1:80" \
 		-device virtio-net-pci,netdev=lan \
 		-netdev "$wan" -device virtio-net-pci,netdev=wan \
+		"${lan[@]}" \
 		-serial "unix:$SERIAL,server,nowait" \
 		-monitor "unix:$MONITOR,server,nowait" \
 		-display none -daemonize -pidfile "$PIDFILE"
@@ -160,6 +182,7 @@ cmd_start() {
 	for _ in $(seq 60); do
 		if ssh_vm true 2>/dev/null; then
 			[ -z "$WAN_TAP" ] || wan_static
+			[ -z "$LAN_TAP" ] || lan_port
 			echo "VM is ready: ssh -p $SSH_PORT root@localhost (key $KEY), LuCI http://localhost:$HTTP_PORT"
 			return
 		fi
