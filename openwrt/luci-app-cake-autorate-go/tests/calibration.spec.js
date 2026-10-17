@@ -78,6 +78,16 @@ async function routeSession(page, session) {
 				break;
 			case 'calibrate_stop':
 				session.stops++;
+				session.stopArgs = q.params[3];
+				// As the program: with the identifier of another session, no stop.
+				{
+					const cur = session.steps[Math.min(session.i, session.steps.length - 1)];
+					const want = q.params[3] && q.params[3].session;
+					if (want && cur && cur.session && want != cur.session) {
+						result = { error: 'the session "' + want + '" does not run' };
+						break;
+					}
+				}
 				if (session.stopError) {
 					result = { error: session.stopError };
 					break;
@@ -460,6 +470,25 @@ test('the upload rate counts the uploads while they run', async ({ page }) => {
 		expect(m && +m[1]).toBeGreaterThan(1);
 		await page.waitForTimeout(1000);
 	}
+});
+
+test('Stop of an ended session does not stop a newer session', async ({ page }) => {
+	const session = fakeSession([ running(1, 'dl', 'unshaped', 'load', 'dl', 'A') ]);
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect.poll(() => load.down, { timeout: 10000 }).toBeGreaterThan(0);
+	// Session A ends, and another client starts session B before the stop.
+	session.steps = [ running(1, 'ul', 'unshaped', 'load', 'ul', 'B') ];
+	session.i = 0;
+	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+	await expect(page.locator('.modal')).toContainText('Another calibration runs now.', { timeout: 10000 });
+	expect(session.stopArgs).toEqual({ session: 'A' });
+	expect(session.stopped).toBeFalsy();
+	await page.waitForTimeout(500);
+	expect(await countDuring(page, load, 1500)).toEqual({ down: 0, up: 0 });
 });
 
 test('a failed stop ends the load and the status requests', async ({ page }) => {

@@ -562,7 +562,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `list` | Answer with the link names. |
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [docs/calibration.md](docs/calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
 | `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
-| `calibrate stop` | Stop the session. The rate control continues as before the session. |
+| `calibrate stop [SESSION]` | Stop the session (with `SESSION`: only if that session runs). The rate control continues as before the session. |
 | `history` | Answer with the samples of the last 15 minutes of each link, as one line of JSON. The program adds one sample each second, when it writes the status file. Only with `status_history: true` and a status file. |
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.

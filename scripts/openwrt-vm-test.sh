@@ -156,6 +156,10 @@ case $a in *'state'*) ok "rpc calibrate_status" ;; *) fail "rpc calibrate_status
 a=$(rpc calibrate_start '{"link":"wan","load_s":20}')
 case $a in *'"result": "ok"'*) ok "rpc calibrate_start" ;; *) fail "rpc calibrate_start (answer: $a)" ;; esac
 wait_for "status file shows the calibration" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].calibrating" | grep -qx true'
+a=$(rpc calibrate_stop '{"session":"1-2\ncalibrate stop"}')
+case $a in *'Invalid session'*) ok "rpc calibrate_stop: invalid session" ;; *) fail "rpc calibrate_stop: invalid session (answer: $a)" ;; esac
+a=$(rpc calibrate_stop '{"session":"0-0"}')
+case $a in *'does not run'*) ok "rpc calibrate_stop: another session" ;; *) fail "rpc calibrate_stop: another session (answer: $a)" ;; esac
 a=$(rpc calibrate_stop '{}')
 case $a in *'"result": "ok"'*) ok "rpc calibrate_stop" ;; *) fail "rpc calibrate_stop (answer: $a)" ;; esac
 wait_for "status file shows the end of the calibration" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].calibrating" | grep -qx false'

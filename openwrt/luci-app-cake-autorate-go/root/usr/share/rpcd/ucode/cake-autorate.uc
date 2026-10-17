@@ -19,6 +19,8 @@ const CONTROL_SOCKET = '/var/run/cake-autorate/control.sock';
 
 // The rule of the program for link names (config.go).
 const LINK_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+// The identifier of a calibration session (calsession.go).
+const SESSION_RE = /^[0-9]{1,20}-[0-9]{1,20}$/;
 
 // The rule of Linux for interface names, without the characters that the
 // shell or tc read in a different way.
@@ -169,8 +171,13 @@ return {
 			}
 		},
 		calibrate_stop: {
-			call: function() {
-				return command('calibrate stop');
+			args: { session: 'session' },
+			call: function(req) {
+				// With a session, the program stops only that session.
+				const session = req.args?.session;
+				if (session != null && (type(session) != 'string' || !match(session, SESSION_RE)))
+					return { error: 'Invalid session' };
+				return command('calibrate stop' + (session != null ? ' ' + session : ''));
 			}
 		},
 		qdisc: {

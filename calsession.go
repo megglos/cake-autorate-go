@@ -328,13 +328,19 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	return nil
 }
 
-// Stop stops the running session. It waits until the session has
+// Stop stops the running session. With a session identifier, it stops the
+// session only if it is that session. It waits until the session has
 // restored the rate control.
-func (k *Calibrator) Stop() error {
+func (k *Calibrator) Stop(session string) error {
 	k.mu.Lock()
 	if k.status.State != "running" {
 		k.mu.Unlock()
 		return errors.New("no calibration runs")
+	}
+	// A program that shows an older session must not stop a newer one.
+	if session != "" && session != k.status.Session {
+		k.mu.Unlock()
+		return fmt.Errorf("the session %q does not run", session)
 	}
 	cancel, done := k.cancel, k.done
 	k.mu.Unlock()

@@ -199,7 +199,7 @@ The control socket has the commands (see the README, "Control socket"):
 
 - `calibrate start LINK [LOAD_S]`: start a session. One session at a time. Both directions of the link need the rate control (`adjust: true`).
 - `calibrate status`: the status as one line of JSON.
-- `calibrate stop`: stop the session.
+- `calibrate stop [SESSION]`: stop the session. With `SESSION` (the field `session` of the status), stop only that session: a program that shows an older session does not stop a newer one.
 
 The session has 5 blocks: unshaped `dl`, autorate `dl`, unshaped `ul`, autorate `ul`, unshaped `both`. Each block has 15 s of idle time, `LOAD_S` of load (default 40 s) and 3 s at the end. With 40 s, the session takes approximately 5 minutes. In the unshaped blocks, the shaper rate of the link is 10 Gbit/s (no useful limit) and the rate control stops. In the autorate blocks, the normal rate control runs.
 

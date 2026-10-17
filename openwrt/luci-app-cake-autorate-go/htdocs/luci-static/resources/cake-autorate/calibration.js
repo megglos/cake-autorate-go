@@ -78,7 +78,8 @@ const callStatus = rpc.declare({
 
 const callStop = rpc.declare({
 	object: 'cake-autorate',
-	method: 'calibrate_stop'
+	method: 'calibrate_stop',
+	params: [ 'session' ]
 });
 
 // Returns a text node. The values come from the program and from UCI, and
@@ -541,7 +542,12 @@ return baseclass.extend({
 		if (this.timer)
 			clearTimeout(this.timer);
 		this.timer = null;
-		return callStop().then((res) => {
+		// With the identifier, the service does not stop another session
+		// (this one ended, and another client started a new one).
+		return (this.session ? callStop(this.session) : callStop()).then((res) => {
+			// This session does not run now: the next status shows why.
+			if (res && res.error && /does not run|no calibration runs/.test(res.error))
+				return this.poll();
 			if (!res || res.error)
 				throw new Error((res && res.error) || _('No answer from the service'));
 			return this.poll();

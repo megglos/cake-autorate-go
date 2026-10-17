@@ -172,7 +172,7 @@ func TestCalibrationStopDuringProbe(t *testing.T) {
 	}
 	<-started
 	done := make(chan error)
-	go func() { done <- k.Stop() }()
+	go func() { done <- k.Stop("") }()
 	select {
 	case err := <-done:
 		if err != nil {
