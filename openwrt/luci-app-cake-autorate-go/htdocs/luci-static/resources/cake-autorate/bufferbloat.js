@@ -28,6 +28,10 @@ const PHASES = [
 // its rate, and the program can leave Idle.
 const WARMUP_S = 3;
 
+// The rate of the link (from the program) must be at least this share of
+// the rate of the browser: else the browser traffic uses another link.
+const LINK_SHARE = 0.5;
+
 // The maximum time until the status shows the shaping off (s).
 const SHAPING_WAIT_S = 5;
 
@@ -143,7 +147,7 @@ return baseclass.extend({
 		compare.addEventListener('change', update);
 		update();
 		ui.showModal(_('Bufferbloat test of the link %s').format(ls.name), [
-			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. Do not use the network during the test.'))),
+			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. The traffic of this browser must go through this link (on a router with more than one WAN link, check the routing). Do not use the network during the test.'))),
 			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-compare' }, _('Compare without shaping')),
 				E('div', { 'class': 'cbi-value-field' }, [
@@ -296,7 +300,9 @@ return baseclass.extend({
 		for (const p of this.phases) {
 			if (this.cancelled)
 				break;
-			const ph = { key: p.key, dl: [], ul: [], idle: 0, bytes: null, seconds: 0 };
+			// linkKbps is the largest rate of the link (from the program)
+			// in the measurement window of each direction.
+			const ph = { key: p.key, load: p.load, dl: [], ul: [], idle: 0, bytes: null, seconds: 0, linkKbps: { dl: 0, ul: 0 } };
 			result.phases.push(ph);
 			this.load.set(p.load);
 			const start = performance.now();
@@ -326,6 +332,9 @@ return baseclass.extend({
 					// comes late can be from the warm-up.
 					const asked = performance.now();
 					const st = await this.readLink(link, end - asked);
+					// Also a load error during the last status request.
+					if (this.load.errors > 0)
+						throw new Error(_('The load failed: %s').format(this.load.lastError));
 					if (performance.now() >= end)
 						break;
 					if (st && !!st.ls.unshaped != unshaped)
@@ -336,6 +345,10 @@ return baseclass.extend({
 					if (st && st.ls.calibrating)
 						throw new Error(_('A calibration of the link runs.'));
 					const measuring = asked >= warmEnd;
+				if (st && measuring) {
+					ph.linkKbps.dl = Math.max(ph.linkKbps.dl, +st.ls.download.achieved_kbps || 0);
+					ph.linkKbps.ul = Math.max(ph.linkKbps.ul, +st.ls.upload.achieved_kbps || 0);
+				}
 					// Only a status with a new ping reply has a new delay delta
 					// ("replies" increases). Without new replies (Idle, Stall,
 					// reflectors that do not reply), the phase gets no sample.
@@ -406,18 +419,30 @@ return baseclass.extend({
 	// Returns the cells of a phase: the rates of the browser, the median
 	// and the p95 of the delay delta of each direction, and the grade (the
 	// larger median).
+	// Returns true if the link did not carry the load of the phase: in a
+	// direction of the load, the rate of the link (from the program) was
+	// below LINK_SHARE of the rate of the browser. On a router with more
+	// than one WAN link, the browser traffic can use another link.
+	offLink: function(ph) {
+		if (!ph.load || !ph.bytes || !(ph.seconds > 0))
+			return false;
+		return [ 'dl', 'ul' ].some((dir) => (ph.load == dir || ph.load == 'both') &&
+			ph.linkKbps[dir] < LINK_SHARE * (ph.bytes[dir] * 8 / ph.seconds / 1000));
+	},
+
 	phaseCells: function(ph) {
 		const rate = (dir) => (ph.bytes && ph.seconds > 0) ? mbit(ph.bytes[dir] * 8 / ph.seconds / 1000) : '-';
 		const delay = (v) => v.length ? _('%.1f ms (p95 %.1f)').format(quantile(v, 0.5), quantile(v, 0.95)) : '-';
 		const m = Math.max(quantile(ph.dl, 0.5) ?? -1, quantile(ph.ul, 0.5) ?? -1);
-		const g = (ph.key != 'idle' && m >= 0) ? grade(m) : '';
+		const off = this.offLink(ph);
+		const g = (ph.key != 'idle' && m >= 0 && !off) ? grade(m) : '';
 		return [
 			text(this.phaseTitle(ph.key)),
 			text(ph.key == 'idle' ? '-' : rate('dl')),
 			text(ph.key == 'idle' ? '-' : rate('ul')),
 			text(delay(ph.dl)),
 			text(delay(ph.ul)),
-			g ? E('span', { 'class': 'label ' + ({ 'A+': 'success', 'A': 'success', 'B': 'notice' }[g] || 'warning'), 'data-grade': g }, g) : text(!ph.dl.length ? _('no ping replies') : '')
+			g ? E('span', { 'class': 'label ' + ({ 'A+': 'success', 'A': 'success', 'B': 'notice' }[g] || 'warning'), 'data-grade': g }, g) : text(off ? _('load not on this link') : (!ph.dl.length ? _('no ping replies') : ''))
 		];
 	},
 
@@ -431,7 +456,7 @@ return baseclass.extend({
 			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped: the load reached the data limit of %s.').format(volume(this.load.limit)))));
 		else if (this.cancelled)
 			nodes.push(E('p', { 'class': 'alert-message notice' }, text(_('The test stopped.'))));
-		nodes.push(E('p', {}, text(_('The delay is the delay delta of the reflectors of the service (the increase above the baseline) in each direction: the median and the p95. The grade is for the larger median: A+ below 5 ms, A below 30 ms, B below 60 ms, C below 200 ms, D below 400 ms, else F. The rates are the rates of this browser.'))));
+		nodes.push(E('p', {}, text(_('The delay is the delay delta of the reflectors of the service (the increase above the baseline) in each direction: the median and the p95. The grade is for the larger median: A+ below 5 ms, A below 30 ms, B below 60 ms, C below 200 ms, D below 400 ms, else F. The rates are the rates of this browser. A load phase with a rate of the link below half the rate of the browser gets no grade: the load did not go through this link.'))));
 		for (const r of runs) {
 			const rows = [
 				E('tr', { 'class': 'tr table-titles' }, [

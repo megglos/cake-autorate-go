@@ -62,8 +62,10 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 		}
 		const asked = Date.now();
 		const readsStatus = requests.some((q) => q && q.params && q.params[1] == 'file' && q.params[3] && q.params[3].path == '/var/run/cake-autorate/status.json');
-		if (statusDelay && readsStatus)
-			await new Promise((resolve) => setTimeout(resolve, statusDelay));
+		// statusDelay is a time in ms, or a function of the request time.
+		const delay = typeof statusDelay == 'function' ? statusDelay(asked) : statusDelay;
+		if (delay && readsStatus)
+			await new Promise((resolve) => setTimeout(resolve, delay));
 		let response;
 		try {
 			response = await route.fetch();
@@ -135,8 +137,9 @@ test.afterEach(() => {
 test('the test measures the delay in each phase and gives a grade', async ({ page }) => {
 	await routeUbus(page, (s) => {
 		Object.assign(s.links[0], { state: 'RUNNING' });
-		Object.assign(s.links[0].download, { delta_ms: 12 });
-		Object.assign(s.links[0].upload, { delta_ms: 40 });
+		// The load goes through the link.
+		Object.assign(s.links[0].download, { delta_ms: 12, achieved_kbps: 1e7 });
+		Object.assign(s.links[0].upload, { delta_ms: 40, achieved_kbps: 1e7 });
 	});
 	const load = await routeLoad(page);
 	const modal = await openDialog(page);
@@ -164,7 +167,8 @@ test('a link without new ping replies shows no delay', async ({ page }) => {
 	// RUNNING, but the reflectors do not reply: the delay deltas are old.
 	await routeUbus(page, (s) => {
 		Object.assign(s.links[0], { state: 'RUNNING', replies: 7 });
-		s.links[0].download.delta_ms = 0.1;
+		Object.assign(s.links[0].download, { delta_ms: 0.1, achieved_kbps: 1e7 });
+		s.links[0].upload.achieved_kbps = 1e7;
 	});
 	await routeLoad(page);
 	const modal = await openDialog(page);
@@ -545,4 +549,58 @@ test('the rates count from the end of the warm-up, also with slow status request
 	const rate = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"] td').nth(1);
 	await expect(rate).toContainText('Mbit/s', { timeout: 30000 });
 	expect(parseFloat(await rate.textContent())).toBeGreaterThan(0);
+});
+
+test('a load phase that does not use the link gets no grade', async ({ page }) => {
+	// Another WAN link carries the browser traffic: the link has no rate.
+	await routeUbus(page, (s) => {
+		Object.assign(s.links[0], { state: 'RUNNING' });
+		Object.assign(s.links[0].download, { delta_ms: 2, achieved_kbps: 0 });
+		Object.assign(s.links[0].upload, { delta_ms: 2, achieved_kbps: 0 });
+	});
+	await routeLoad(page);
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const table = modal.locator('table.cake-autorate-bufferbloat-result');
+	await expect(table).toHaveCount(1, { timeout: 20000 });
+	await expect(table.locator('tr[data-phase="dl"]')).toContainText('load not on this link');
+	await expect(table.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('a load error during the last status request of a phase stops the test', async ({ page }) => {
+	let t0 = Infinity;
+	// After the first status (before the phase), no status answer comes in
+	// the phase: the only status request of the phase waits until its end.
+	await routeUbus(page, null, false, (asked) => asked - t0 > 500 ? 10000 : 0);
+	await routeLoad(page);
+	// The downloads fail while a status request of the test waits (more
+	// than 300 ms): the error comes during the last status request.
+	await page.route('https://speed.cloudflare.com/__down*', async (route) => {
+		const waiting = await page.evaluate(() => window.readStart != null && performance.now() - window.readStart > 300).catch(() => false);
+		if (!waiting)
+			return route.fallback();
+		await route.fulfill({ status: 403, headers: { 'access-control-allow-origin': '*' }, body: '' }).catch(() => {});
+	});
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		// 1.8 s: the status request at 1 s waits until the end of the phase.
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 1.8 } ];
+		b.warmup = 0;
+		const read = b.readLink;
+		b.readLink = function(...args) {
+			window.readStart = performance.now();
+			// A busy page: the answer comes 100 ms after the end of the
+			// request, thus after the end of the phase.
+			return read.apply(this, args)
+				.then((v) => new Promise((resolve) => setTimeout(() => resolve(v), 100)))
+				.finally(() => { window.readStart = null; });
+		};
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	t0 = Date.now();
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The load failed: HTTP 403', { timeout: 20000 });
 });
