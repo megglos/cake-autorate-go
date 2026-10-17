@@ -463,7 +463,9 @@ return baseclass.extend({
 	},
 
 	resetLinkRates: function() {
-		this.linkRates = { dl: { link: 0, browser: 0, n: 0 }, ul: { link: 0, browser: 0, n: 0 } };
+		// The sums of each block: the analysis uses each block separately,
+		// and a good block must not hide a bad one.
+		this.linkRates = {};
 		this.phaseKey = null;
 		this.phaseStart = 0;
 	},
@@ -495,26 +497,32 @@ return baseclass.extend({
 				if (st.load != dir && st.load != 'both')
 					continue;
 				const r = (dir == 'dl' ? ls.download : ls.upload) || {};
-				this.linkRates[dir].link += +r.achieved_kbps || 0;
-				this.linkRates[dir].browser += this.rates[dir];
-				this.linkRates[dir].n++;
+				const block = this.linkRates[st.block] = this.linkRates[st.block] || {};
+				const sum = block[dir] = block[dir] || { link: 0, browser: 0, n: 0 };
+				sum.link += +r.achieved_kbps || 0;
+				sum.browser += this.rates[dir];
+				sum.n++;
 			}
 		});
 	},
 
 	// Returns a warning if the link carried less than LINK_SHARE of the
-	// load of this browser in a direction, else null.
+	// load of this browser in a direction of a block, else null.
 	offLinkWarning: function() {
 		const names = { dl: _('download'), ul: _('upload') };
-		const dirs = [ 'dl', 'ul' ].filter((d) => {
-			const r = this.linkRates[d];
-			return r.n > 0 && r.browser / r.n >= LINK_CHECK_MIN_KBPS && r.link < LINK_SHARE * r.browser;
-		});
-		if (!dirs.length)
+		const off = [];
+		for (const block of Object.keys(this.linkRates).sort((a, b) => a - b))
+			for (const d of [ 'dl', 'ul' ]) {
+				const r = this.linkRates[block][d];
+				if (r && r.n > 0 && r.browser / r.n >= LINK_CHECK_MIN_KBPS && r.link < LINK_SHARE * r.browser)
+					off.push({ block: block, dir: d });
+			}
+		if (!off.length)
 			return null;
-		return E('p', { 'class': 'alert-message warning', 'data-off-link': dirs.join(' ') },
+		const dirs = [ 'dl', 'ul' ].filter((d) => off.some((o) => o.dir == d));
+		return E('p', { 'class': 'alert-message warning', 'data-off-link': dirs.join(' '), 'data-off-blocks': off.map((o) => o.block + ':' + o.dir).join(' ') },
 			text(_('The load of this browser did not go through this link (%s): the rate of the link was below half the rate of this browser. The measured capacity can be too low. Check the routing of this browser.')
-				.format(dirs.map((d) => names[d]).join(', '))));
+				.format(off.map((o) => _('block %s %s').format(o.block, names[o.dir])).join(', '))));
 	},
 
 	// Ends the load and the status requests. keepSession keeps the session
@@ -539,8 +547,10 @@ return baseclass.extend({
 				v.dl >= 0 && v.ul >= 0))
 				return null;
 			// Invalid rates of the check of the load path: start again.
-			const valid = (r) => r && [ r.link, r.browser, r.n ].every((x) => typeof x == 'number' && x >= 0);
-			if (v.linkRates && !(valid(v.linkRates.dl) && valid(v.linkRates.ul)))
+			const valid = (r) => r == null || (typeof r == 'object' && [ r.link, r.browser, r.n ].every((x) => typeof x == 'number' && x >= 0));
+			if (v.linkRates != null && !(typeof v.linkRates == 'object' && !Array.isArray(v.linkRates) &&
+				Object.keys(v.linkRates).every((k) => /^[0-9]+$/.test(k) && v.linkRates[k] && typeof v.linkRates[k] == 'object' &&
+					valid(v.linkRates[k].dl) && valid(v.linkRates[k].ul))))
 				delete v.linkRates;
 			return v;
 		}

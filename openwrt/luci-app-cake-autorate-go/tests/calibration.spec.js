@@ -645,9 +645,35 @@ for (const onLink of [ false, true ]) {
 		}
 		else {
 			await expect(warning).toHaveAttribute('data-off-link', 'dl', { timeout: 10000 });
-			await expect(warning).toContainText('did not go through this link (download)');
+			await expect(warning).toContainText('did not go through this link (block 1 download)');
 		}
 		await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
 	});
 }
+
+// Block 1 does not go through the link, block 2 does. The warning for
+// block 1 stays: the sums of block 2 must not hide it.
+test('a good block does not hide the warning of a bad block', async ({ page }) => {
+	const steps = [];
+	const add = (n, st) => { for (let i = 0; i < n; i++) steps.push(st); };
+	add(2, running(1, 'dl', 'unshaped', 'idle', ''));
+	add(10, running(1, 'dl', 'unshaped', 'load', 'dl'));
+	add(60, running(2, 'dl', 'autorate', 'load', 'dl'));
+	const session = fakeSession(steps);
+	await routeSession(page, session);
+	await routeFastLoad(page);
+	let block2 = null;
+	await routeLinkRate(page, () => (block2 != null && Date.now() - block2 > 2000 ? 10000000 : 0));
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	const warning = page.locator('.modal [data-off-link]');
+	await expect(warning).toHaveAttribute('data-off-blocks', '1:dl', { timeout: 20000 });
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 2 of 5', { timeout: 20000 });
+	block2 = Date.now();
+	// Some statuses of block 2 with the load on the link.
+	await page.waitForTimeout(8000);
+	await expect(warning).toHaveAttribute('data-off-blocks', '1:dl');
+	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+});
 
