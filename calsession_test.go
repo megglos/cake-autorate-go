@@ -281,7 +281,7 @@ func TestCalibrationStop(t *testing.T) {
 	if err := k.Start("wan", times); err == nil || !strings.Contains(err.Error(), "runs") {
 		t.Errorf("a second start: %v", err)
 	}
-	if err := k.Stop(); err != nil {
+	if err := k.Stop(""); err != nil {
 		t.Fatal(err)
 	}
 	if st := k.Status(); st.State != "stopped" || st.Load != "" {
@@ -290,7 +290,7 @@ func TestCalibrationStop(t *testing.T) {
 	if calls := target.Calls(); calls[len(calls)-1] != "finish" {
 		t.Errorf("the rate control must be restored: %v", calls)
 	}
-	if err := k.Stop(); err == nil {
+	if err := k.Stop(""); err == nil {
 		t.Error("a stop without a session must give an error")
 	}
 	// A new session can start after the stop.
@@ -322,10 +322,11 @@ func TestCalibrationStartErrors(t *testing.T) {
 }
 
 type fakeCalControl struct {
-	link  string
-	times calTimes
-	err   error
-	stops int
+	link    string
+	times   calTimes
+	err     error
+	stops   int
+	session string // the argument of the last Stop
 }
 
 func (f *fakeCalControl) Start(link string, times calTimes) error {
@@ -333,8 +334,9 @@ func (f *fakeCalControl) Start(link string, times calTimes) error {
 	return f.err
 }
 
-func (f *fakeCalControl) Stop() error {
+func (f *fakeCalControl) Stop(session string) error {
 	f.stops++
+	f.session = session
 	return f.err
 }
 
@@ -362,6 +364,8 @@ func TestHandleCalibrateCommand(t *testing.T) {
 		{"calibrate go", "error: unknown calibrate command", 0},
 		{"calibrate status x", "error: usage", 0},
 		{"calibrate stop", "ok", 0},
+		{"calibrate stop 1-2", "ok", 0},
+		{"calibrate stop 1-2 x", "error: usage: calibrate stop [SESSION]", 0},
 		{"calibrate status", `{"state":"running","link":"wan","block":2,"load":"dl"`, 0},
 	} {
 		cal.times = calTimes{}
@@ -392,7 +396,7 @@ func TestCalibrationRestoreFailure(t *testing.T) {
 	if err := k.Start("wan", times); err != nil {
 		t.Fatal(err)
 	}
-	if err := k.Stop(); err != nil {
+	if err := k.Stop(""); err != nil {
 		t.Fatal(err)
 	}
 	if st := k.Status(); st.State != "failed" || !strings.Contains(st.Error, "restore the rate control: link does not answer") {
@@ -718,5 +722,54 @@ func TestCalibrationReleasesContext(t *testing.T) {
 	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
 		t.Error("the context of the session is not canceled after its end")
+	}
+}
+
+// Each session has its own identifier in the status, also in its final
+// state.
+func TestCalibrationSessionIdentifier(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, target, _ := newTestCalibrator(t, times)
+	var ids []string
+	for range 2 {
+		target.blocks = 0 // the fake target has the data of one session
+		if err := k.Start("wan", times); err != nil {
+			t.Fatal(err)
+		}
+		running := k.Status().Session
+		k.Wait()
+		st := k.Status()
+		if running == "" || st.Session != running {
+			t.Fatalf("session %q, at the end %q", running, st.Session)
+		}
+		ids = append(ids, running)
+	}
+	if ids[0] == ids[1] {
+		t.Errorf("two sessions with the identifier %q", ids[0])
+	}
+}
+
+// A stop with the identifier of an older session does not stop the
+// running session: a page that shows session A must not stop session B.
+func TestCalibrationStopOtherSession(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	k, _, _ := newTestCalibrator(t, times)
+	k.tick = time.Millisecond
+	k.now = time.Now // the session runs in real time: it is running during the test
+	if err := k.Start("wan", times); err != nil {
+		t.Fatal(err)
+	}
+	id := k.Status().Session
+	if err := k.Stop("0-0"); err == nil || !strings.Contains(err.Error(), "does not run") {
+		t.Errorf("stop of another session: %v", err)
+	}
+	if st := k.Status(); st.State != "running" {
+		t.Fatalf("the session must run: %+v", st)
+	}
+	if err := k.Stop(id); err != nil {
+		t.Fatal(err)
+	}
+	if st := k.Status(); st.State != "stopped" {
+		t.Errorf("status: %+v", st)
 	}
 }

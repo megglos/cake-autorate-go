@@ -39,7 +39,7 @@ import (
 //	                      Calibrator). LOAD_S: the load time of each block
 //	calibrate status      answer: the status of the session as one line
 //	                      of JSON (see CalStatus)
-//	calibrate stop        stop the session
+//	calibrate stop [SESSION] stop the session (only the session SESSION)
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
@@ -71,7 +71,7 @@ type LinkControl interface {
 // CalControl is the part of the Calibrator that the control socket uses.
 type CalControl interface {
 	Start(link string, times calTimes) error
-	Stop() error
+	Stop(session string) error
 	Status() CalStatus
 }
 
@@ -189,11 +189,18 @@ func handleCalibrateCommand(args []string, h *ControlHandler) string {
 		}
 		return "ok"
 	case "status", "stop":
-		if len(args) != 1 {
+		if len(args) != 1 && !(args[0] == "stop" && len(args) == 2) {
+			if args[0] == "stop" {
+				return "error: usage: calibrate stop [SESSION]"
+			}
 			return fmt.Sprintf("error: usage: calibrate %s", args[0])
 		}
 		if args[0] == "stop" {
-			if err := h.Calib.Stop(); err != nil {
+			session := ""
+			if len(args) == 2 {
+				session = args[1]
+			}
+			if err := h.Calib.Stop(session); err != nil {
 				return "error: " + oneLine.Replace(err.Error())
 			}
 			return "ok"

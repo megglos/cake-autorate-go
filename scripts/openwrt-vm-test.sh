@@ -149,6 +149,26 @@ wait_for "history has samples" "ubus call cake-autorate history | jsonfilter -e 
 a=$(rpc history '{}' | wc -c)
 [ "$a" -gt 256 ] && ok "rpc history (${a} bytes)" || fail "rpc history (${a} bytes)"
 check "rpc history is valid JSON" "ubus call cake-autorate history | jsonfilter -e @.data | jsonfilter -e '@.fields[0]' | grep -qx t_ms"
+# Calibration: start, the status file shows it, stop. The session needs
+# no load for this check.
+a=$(rpc calibrate_status '{}')
+case $a in *'state'*) ok "rpc calibrate_status" ;; *) fail "rpc calibrate_status (answer: $a)" ;; esac
+a=$(rpc calibrate_start '{"link":"wan","load_s":20}')
+case $a in *'"result": "ok"'*) ok "rpc calibrate_start" ;; *) fail "rpc calibrate_start (answer: $a)" ;; esac
+wait_for "status file shows the calibration" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].calibrating" | grep -qx true'
+a=$(rpc calibrate_stop '{"session":"1-2\ncalibrate stop"}')
+case $a in *'Invalid session'*) ok "rpc calibrate_stop: invalid session" ;; *) fail "rpc calibrate_stop: invalid session (answer: $a)" ;; esac
+a=$(rpc calibrate_stop '{"session":"0-0"}')
+case $a in *'does not run'*) ok "rpc calibrate_stop: another session" ;; *) fail "rpc calibrate_stop: another session (answer: $a)" ;; esac
+a=$(rpc calibrate_stop '{}')
+case $a in *'"result": "ok"'*) ok "rpc calibrate_stop" ;; *) fail "rpc calibrate_stop (answer: $a)" ;; esac
+wait_for "status file shows the end of the calibration" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].calibrating" | grep -qx false'
+a=$(rpc calibrate_status '{}')
+case $a in *'stopped'*) ok "rpc calibrate_status after the stop" ;; *) fail "rpc calibrate_status after the stop (answer: $a)" ;; esac
+a=$(rpc calibrate_start '{"link":"wan\nresume wan"}')
+case $a in *'Invalid link name'*) ok "rpc calibrate_start invalid link name" ;; *) fail "rpc calibrate_start invalid link name (answer: $a)" ;; esac
+a=$(rpc calibrate_start '{"link":"wan","load_s":5}')
+case $a in *'load time'*) ok "rpc calibrate_start invalid load time" ;; *) fail "rpc calibrate_start invalid load time (answer: $a)" ;; esac
 a=$(rpc qdisc '{"interface":"eth1"}')
 case $a in *'"kind": "cake"'*) ok "rpc qdisc with CAKE" ;; *) fail "rpc qdisc with CAKE (answer: $a)" ;; esac
 a=$(rpc qdisc '{"interface":"lo"}')
@@ -238,6 +258,9 @@ ACL_USER=cakeread access file /var/run/cake-autorate/status.json read && ok "ACL
 ACL_USER=cakeread access ubus cake-autorate history && ok "ACL: read-only user reads the history" || fail "ACL: read-only user reads the history"
 ACL_USER=cakeread access ubus cake-autorate qdisc && ok "ACL: read-only user reads the qdisc" || fail "ACL: read-only user reads the qdisc"
 ACL_USER=cakeread access ubus cake-autorate pause && fail "ACL: read-only user cannot pause" || ok "ACL: read-only user cannot pause"
+access ubus cake-autorate calibrate_start && ok "ACL: calibrate" || fail "ACL: calibrate"
+ACL_USER=cakeread access ubus cake-autorate calibrate_start && fail "ACL: read-only user cannot calibrate" || ok "ACL: read-only user cannot calibrate"
+ACL_USER=cakeread access ubus cake-autorate calibrate_status && fail "ACL: read-only user cannot read the calibration" || ok "ACL: read-only user cannot read the calibration"
 vm 'uci delete rpcd.cakeacl && uci delete rpcd.cakeread && uci commit rpcd && /etc/init.d/rpcd reload'
 
 if [ "$FAILED" -ne 0 ]; then

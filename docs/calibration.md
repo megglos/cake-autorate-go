@@ -199,9 +199,11 @@ The control socket has the commands (see the README, "Control socket"):
 
 - `calibrate start LINK [LOAD_S]`: start a session. One session at a time. Both directions of the link need the rate control (`adjust: true`).
 - `calibrate status`: the status as one line of JSON.
-- `calibrate stop`: stop the session.
+- `calibrate stop [SESSION]`: stop the session. With `SESSION` (the field `session` of the status), stop only that session: a program that shows an older session does not stop a newer one.
 
 The session has 5 blocks: unshaped `dl`, autorate `dl`, unshaped `ul`, autorate `ul`, unshaped `both`. Each block has 15 s of idle time, `LOAD_S` of load (default 40 s) and 3 s at the end. With 40 s, the session takes approximately 5 minutes. In the unshaped blocks, the shaper rate of the link is 10 Gbit/s (no useful limit) and the rate control stops. In the autorate blocks, the normal rate control runs.
+
+The session records the pings of the link with its configured ping method. Thus, with `ping_method icmp`, the recordings do not show if reflectors reply to ICMP timestamps. In the idle time of the first block, the session also sends ICMP timestamp requests to the configured reflectors and to the default reflectors for `icmp-timestamp` (maximum 16, 4 requests each second to each reflector). The rules for the result of this probe are the same as for the recordings: at least 4 reflectors with 20 replies, 90 % replies and a low jitter give `ping_method icmp-timestamp` and the list of the reflectors with the lowest jitter. Else the proposal is `icmp`, and the reason tells how many reflectors replied. If the probe cannot run (for example, no raw socket) or a reflector got fewer than 20 requests (the probe stopped early, or a DNS lookup was slow), the recordings select the ping method, and a note tells why. After a change from `icmp` to `icmp-timestamp`, calibrate again: only the one-way delays show the upload delay from download activity (`learn_cross_delay`).
 
 The program that makes the load reads `calibrate status` each second:
 
@@ -209,6 +211,7 @@ The program that makes the load reads `calibrate status` each second:
 |---|---|
 | `state` | `none` (no session since the start of the daemon), `running`, `done`, `failed` or `stopped` |
 | `block`, `blocks`, `mode`, `policy` | the current block |
+| `session` | the identifier of the session: each start gives a new value |
 | `phase` | `idle`, `load` or `tail` |
 | `load` | the load that the program must make now: `dl`, `ul`, `both`, or empty (no load) |
 | `phase_left_s`, `left_s` | the time left in the phase and in the session |

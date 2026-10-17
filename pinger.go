@@ -51,6 +51,10 @@ type PingerManager struct {
 	reflectors []string
 	states     map[string]*ReflectorState
 	mu         sync.RWMutex
+	// onSend, if set, gets each request that the timestamp pinger sent.
+	// The calibration probe counts them: a request without a result
+	// at the end of the probe is lost. It must be safe for parallel calls.
+	onSend func(reflector string)
 }
 
 // NewPingerManager creates a new pinger manager for a specific link.

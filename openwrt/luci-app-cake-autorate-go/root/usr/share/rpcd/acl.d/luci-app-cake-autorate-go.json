@@ -14,7 +14,7 @@
 		},
 		"write": {
 			"ubus": {
-				"cake-autorate": [ "pause", "resume" ]
+				"cake-autorate": [ "pause", "resume", "calibrate_start", "calibrate_status", "calibrate_stop" ]
 			},
 			"uci": [ "cake-autorate" ]
 		}

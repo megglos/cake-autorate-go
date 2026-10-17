@@ -132,11 +132,24 @@ func listenICMP(ctx context.Context, source, ifname string) (net.PacketConn, err
 	return lc.ListenPacket(ctx, "ip4:icmp", source)
 }
 
+// resolveIPv4 returns the first IPv4 address of host. The lookup ends with
+// ctx: a stop must not wait for a slow DNS server. Tests change it.
+var resolveIPv4 = func(ctx context.Context, host string) (*net.IPAddr, error) {
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no IPv4 address")
+	}
+	return &net.IPAddr{IP: ips[0]}, nil
+}
+
 // runTimestampPinger sends ICMP timestamp requests to one reflector. It
 // sends a PingResult with the RTT and the one-way delays for each reply,
 // and a timeout result for each request without a reply in the deadline.
 func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector string, interval, deadline time.Duration, resultCh chan<- PingResult) error {
-	dst, err := net.ResolveIPAddr("ip4", reflector)
+	dst, err := resolveIPv4(ctx, reflector)
 	if err != nil {
 		return fmt.Errorf("resolving %s: %w", reflector, err)
 	}
@@ -237,6 +250,8 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 				return nil
 			}
 			pm.logger.Debugf("timestamp ping %s: %v", reflector, err)
+		} else if pm.onSend != nil {
+			pm.onSend(reflector)
 		}
 
 		select {

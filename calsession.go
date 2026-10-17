@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,17 +123,52 @@ type CalOutput struct {
 }
 
 // newCalOutput makes the output from the result of the analysis.
-func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) *CalOutput {
+func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config, probe *calProbe) *CalOutput {
 	p := res.propose(cfg)
-	// The session pings only the active reflectors (pinger_count). With
-	// fewer than calMinReflectors, the analysis cannot select the ping
-	// method and the reflectors: keep the values of the config.
 	var notes []string
-	if len(res.Reflectors) < calMinReflectors {
+	probed := maps.Clone(res.Probed)
+	if probed == nil {
+		probed = map[string]bool{}
+	}
+	if probe != nil && probe.Err == nil && !probe.enough() {
+		probe.Err = fmt.Errorf("fewer than %d requests to a reflector in %v", calMinIdleSamples, probe.Duration.Round(time.Second))
+	}
+	switch {
+	case probe != nil && probe.Err == nil:
+		// The probe tested ICMP timestamps on more reflectors than the
+		// session pings: its result selects the ping method and the
+		// reflectors.
+		delete(p.Why, "ping_method")
+		delete(p.Why, "reflectors")
+		var why string
+		p.PingMethod, p.Reflectors, why = proposeFromProbe(probe.Reflectors, cfg.PingerCount, probe.Duration)
+		if p.PingMethod == PingMethodTimestamp {
+			p.Why["reflectors"] = why
+		} else {
+			p.Why["ping_method"] = why
+		}
+		for _, r := range probe.Reflectors {
+			if r.Sent > 0 {
+				probed[r.Addr] = true
+			}
+		}
+		if p.PingMethod == PingMethodTimestamp && cfg.PingMethod != PingMethodTimestamp {
+			notes = append(notes, "the session used ICMP echo: after the change to icmp-timestamp, calibrate again to measure the upload delay from download activity (learn_cross_delay)")
+		}
+	case len(res.Reflectors) < calMinReflectors:
+		// The session pings only the active reflectors (pinger_count).
+		// With fewer than calMinReflectors and no probe, the analysis
+		// cannot select the ping method and the reflectors: keep the
+		// values of the config.
+		if probe != nil {
+			notes = append(notes, fmt.Sprintf("the ICMP timestamp probe did not run: %v", probe.Err))
+		}
 		p.PingMethod, p.Reflectors = cfg.PingMethod, nil
 		delete(p.Why, "ping_method")
 		delete(p.Why, "reflectors")
 		notes = append(notes, fmt.Sprintf("the session pinged only %d reflectors (pinger_count %d): ping_method and reflectors keep the values of the config", len(res.Reflectors), cfg.PingerCount))
+	case probe != nil:
+		notes = append(notes, fmt.Sprintf("the ICMP timestamp probe did not run: %v", probe.Err))
 	}
 	// The session has no data of the configured reflectors that it did
 	// not ping (spares). Keep them after the measured ones. A reflector
@@ -140,7 +176,7 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) 
 	if len(p.Reflectors) > 0 {
 		var kept []string
 		for _, r := range cfg.Links[0].Reflectors {
-			if !res.Probed[r] && !slices.Contains(p.Reflectors, r) {
+			if !probed[r] && !slices.Contains(p.Reflectors, r) {
 				kept = append(kept, r)
 			}
 		}
@@ -182,12 +218,15 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config) 
 type CalStatus struct {
 	// State is none (no session since the start), running, done, failed
 	// or stopped.
-	State  string `json:"state"`
-	Link   string `json:"link,omitempty"`
-	Block  int    `json:"block,omitempty"`
-	Blocks int    `json:"blocks,omitempty"`
-	Mode   string `json:"mode,omitempty"`
-	Policy string `json:"policy,omitempty"`
+	State string `json:"state"`
+	// Session identifies the session: each start gives a new value. A
+	// program that makes the load can check that it is the same session.
+	Session string `json:"session,omitempty"`
+	Link    string `json:"link,omitempty"`
+	Block   int    `json:"block,omitempty"`
+	Blocks  int    `json:"blocks,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Policy  string `json:"policy,omitempty"`
 	// Phase is idle, load or tail.
 	Phase string `json:"phase,omitempty"`
 	// Load is the load that the other program must make now: dl, ul,
@@ -219,6 +258,9 @@ type Calibrator struct {
 	onPhase func(CalStatus)
 	// recMaxBytes is the size limit of the recording of a block.
 	recMaxBytes int64
+	// probe, if set, runs the ICMP timestamp probe in the idle time of the
+	// first block.
+	probe probeFunc
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -229,6 +271,9 @@ type Calibrator struct {
 	done     chan struct{}
 	// sessionCtx is the context of the last session.
 	sessionCtx context.Context
+	// sessions is the number of started sessions (for the session
+	// identifier).
+	sessions int
 }
 
 // NewCalibrator creates a calibrator. The sessions end when ctx ends. dir
@@ -266,7 +311,9 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	ctx, cancel := context.WithCancel(k.ctx)
 	now := k.now()
 	block := times.Idle + times.Load + times.Tail
-	k.status = CalStatus{State: "running", Link: link, Blocks: len(calSessionBlocks), LoadS: times.Load.Seconds()}
+	k.sessions++
+	k.status = CalStatus{State: "running", Session: fmt.Sprintf("%d-%d", now.Unix(), k.sessions), Link: link,
+		Blocks: len(calSessionBlocks), LoadS: times.Load.Seconds()}
 	k.end = now.Add(time.Duration(len(calSessionBlocks)) * block)
 	k.lastPoll = now
 	k.cancel = cancel
@@ -282,13 +329,19 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	return nil
 }
 
-// Stop stops the running session. It waits until the session has
+// Stop stops the running session. With a session identifier, it stops the
+// session only if it is that session. It waits until the session has
 // restored the rate control.
-func (k *Calibrator) Stop() error {
+func (k *Calibrator) Stop(session string) error {
 	k.mu.Lock()
 	if k.status.State != "running" {
 		k.mu.Unlock()
 		return errors.New("no calibration runs")
+	}
+	// A program that shows an older session must not stop a newer one.
+	if session != "" && session != k.status.Session {
+		k.mu.Unlock()
+		return fmt.Errorf("the session %q does not run", session)
 	}
 	cancel, done := k.cancel, k.done
 	k.mu.Unlock()
@@ -412,6 +465,7 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 	if err := os.WriteFile(filepath.Join(dir, "session.txt"), []byte(info), 0o600); err != nil {
 		return nil, err
 	}
+	var probe *calProbe
 	lines := "block\tround\tmode\tpolicy\tstart\tload_start\tload_end\tend\tcake_dl_kbps\tcake_ul_kbps\trecording\n"
 
 	for i, b := range calSessionBlocks {
@@ -430,7 +484,9 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		k.end = start.Add(time.Duration(len(calSessionBlocks)-i) * (times.Idle + times.Load + times.Tail))
 		k.mu.Unlock()
 		var loadStart, loadEnd time.Time
-		if err == nil {
+		if err == nil && i == 0 && k.probe != nil {
+			probe, err = k.idleWithProbe(ctx, target.CalConfig(), start.Add(times.Idle), times.Idle)
+		} else if err == nil {
 			err = k.phase(ctx, "idle", "", start.Add(times.Idle))
 		}
 		if err == nil {
@@ -470,7 +526,7 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 	if err != nil {
 		return nil, fmt.Errorf("analysis: %w", err)
 	}
-	out := newCalOutput(link, k.now(), res, cfg)
+	out := newCalOutput(link, k.now(), res, cfg, probe)
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return nil, err
@@ -483,6 +539,27 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		return nil, err
 	}
 	return out, nil
+}
+
+// idleWithProbe runs the idle phase until end and the probe at the same
+// time. The probe stops at the end of the phase, or after the time dur
+// (the phase uses the clock of the calibrator, the probe the real time).
+func (k *Calibrator) idleWithProbe(ctx context.Context, cfg *Config, end time.Time, dur time.Duration) (*calProbe, error) {
+	pctx, cancel := context.WithTimeout(ctx, dur)
+	type result struct {
+		probes []tsProbe
+		err    error
+	}
+	ch := make(chan result, 1)
+	started := time.Now()
+	go func() {
+		probes, err := k.probe(pctx, cfg, k.logger)
+		ch <- result{probes, err}
+	}()
+	err := k.phase(ctx, "idle", "", end)
+	cancel()
+	r := <-ch
+	return &calProbe{Reflectors: r.probes, Duration: time.Since(started), Err: r.err}, err
 }
 
 func (k *Calibrator) setBlock(num int, mode, policy string) {
