@@ -324,10 +324,11 @@ func TestCalibrateSession_StableLinkLearnedCrossDelay(t *testing.T) {
 	}
 }
 
-// Three of five reflectors have a noisy path (9 times the jitter). The
-// thresholds come from the jitter of the good reflectors, and the noisy
-// reflectors are not in the list.
-func TestCalibrateSession_NoisyReflectors(t *testing.T) {
+// Three of five reflectors have a noisy path (9 times the jitter), as in
+// an online calibration on a fiber line. The probe finds 5 good
+// reflectors: the proposal has them, and the thresholds come from the
+// jitter of the good reflectors.
+func TestCalibrateSession_NoisyReflectorsWithProbe(t *testing.T) {
 	dir := writeCalSession(t, calTestLink{
 		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, noisyCount: 3,
 	})
@@ -338,14 +339,44 @@ func TestCalibrateSession_NoisyReflectors(t *testing.T) {
 	if res.IdleJitterMs.P50 < 10 {
 		t.Fatalf("idle jitter median %.1f ms, want a noisy reflector (the test needs it)", res.IdleJitterMs.P50)
 	}
-	p := res.propose(cfg)
-	if p.DlThrMs != 10 {
-		t.Errorf("download threshold %.0f ms, want 10 (jitter of the good reflectors)", p.DlThrMs)
+	probe := &calProbe{Duration: 15 * time.Second}
+	for _, a := range []string{"g1", "g2", "g3", "g4", "g5"} {
+		probe.Reflectors = append(probe.Reflectors, goodProbe(a, 2))
 	}
-	for _, r := range []string{"r3", "r4", "r5"} {
-		if slices.Contains(p.Reflectors, r) {
-			t.Errorf("reflectors %v contain the noisy reflector %s", p.Reflectors, r)
-		}
+	probe.Reflectors = append(probe.Reflectors, goodProbe("n1", 18), goodProbe("n2", 20))
+	out := newCalOutput("wan", time.Now(), res, cfg, probe)
+	if out.Download.ThresholdMs != 10 {
+		t.Errorf("download threshold %.0f ms, want 10 (jitter of the good reflectors)", out.Download.ThresholdMs)
+	}
+	if slices.Contains(out.Reflectors, "n1") || !slices.Contains(out.Reflectors, "g1") {
+		t.Errorf("reflectors %v, want the good ones", out.Reflectors)
+	}
+}
+
+// Fewer than calMinReflectors stay below the jitter limit: the proposal
+// keeps the configured reflectors (ping_method icmp). The thresholds must
+// then come from the jitter of all reflectors, also the noisy ones.
+func TestCalibrateSession_TooFewLowJitterReflectors(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, noisyCount: 3,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if len(p.Reflectors) != 0 || p.PingMethod != PingMethodEcho {
+		t.Fatalf("reflectors %v, method %s: want the fallback to icmp (2 low-jitter reflectors)", p.Reflectors, p.PingMethod)
+	}
+	if want := math.Ceil(calJitterFactor * res.IdleJitterMs.P50); p.DlThrMs < want {
+		t.Errorf("download threshold %.0f ms, want %.0f or more (jitter of all reflectors)", p.DlThrMs, want)
+	}
+	var buf bytes.Buffer
+	if err := writeCalConfig(&buf, dir, cfg, res, p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "not measured: the reflectors of the session config") || !strings.Contains(buf.String(), "ping_method: icmp") {
+		t.Errorf("generated config does not keep the configured reflectors with icmp:\n%s", buf.String())
 	}
 }
 

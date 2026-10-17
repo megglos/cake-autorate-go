@@ -696,62 +696,20 @@ func (r *calResult) lowJitter() (kept []float64, limit float64) {
 	return kept, limit
 }
 
-// propose makes the config proposal from the result.
-func (r *calResult) propose(cfg *Config) calProposal {
-	p := calProposal{Why: map[string]string{}, LearnCrossDelay: cfg.LearnCrossDelay}
-	pingerCount := cfg.PingerCount
-	// Round to the step. Below one step (a slow link), keep the kbit/s:
-	// a floor at the step would give a rate above the measured capacity.
-	round := func(kbps float64, step int) int {
-		if kbps < float64(step) {
-			return max(1, int(math.Round(kbps)))
-		}
-		return int(math.Round(kbps/float64(step))) * step
-	}
+// calStable reports whether a direction has a stable capacity (for
+// example fiber or cable, not 5G).
+func calStable(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
 
-	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
-	// usually has), min = p5 / 2 (the shaper must be able to go below the
-	// low capacity values; the 1 s means hide short decreases). On a
-	// stable link, p25 is the capacity: base = calStableBaseFactor x p25.
-	stable := func(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
-	base := func(c calDist, step int) (int, string) {
-		if stable(c) {
-			// A coarse step can round the base up to the capacity (for
-			// example 9500 to 10000 kbit/s): then use a finer step.
-			target := calStableBaseFactor * c.P25
-			b := int(math.Floor(target))
-			for _, st := range []int{step, step / 10} {
-				if v := round(target, st); float64(v) < c.P25 {
-					b = v
-					break
-				}
-			}
-			return b, fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
-		}
-		return round(c.P25, step), ""
-	}
-	if c := r.DlCapacity; c.N > 0 {
-		b, why := base(c, 1000)
-		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), b, round(c.P95, 1000)
-		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
-	}
-	if c := r.UlCapacity; c.N > 0 {
-		b, why := base(c, 500)
-		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), b, round(c.P95, 500)
-		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
-		// With download load, the upload capacity can be much lower. The
-		// minimum must be below it.
-		if b := r.UlCapacityBoth; b.N > 0 {
-			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
-			p.UlBase = min(p.UlBase, round(b.P50, 500))
-			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(base, p50 with download load))", mbit(b.P5), mbit(b.P50))
-		}
-		p.UlBase = max(p.UlBase, p.UlMin)
-	}
-
-	// Thresholds. A stable direction has a lower minimum.
+// setThresholds sets the delay thresholds and learn_cross_delay of the
+// proposal. lowJitterList is true if the proposal has a list of
+// low-jitter reflectors (from the recordings or from the probe): then the
+// thresholds come from the jitter of these reflectors.
+func (r *calResult) setThresholds(p *calProposal, lowJitterList bool) {
+	delete(p.Why, "download threshold")
+	delete(p.Why, "upload threshold")
+	// A stable direction has a lower minimum.
 	floor := func(c calDist) float64 {
-		if stable(c) {
+		if calStable(c) {
 			return calStableThrMs
 		}
 		return calDefaultThrMs
@@ -759,12 +717,26 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
 	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
 	// The jitter of the reflectors in the proposal: a noisy reflector is
-	// not in the list and does not increase the thresholds.
-	if kept, limit := r.lowJitter(); len(kept) > 0 {
+	// not in the list and does not increase the thresholds. Without a list
+	// of low-jitter reflectors (the proposal keeps the configured ones):
+	// the jitter of all reflectors.
+	kept, limit := r.lowJitter()
+	if !lowJitterList {
+		kept, limit = nil, math.Inf(1)
+		for _, rf := range r.Reflectors {
+			if rf.OWD {
+				kept = append(kept, rf.IdleP95Ms)
+			}
+		}
+	}
+	if len(kept) > 0 {
 		j := newCalDist(kept)
 		jit := math.Ceil(calJitterFactor * j.P50)
 		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
-		src := fmt.Sprintf("idle jitter (p95 of each reflector, %d of %d at or below %.1f ms): median %.1f ms", len(kept), r.IdleJitterMs.N, limit, j.P50)
+		src := fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms", j.P50)
+		if !math.IsInf(limit, 1) {
+			src = fmt.Sprintf("idle jitter (p95 of each reflector, %d of %d at or below %.1f ms): median %.1f ms", len(kept), r.IdleJitterMs.N, limit, j.P50)
+		}
 		p.Why["download threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, dlFloor, calJitterFactor)
 		p.Why["upload threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, ulFloor, calJitterFactor)
 	}
@@ -800,16 +772,70 @@ func (r *calResult) propose(cfg *Config) calProposal {
 			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p50 %.1f, p95 %.1f ms, %s", c.P50, c.P95, why)
 		}
 	}
+}
+
+// propose makes the config proposal from the result.
+func (r *calResult) propose(cfg *Config) calProposal {
+	p := calProposal{Why: map[string]string{}, LearnCrossDelay: cfg.LearnCrossDelay}
+	pingerCount := cfg.PingerCount
+	// Round to the step. Below one step (a slow link), keep the kbit/s:
+	// a floor at the step would give a rate above the measured capacity.
+	round := func(kbps float64, step int) int {
+		if kbps < float64(step) {
+			return max(1, int(math.Round(kbps)))
+		}
+		return int(math.Round(kbps/float64(step))) * step
+	}
+
+	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
+	// usually has), min = p5 / 2 (the shaper must be able to go below the
+	// low capacity values; the 1 s means hide short decreases). On a
+	// stable link, p25 is the capacity: base = calStableBaseFactor x p25.
+	stable := calStable
+	base := func(c calDist, step int) (int, string) {
+		if stable(c) {
+			// A coarse step can round the base up to the capacity (for
+			// example 9500 to 10000 kbit/s): then use a finer step.
+			target := calStableBaseFactor * c.P25
+			b := int(math.Floor(target))
+			for _, st := range []int{step, step / 10} {
+				if v := round(target, st); float64(v) < c.P25 {
+					b = v
+					break
+				}
+			}
+			return b, fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
+		}
+		return round(c.P25, step), ""
+	}
+	if c := r.DlCapacity; c.N > 0 {
+		b, why := base(c, 1000)
+		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), b, round(c.P95, 1000)
+		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
+	}
+	if c := r.UlCapacity; c.N > 0 {
+		b, why := base(c, 500)
+		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), b, round(c.P95, 500)
+		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
+		// With download load, the upload capacity can be much lower. The
+		// minimum must be below it.
+		if b := r.UlCapacityBoth; b.N > 0 {
+			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
+			p.UlBase = min(p.UlBase, round(b.P50, 500))
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(base, p50 with download load))", mbit(b.P5), mbit(b.P50))
+		}
+		p.UlBase = max(p.UlBase, p.UlMin)
+	}
 
 	// Ping method and reflectors.
 	// The program selects the active reflectors at random from the list
 	// (and the spares from the rest). Thus, the list must not contain the
 	// reflectors with a high jitter: keep the best pinger_count + 2, and
 	// leave out the ones above the jitter limit.
-	_, limit := r.lowJitter()
+	_, refLimit := r.lowJitter()
 	var owd []string
 	for _, rf := range r.Reflectors {
-		if rf.OWD && rf.IdleP95Ms <= limit {
+		if rf.OWD && rf.IdleP95Ms <= refLimit {
 			owd = append(owd, rf.Addr)
 		}
 	}
@@ -825,6 +851,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}
+	r.setThresholds(&p, len(p.Reflectors) > 0)
 	return p
 }
 
