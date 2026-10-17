@@ -98,6 +98,12 @@ const maxClockSlewUsPerS = 500
 // noise.
 const minClockStepUs = 50000
 
+// maxOWDRTTDiffUs is the maximum difference between the sum of the two
+// one-way delays and the RTT. A larger difference shows a clock step while
+// the ping was in flight. The one-way delays have whole milliseconds, and
+// the reflector can reply later than it received the request.
+const maxOWDRTTDiffUs = minClockStepUs / 2
+
 // clockSplitGain is the part of a delta that owdDeltas moves to the
 // baseline for each reply while the RTT is near its baseline.
 const clockSplitGain = 0.25
@@ -404,6 +410,13 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
 		rd.owdTime = result.Timestamp
 		return 0, 0
+	}
+	// A clock step while the ping is in flight: the reply has the step only
+	// in the download delay. The RTT (monotonic clock) does not have it.
+	// Do not use this reply: the next reply shows the step in the two
+	// delays.
+	if math.Abs(dlUs+ulUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
+		return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
 	}
 	// shift > 0: the clock offset moves delay from the upload to the
 	// download.

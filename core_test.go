@@ -1028,6 +1028,53 @@ func TestOWDDeltas_FastClockSlewIsNotDelay(t *testing.T) {
 	}
 }
 
+// Real ICMP timestamps give whole milliseconds. A slow and a fast slew
+// without load must not give a false delay.
+func TestOWDDeltas_QuantizedClockSlewIsNotDelay(t *testing.T) {
+	for _, total := range []float64{10, 150} {
+		for _, sign := range []float64{1, -1} {
+			c, _ := newTestCore(t)
+			dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
+				drift := sign * total * math.Min(t.Seconds()/30, 1)
+				return math.Round(10 - drift), math.Round(10 + drift)
+			})
+			if dl > 1.5 || ul > 1.5 {
+				t.Errorf("slew %+.0f ms (whole ms): delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*total, dl, ul)
+			}
+		}
+	}
+}
+
+// A clock step while a ping is in flight: the reply has the step only in
+// the download delay (the upload delay uses the send time from before the
+// step). The RTT (monotonic clock) does not change. The next reply has
+// the step in the two delays.
+func TestOWDDeltas_ClockStepDuringPing(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c, _ := newTestCore(t)
+		start := time.Now()
+		var dl, ul float64
+		for i := 0; i <= 40; i++ {
+			ulMs, dlMs := 10.0, 10.0
+			switch {
+			case i == 20:
+				dlMs += sign * 650
+			case i > 20:
+				dlMs += sign * 650
+				ulMs -= sign * 650
+			}
+			p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+			p.RTT = 20 * time.Millisecond
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
+			if dl > 1 || ul > 1 {
+				t.Fatalf("step %+.0f ms, reply %d: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*650, i, dl, ul)
+			}
+		}
+	}
+}
+
 // A clock step of 650 ms (NTP after the boot of a router without a
 // battery clock) must not go into the delta, also during a download queue.
 func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
