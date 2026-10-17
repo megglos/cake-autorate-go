@@ -310,9 +310,19 @@ func (s *Shaper) setRateNetlink(iface string, rateKbps int) error {
 const tcExecTimeout = 5 * time.Second
 
 // setRateTc sets the CAKE bandwidth by executing the tc command (fallback).
+// The root qdisc must be CAKE: the tc of OpenWrt (tc-tiny) replaces
+// another root qdisc with a new CAKE qdisc with default options on "tc
+// qdisc change ... cake" (netlink refuses this change).
 func (s *Shaper) setRateTc(iface string, rateKbps int) error {
+	output, err := execCommand("tc", "qdisc", "show", "dev", iface, "root")
+	if err != nil {
+		return fmt.Errorf("tc qdisc show on %s: %w: %s", iface, err, strings.TrimSpace(string(output)))
+	}
+	if f := strings.Fields(string(output)); len(f) < 2 || f[0] != "qdisc" || f[1] != "cake" {
+		return fmt.Errorf("the root qdisc of %s is not CAKE: %s", iface, strings.TrimSpace(string(output)))
+	}
 	bw := fmt.Sprintf("%dkbit", rateKbps)
-	output, err := execCommand("tc", "qdisc", "change", "dev", iface, "root", "cake", "bandwidth", bw)
+	output, err = execCommand("tc", "qdisc", "change", "dev", iface, "root", "cake", "bandwidth", bw)
 	if err != nil {
 		return fmt.Errorf("tc qdisc change on %s: %w: %s", iface, err, strings.TrimSpace(string(output)))
 	}
@@ -398,8 +408,9 @@ func WirePacketCompensationUs(mtuBytes int, rateKbps int) float64 {
 	return (1000.0 * mtuBits) / float64(rateKbps)
 }
 
-// execCommand runs an external command with a timeout and returns combined output.
-func execCommand(name string, args ...string) ([]byte, error) {
+// execCommand runs an external command with a timeout and returns combined
+// output. Tests replace it.
+var execCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcExecTimeout)
 	defer cancel()
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
