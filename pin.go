@@ -54,6 +54,15 @@ var lookupPinHost = func(ctx context.Context, host string) ([]net.IP, error) {
 	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
+// The owners of a pin. A calibration session replaces a pin of the control
+// socket (for example of a bufferbloat test). The control socket cannot
+// replace or remove the pin of a session: else the load of the session
+// could use another link.
+const (
+	PinOwnerControl     = "control"
+	PinOwnerCalibration = "calibration"
+)
+
 // Pinner sends the traffic to pinHosts through one link (see above). Only
 // one link at a time can have the traffic.
 type Pinner struct {
@@ -62,7 +71,11 @@ type Pinner struct {
 
 	mu    sync.Mutex
 	link  string // the link with the traffic, "" if none
+	owner string // the owner of the pin
 	timer *time.Timer
+	// gen identifies the pin: a timer of an earlier pin can fire while a
+	// new pin waits for the lock. Then it must not remove the new pin.
+	gen int
 }
 
 // NewPinner returns a Pinner for the links. The traffic goes through the
@@ -76,16 +89,20 @@ func NewPinner(links []LinkConfig, logger *Logger) *Pinner {
 }
 
 // pinRoute is the default route of a device: the gateway, or "" for a
-// point-to-point device (for example PPPoE).
+// point-to-point device (for example PPPoE). family is "inet6" for an IPv4
+// route with an IPv6 gateway ("via inet6 ADDR"), else "". onlink is true
+// for a gateway outside the subnets of the device.
 type pinRoute struct {
 	gateway string
+	family  string
+	onlink  bool
 }
 
 // Pin sends the traffic to pinHosts through the link for the time d. A
-// second Pin of the same link sets the rules again (new addresses) and
-// starts the time again. Pin refuses another link while a link has the
-// traffic.
-func (p *Pinner) Pin(link string, d time.Duration) error {
+// second Pin of the same link and owner sets the rules again (new
+// addresses) and starts the time again. A calibration session replaces a
+// pin of the control socket. Else Pin refuses while a pin exists.
+func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	dev, ok := p.devices[link]
 	if !ok {
 		return fmt.Errorf("unknown link %q", link)
@@ -95,7 +112,11 @@ func (p *Pinner) Pin(link string, d time.Duration) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.link != "" && p.link != link {
+	replace := owner == PinOwnerCalibration && p.owner == PinOwnerControl
+	if p.link != "" && (p.link != link || p.owner != owner) && !replace {
+		if p.owner == PinOwnerCalibration {
+			return fmt.Errorf("a calibration of link %q has the traffic of the load", p.link)
+		}
 		return fmt.Errorf("link %q has the traffic of the load, unpin it first", p.link)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pinLookupTimeout)
@@ -140,22 +161,25 @@ func (p *Pinner) Pin(link string, d time.Duration) error {
 	for _, a := range v6 {
 		cmds = append(cmds, []string{"-6", "rule", "add", "to", a, "lookup", pinTable, "priority", pinPriority})
 	}
+	p.link, p.owner = "", ""
 	for _, c := range cmds {
 		if out, err := execCommand("ip", c...); err != nil {
 			clearPin()
-			p.link = ""
 			return fmt.Errorf("ip %s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
-	p.link = link
-	p.timer = time.AfterFunc(d, func() { p.expire(link) })
+	p.link, p.owner = link, owner
+	p.gen++
+	gen := p.gen
+	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
 	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(append(v4, v6...), " "))
 	return nil
 }
 
 // Unpin removes the rules of the link. With link "", it removes the rules
-// of any link. It is not an error if no link has the traffic.
-func (p *Pinner) Unpin(link string) error {
+// of any link. It is not an error if no link has the traffic. Only the
+// owner of the pin can remove it.
+func (p *Pinner) Unpin(owner, link string) error {
 	if link != "" {
 		if _, ok := p.devices[link]; !ok {
 			return fmt.Errorf("unknown link %q", link)
@@ -169,6 +193,14 @@ func (p *Pinner) Unpin(link string) error {
 	if link != "" && link != p.link {
 		return fmt.Errorf("link %q does not have the traffic of the load (link %q has it)", link, p.link)
 	}
+	if owner != p.owner {
+		// The control socket does not remove the pin of a session. A
+		// session does not remove a pin that replaced its own.
+		if owner == PinOwnerControl {
+			return fmt.Errorf("a calibration of link %q has the traffic of the load", p.link)
+		}
+		return nil
+	}
 	p.unpinLocked()
 	return nil
 }
@@ -181,14 +213,14 @@ func (p *Pinner) Clear() {
 	defer p.mu.Unlock()
 	p.stopTimer()
 	clearPin()
-	p.link = ""
+	p.link, p.owner = "", ""
 }
 
-// expire removes the rules at the end of the time of a pin.
-func (p *Pinner) expire(link string) {
+// expire removes the rules at the end of the time of the pin gen.
+func (p *Pinner) expire(gen int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.link != link || p.timer == nil {
+	if p.link == "" || p.gen != gen {
 		return
 	}
 	p.unpinLocked()
@@ -198,7 +230,7 @@ func (p *Pinner) unpinLocked() {
 	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
 	p.stopTimer()
 	clearPin()
-	p.link = ""
+	p.link, p.owner = "", ""
 }
 
 func (p *Pinner) stopTimer() {
@@ -230,9 +262,17 @@ func routeCmd(fam, dev string, r pinRoute, ok bool) []string {
 	}
 	c := []string{fam, "route", "replace", "default"}
 	if r.gateway != "" {
-		c = append(c, "via", r.gateway)
+		c = append(c, "via")
+		if r.family != "" {
+			c = append(c, r.family)
+		}
+		c = append(c, r.gateway)
 	}
-	return append(c, "dev", dev, "table", pinTable)
+	c = append(c, "dev", dev, "table", pinTable)
+	if r.onlink {
+		c = append(c, "onlink")
+	}
+	return c
 }
 
 // defaultRoute finds the default route of the device in all route tables.
@@ -253,15 +293,17 @@ func defaultRoute(fam, dev string) (r pinRoute, ok bool, err error) {
 		}
 		var cur pinRoute
 		table := "main"
-		for i := 1; i+1 < len(f); i++ {
-			switch f[i] {
-			case "via":
+		for i := 1; i < len(f); i++ {
+			switch {
+			case f[i] == "onlink":
+				cur.onlink = true
+			case f[i] == "via" && i+1 < len(f):
 				cur.gateway = f[i+1]
 				// "via inet6 ADDR" (a gateway of another family).
 				if (cur.gateway == "inet" || cur.gateway == "inet6") && i+2 < len(f) {
-					cur.gateway = f[i+2]
+					cur.family, cur.gateway = f[i+1], f[i+2]
 				}
-			case "table":
+			case f[i] == "table" && i+1 < len(f):
 				table = f[i+1]
 			}
 		}

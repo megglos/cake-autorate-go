@@ -164,14 +164,15 @@ func main() {
 		}(lc, link.Name)
 	}
 
+	// Rules of an earlier process (after a crash) go away, also if this
+	// config has no control socket. At the stop, the rules of this process
+	// go away.
+	pinner := NewPinner(cfg.Links, logger)
+	pinner.Clear()
+	defer pinner.Clear()
+
 	var calib *Calibrator
-	var pinner *Pinner
 	if cfg.ControlSocket != "" {
-		// Rules of an earlier process (after a crash) go away. At the stop,
-		// the rules of this process go away.
-		pinner = NewPinner(cfg.Links, logger)
-		pinner.Clear()
-		defer pinner.Clear()
 		// The calibration sessions write their files next to the
 		// control socket (a RAM file system on OpenWrt).
 		targets := make(map[string]CalTarget, len(controls))

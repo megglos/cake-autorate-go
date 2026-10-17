@@ -71,10 +71,11 @@ type LinkControl interface {
 	SetUnshaped(on bool, d time.Duration) error
 }
 
-// PinControl is the part of the Pinner that the control socket uses.
+// PinControl is the part of the Pinner that the control socket and the
+// Calibrator use. owner is PinOwnerControl or PinOwnerCalibration.
 type PinControl interface {
-	Pin(link string, d time.Duration) error
-	Unpin(link string) error
+	Pin(owner, link string, d time.Duration) error
+	Unpin(owner, link string) error
 }
 
 // CalControl is the part of the Calibrator that the control socket uses.
@@ -188,7 +189,7 @@ func handlePinCommand(f []string, h *ControlHandler) string {
 		if convErr != nil || s < 1 || s > maxPinSeconds {
 			return fmt.Sprintf("error: SECONDS must be 1 to %d", maxPinSeconds)
 		}
-		err = h.Pin.Pin(f[1], time.Duration(s)*time.Second)
+		err = h.Pin.Pin(PinOwnerControl, f[1], time.Duration(s)*time.Second)
 	} else {
 		if len(f) > 2 {
 			return "error: usage: unpin [LINK]"
@@ -197,7 +198,7 @@ func handlePinCommand(f []string, h *ControlHandler) string {
 		if len(f) == 2 {
 			link = f[1]
 		}
-		err = h.Pin.Unpin(link)
+		err = h.Pin.Unpin(PinOwnerControl, link)
 	}
 	if err != nil {
 		return "error: " + oneLine.Replace(err.Error())

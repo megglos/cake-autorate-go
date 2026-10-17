@@ -665,17 +665,17 @@ type fakePin struct {
 	err   error
 }
 
-func (f *fakePin) Pin(link string, d time.Duration) error {
+func (f *fakePin) Pin(owner, link string, d time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fmt.Sprintf("pin %s %v", link, d))
+	f.calls = append(f.calls, fmt.Sprintf("pin %s %s %v", owner, link, d))
 	return f.err
 }
 
-func (f *fakePin) Unpin(link string) error {
+func (f *fakePin) Unpin(owner, link string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, "unpin "+link)
+	f.calls = append(f.calls, "unpin "+owner+" "+link)
 	return nil
 }
 
@@ -700,7 +700,7 @@ func TestCalibrationPinsTheLink(t *testing.T) {
 		if st.State != "done" {
 			t.Fatalf("failed pin %v: status %+v", failed, st)
 		}
-		want := []string{fmt.Sprintf("pin wan %v", total), "unpin wan"}
+		want := []string{fmt.Sprintf("pin calibration wan %v", total), "unpin calibration wan"}
 		if failed {
 			want = want[:1]
 		}

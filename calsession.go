@@ -405,11 +405,11 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	// session runs: on a router with one WAN link, the load uses the link.
 	var pinErr error
 	if k.pin != nil {
-		if pinErr = k.pin.Pin(link, pinTime); pinErr != nil {
+		if pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, pinErr)
 		} else {
 			defer func() {
-				if err := k.pin.Unpin(link); err != nil {
+				if err := k.pin.Unpin(PinOwnerCalibration, link); err != nil {
 					k.logger.Errorf("[%s] calibration: %v", link, err)
 				}
 			}()
