@@ -981,11 +981,11 @@ func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
 // upload and the download delay (ms) at the time t since the start. It
 // returns the deltas of the last ping (ms).
 func owdRun(c *Core, d time.Duration, owd func(t time.Duration) (ulMs, dlMs float64)) (dlDeltaMs, ulDeltaMs float64) {
-	rd := &reflectorDelay{}
 	start := time.Now()
 	for t := time.Duration(0); t <= d; t += 300 * time.Millisecond {
 		ul, dl := owd(t)
 		p := owdPing("1.1.1.1", start.Add(t), ul, dl)
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
 		dlUs, ulUs := c.owdDeltas(rd, p)
 		dlDeltaMs, ulDeltaMs = dlUs/1000, ulUs/1000
 	}
@@ -1003,6 +1003,27 @@ func TestOWDDeltas_ClockSlewIsNotDelay(t *testing.T) {
 		})
 		if dl > 0.5 || ul > 0.5 {
 			t.Errorf("clock change %+.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*10, dl, ul)
+		}
+	}
+}
+
+// After the boot, ntpd slews the clock faster than the kernel frequency
+// limit: here 150 ms in 30 s. Without load, the deltas must stay small.
+func TestOWDDeltas_FastClockSlewIsNotDelay(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c, _ := newTestCore(t)
+		start := time.Now()
+		var maxDl, maxUl, dl, ul float64
+		for t := time.Duration(0); t <= 40*time.Second; t += 300 * time.Millisecond {
+			drift := sign * 150 * math.Min(t.Seconds()/30, 1)
+			p := owdPing("1.1.1.1", start.Add(t), 10-drift, 10+drift)
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
+			maxDl, maxUl = math.Max(maxDl, dl), math.Max(maxUl, ul)
+		}
+		if maxDl > 10 || maxUl > 10 || dl > 0.5 || ul > 0.5 {
+			t.Errorf("slew %+.0f ms: maximum delta dl %.1f ms, ul %.1f ms, last dl %.1f ms, ul %.1f ms", sign*150, maxDl, maxUl, dl, ul)
 		}
 	}
 }

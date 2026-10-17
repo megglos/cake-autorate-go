@@ -159,7 +159,7 @@ Requirements for `icmp-timestamp`:
 
   If you set reflectors, use only reflectors that reply. The program shows a warning for each reflector that is known to not reply (the default reflectors for `icmp`). If all reflectors of a link are known to not reply, the program does not start. The program does not test the other reflectors at the start. The program replaces a reflector that does not reply with a spare reflector from the list (see [Reflectors](#reflectors)).
 - A firewall that lets ICMP timestamp replies (type 14) through.
-- A correct clock (NTP) on the router. The controller uses only the change of each one-way delay. Thus, a constant clock offset has no effect. A change of the clock moves delay from one direction to the other, and the RTT does not change. The controller finds such a change and removes it from the delay delta: a slew of up to 0.5 ms each second, and a step of 50 ms or more (for example, from NTP after the boot).
+- A correct clock (NTP) on the router. The controller uses only the change of each one-way delay. Thus, a constant clock offset has no effect. A change of the clock moves delay from one direction to the other, and the RTT does not change. The controller finds such a change and removes it from the delay delta, for example after the boot, when NTP sets the clock. During a queue, a slow change (up to 0.5 ms each second) and a step (50 ms or more) are removed. Other changes go out of the delta when the queue is empty.
 
 ## Delay thresholds
 
