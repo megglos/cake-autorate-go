@@ -123,8 +123,12 @@ const maxOWDRTTDiffUs = 25000
 
 // clockMaxLoad is the maximum load (achieved rate / shaper rate) of each
 // direction for a clock step and for the move of the baselines with
-// clockSplitGain. At this load, the shaper has no queue.
-const clockMaxLoad = 0.5
+// clockSplitGain. At this load, the shaper has no queue. The replies
+// cannot show a queue that exists from the first reply on (also the RTT
+// baseline has it): a low limit needs a shaper rate of 5 times the
+// capacity for this case. NTP changes the clock at the boot, when the
+// link is usually idle.
+const clockMaxLoad = 0.2
 
 // maxStepRTTChangeUs is the maximum change of the RTT from one reply to
 // the next at a clock step (noise and whole milliseconds).

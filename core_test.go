@@ -1398,6 +1398,24 @@ func queueMoveAfterCapacityDrop(t *testing.T, q float64) {
 	}
 }
 
+// A queue of 200 ms exists from the first reply on, at a measured load of
+// 40 % (the shaper rate is far above the capacity). The RTT baseline also
+// has the queue. The queue moves from the upload to the download at the
+// same RTT: it is not a clock step, and the download delta must show it.
+func TestOWDDeltas_QueueFromFirstReply(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		if t < 6*time.Second {
+			return 210, 10
+		}
+		return 10, 210
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
 // With the shaping off, the load is against 10 Gbit/s and stays low also
 // with a queue. A queue that moves from the upload to the download at the
 // same RTT must stay in the delta: it is not a clock step. Two paths: the
