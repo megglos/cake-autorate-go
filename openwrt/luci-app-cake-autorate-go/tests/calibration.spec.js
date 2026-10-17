@@ -180,30 +180,15 @@ test('the dialog shows the time and the data volume, and starts the session', as
 	// direction at the maximum: 40 * 3 * (10 + 4.375) MB = 1.7 GB.
 	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 1.7 GB');
 	await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 5 minutes');
-	// The default data limit is 1.5 times the volume, up to the next 100 MB.
-	await expect(modal.locator('#cake-autorate-calibrate-limit')).toHaveValue('2600');
+	await expect(modal.locator('.cake-autorate-estimate')).toContainText('uses more data');
 	await modal.locator('#cake-autorate-calibrate-load').selectOption('20');
 	await expect(modal.locator('.cake-autorate-estimate')).toContainText(/approximately 86[23] MB/);
-	await expect(modal.locator('#cake-autorate-calibrate-limit')).toHaveValue('1300');
+	// No data limit: the user can stop the calibration with "Stop".
+	await expect(modal.locator('input[type=number]')).toHaveCount(0);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('.cake-autorate-block')).toContainText('Block 1 of 5');
-	await expect(modal.locator('.cake-autorate-used')).toContainText('Data: 0 MB of 1.3 GB.');
+	await expect(modal.locator('.cake-autorate-used')).toHaveText('Data: 0 MB.');
 	expect(session.starts).toEqual([ { link: 'wan', load_s: 20 } ]);
-});
-
-test('the load stops the session at the data limit', async ({ page }) => {
-	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ]);
-	await routeSession(page, session);
-	const load = await routeLoad(page);
-	await page.goto(PAGE);
-	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
-	const modal = page.locator('.modal');
-	// One upload is 4 MiB: more than the limit of 1 MB.
-	await modal.locator('#cake-autorate-calibrate-limit').fill('1');
-	await modal.getByRole('button', { name: 'Start' }).click();
-	await expect(modal).toContainText('The calibration stopped: the load reached the data limit of 1 MB.', { timeout: 10000 });
-	expect(session.stops).toBe(1);
-	expect(load.up).toBe(0);
 });
 
 test('a late answer at the load of the page does not take over the session of the dialog', async ({ page }) => {
@@ -220,8 +205,7 @@ test('a late answer at the load of the page does not take over the session of th
 	await page.waitForTimeout(3000);
 	await expect(page.locator('.modal')).not.toContainText('this page did not start it');
 	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 1 of 5');
-	// The load keeps the data limit of the dialog.
-	await expect(page.locator('.modal .cake-autorate-used')).toContainText(/ of [\d.]+ (MB|GB)\./);
+	await expect(page.locator('.modal .cake-autorate-used')).toContainText(/Data: [\d.]+ (MB|GB)\./);
 	await expect.poll(() => load.down, { timeout: 10000 }).toBeGreaterThan(0);
 });
 
@@ -384,24 +368,37 @@ test('Apply refuses rates that are not in the order minimum, base, maximum', asy
 	expect(vm('uci -q get cake-autorate.wan.dl_max_rate_kbps').trim()).toBe('80000');
 });
 
-test('a reload of the page shows the running session again and keeps the data limit', async ({ page }) => {
+test('a reload of the page shows the running session again and keeps the data volume', async ({ page }) => {
 	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ]);
 	await routeSession(page, session);
 	const load = await routeLoad(page);
 	await page.goto(PAGE);
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
-	await page.locator('.modal #cake-autorate-calibrate-limit').fill('100000');
 	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
 	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
+	await expect(page.locator('.modal .cake-autorate-used')).not.toHaveText('Data: 0 MB.', { timeout: 10000 });
+	// A phase without load: the volume does not change, and the page
+	// shows only the saved volume after the reload.
+	session.steps = [ running(3, 'ul', 'unshaped', 'tail', '') ];
+	await expect(page.locator('.modal .cake-autorate-load')).toContainText('No load in this phase.', { timeout: 10000 });
+	await page.waitForTimeout(1500);
+	const saved = await page.evaluate(() => JSON.parse(sessionStorage.getItem('cake-autorate-calibration-session')));
+	const bytes = saved.dl + saved.ul;
+	expect(bytes).toBeGreaterThan(0);
+	const shown = bytes >= 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB';
 	await page.reload();
 	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
-	await expect(page.locator('.modal .cake-autorate-used')).toContainText('of 100.0 GB');
-	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(0);
+	await expect(page.locator('.modal')).not.toContainText('this page did not start it');
+	await expect(page.locator('.modal .cake-autorate-used')).toHaveText(`Data: ${shown}.`);
+	// The load continues in the next load phase.
+	const up = load.up;
+	session.steps = [ running(3, 'ul', 'unshaped', 'load', 'ul') ];
+	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(up);
 });
 
-test('a session that this page did not start makes no load before the user sets a data limit', async ({ page }) => {
+test('a session that this page did not start makes no load before the user continues it', async ({ page }) => {
 	// A session that runs before the page opens (for example, from another
-	// browser): no data limit in the session storage.
+	// browser): not in the session storage.
 	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul') ], true);
 	await routeSession(page, session);
 	const load = await routeLoad(page);
@@ -413,19 +410,18 @@ test('a session that this page did not start makes no load before the user sets 
 	expect(load.up).toBe(0);
 	// No status requests: the heartbeat of the session is not from this page.
 	expect(session.polls || 0).toBe(polls);
-	await modal.locator('#cake-autorate-calibrate-takeover-limit').fill('5000');
+	await expect(modal.locator('input[type=number]')).toHaveCount(0);
 	await modal.getByRole('button', { name: 'Continue the load' }).click();
-	await expect(modal.locator('.cake-autorate-used')).toContainText('of 5.0 GB', { timeout: 10000 });
+	await expect(modal.locator('.cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
 	await expect.poll(() => load.up, { timeout: 10000 }).toBeGreaterThan(0);
 });
 
-test('the saved data limit of an older session does not start the load of a new session', async ({ page }) => {
+test('the saved session of this page does not start the load of a new session', async ({ page }) => {
 	const session = fakeSession([ running(3, 'ul', 'unshaped', 'load', 'ul', 'A') ]);
 	await routeSession(page, session);
 	const load = await routeLoad(page);
 	await page.goto(PAGE);
 	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
-	await page.locator('.modal #cake-autorate-calibrate-limit').fill('100000');
 	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
 	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 3 of 5', { timeout: 10000 });
 	// Session A ends, and another client starts session B of the link.
