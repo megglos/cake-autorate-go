@@ -54,10 +54,47 @@ func TestProposeFromProbe(t *testing.T) {
 	}
 }
 
+// Half of the reflectors have a noisy path. The median is a noisy
+// reflector: the limit must come from the good reflectors.
+func TestProposeFromProbe_HalfNoisy(t *testing.T) {
+	probes := []tsProbe{
+		goodProbe("a", 2), goodProbe("b", 2), goodProbe("c", 2), goodProbe("d", 3),
+		goodProbe("n1", 18), goodProbe("n2", 19), goodProbe("n3", 22), goodProbe("n4", 22),
+	}
+	method, refl, why := proposeFromProbe(probes, 6, 15*time.Second)
+	if method != PingMethodTimestamp || !slices.Equal(refl, []string{"a", "b", "c", "d"}) {
+		t.Errorf("method %q, reflectors %v", method, refl)
+	}
+	if !strings.Contains(why, "fewer than pinger_count") {
+		t.Errorf("why %q, want a note about pinger_count 6", why)
+	}
+}
+
+// Far reflectors can have a low jitter, but their replies come late. The
+// proposal has only the reflectors with an RTT near the lowest RTT.
+func TestProposeFromProbe_FarReflectors(t *testing.T) {
+	near := func(addr string, jit, rtt float64) tsProbe {
+		p := goodProbe(addr, jit)
+		p.MinRTTMs = rtt
+		return p
+	}
+	probes := []tsProbe{
+		near("fra", 2, 9), near("nbg", 2, 13), near("hel", 2, 36), near("lon", 3, 33),
+		near("waw", 2, 42), near("nj", 1, 91), near("sin", 1, 244), near("syd", 1, 328),
+	}
+	_, refl, why := proposeFromProbe(probes, 2, 15*time.Second)
+	if !slices.Equal(refl, []string{"fra", "nbg", "hel", "lon"}) {
+		t.Errorf("reflectors %v, want fra nbg hel lon (RTT at most 39 ms)", refl)
+	}
+	if !strings.Contains(why, "RTT above 39 ms") {
+		t.Errorf("why %q, want the RTT limit", why)
+	}
+}
+
 func TestProbeCandidates(t *testing.T) {
 	link := &LinkConfig{Reflectors: []string{"1.1.1.1", defaultTimestampReflectors[0]}}
 	got := probeCandidates(link)
-	want := append([]string{"1.1.1.1"}, defaultTimestampReflectors...)
+	want := slices.Concat([]string{"1.1.1.1"}, defaultTimestampReflectors, worldTimestampReflectors)
 	if !slices.Equal(got, want) {
 		t.Errorf("candidates: %v", got)
 	}

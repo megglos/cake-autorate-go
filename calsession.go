@@ -147,6 +147,13 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config, 
 		} else {
 			p.Why["ping_method"] = why
 		}
+		// The thresholds come from the jitter of the reflectors of the
+		// proposal.
+		var jitter []float64
+		if p.PingMethod == PingMethodTimestamp {
+			jitter = probeJitter(probe.Reflectors, p.Reflectors)
+		}
+		res.setThresholds(&p, jitter, fmt.Sprintf("ICMP timestamp probe, the %d reflectors in the list", len(p.Reflectors)))
 		for _, r := range probe.Reflectors {
 			if r.Sent > 0 {
 				probed[r.Addr] = true
@@ -164,6 +171,7 @@ func newCalOutput(link string, finished time.Time, res *calResult, cfg *Config, 
 			notes = append(notes, fmt.Sprintf("the ICMP timestamp probe did not run: %v", probe.Err))
 		}
 		p.PingMethod, p.Reflectors = cfg.PingMethod, nil
+		res.setThresholds(&p, nil, "")
 		delete(p.Why, "ping_method")
 		delete(p.Why, "reflectors")
 		notes = append(notes, fmt.Sprintf("the session pinged only %d reflectors (pinger_count %d): ping_method and reflectors keep the values of the config", len(res.Reflectors), cfg.PingerCount))

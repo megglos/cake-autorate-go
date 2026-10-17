@@ -645,8 +645,15 @@ const (
 	// calSpareReflectors is the number of reflectors in the list more than
 	// pinger_count (spares for misbehaving reflectors).
 	calSpareReflectors = 2
+	// calReflectorJitterMarginMs is added to the jitter limit of a
+	// reflector: on a line with 1 to 2 ms of jitter, 2 x the reference
+	// alone leaves out good reflectors.
+	calReflectorJitterMarginMs = 2.0
 	// calReflectorMaxJitter: a reflector with an idle jitter of more than
-	// this factor times the median is not in the list.
+	// this factor times the reference (+ calReflectorJitterMarginMs) is
+	// not in the list. The reference is the p25 of the jitter of all
+	// reflectors (the good ones): with the median, half of the reflectors
+	// can be noisy, and then the limit is too high.
 	calReflectorMaxJitter = 2.0
 )
 
@@ -660,6 +667,108 @@ func mbit(kbps float64) string {
 		return fmt.Sprintf("%.1f", kbps/1000)
 	}
 	return fmt.Sprintf("%.0f", kbps/1000)
+}
+
+// jitterLimit returns the maximum idle jitter of a reflector in the
+// proposal, from the idle jitter of all reflectors (ms).
+func jitterLimit(jitter []float64) float64 {
+	return calReflectorMaxJitter*newCalDist(jitter).P25 + calReflectorJitterMarginMs
+}
+
+// reflectorLimit returns the jitter limit of the reflectors with one-way
+// delays (ms), 0 without them.
+func (r *calResult) reflectorLimit() float64 {
+	var all []float64
+	for _, rf := range r.Reflectors {
+		if rf.OWD {
+			all = append(all, rf.IdleP95Ms)
+		}
+	}
+	if len(all) == 0 {
+		return 0
+	}
+	return jitterLimit(all)
+}
+
+// recordedJitter returns the idle jitter of the reflectors addrs from the
+// recordings (ms).
+func (r *calResult) recordedJitter(addrs []string) []float64 {
+	var j []float64
+	for _, rf := range r.Reflectors {
+		if rf.OWD && slices.Contains(addrs, rf.Addr) {
+			j = append(j, rf.IdleP95Ms)
+		}
+	}
+	return j
+}
+
+// calStable reports whether a direction has a stable capacity (for
+// example fiber or cable, not 5G).
+func calStable(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
+
+// setThresholds sets the delay thresholds and learn_cross_delay of the
+// proposal. jitter is the idle jitter of the reflectors in the list of the
+// proposal (ms), from the recordings or from the probe; src tells where it
+// comes from. Without a list (the proposal keeps the configured
+// reflectors), jitter is nil: then the thresholds come from the jitter of
+// all reflectors of the recordings.
+func (r *calResult) setThresholds(p *calProposal, jitter []float64, src string) {
+	delete(p.Why, "download threshold")
+	delete(p.Why, "upload threshold")
+	// A stable direction has a lower minimum.
+	floor := func(c calDist) float64 {
+		if calStable(c) {
+			return calStableThrMs
+		}
+		return calDefaultThrMs
+	}
+	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
+	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
+	// A noisy reflector is not in the list and does not increase the
+	// thresholds.
+	j := newCalDist(jitter)
+	if len(jitter) == 0 {
+		j, src = r.IdleJitterMs, fmt.Sprintf("all %d reflectors of the recordings", r.IdleJitterMs.N)
+	}
+	if j.N > 0 {
+		jit := math.Ceil(calJitterFactor * j.P50)
+		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
+		src := fmt.Sprintf("idle jitter (p95 of each reflector, %s): median %.1f ms", src, j.P50)
+		p.Why["download threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, dlFloor, calJitterFactor)
+		p.Why["upload threshold"] = fmt.Sprintf("%s; threshold = max(%.0f, %.0f x jitter)", src, ulFloor, calJitterFactor)
+	}
+	if c := r.CrossDelayMs; c.N > 0 {
+		p.LearnCrossDelay = c.P50 > calCrossDelayMinMs
+		p.Why["learn_cross_delay"] = fmt.Sprintf("upload delay from download activity: p50 %.1f, p95 %.1f ms (on above %.0f ms)", c.P50, c.P95, calCrossDelayMinMs)
+	}
+	if g := r.GrantDelayMs; g.N > 0 {
+		floor := math.Ceil(g.P50 + calGrantMarginMs)
+		grant := fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings), floor p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
+		if w := p.Why["upload threshold"]; w != "" {
+			p.Why["upload threshold"] = w + "; " + grant + "; threshold = max of the two"
+		} else {
+			p.Why["upload threshold"] = grant + fmt.Sprintf("; threshold = max(%.0f, floor)", ulFloor)
+		}
+		p.UlThrMs = math.Max(p.UlThrMs, floor)
+	}
+	// Without learn_cross_delay, the upload delay from download activity
+	// stays in the upload delta. Below its p95, the download pushes the
+	// upload rate down to the minimum.
+	// With learn_cross_delay, core removes a learned delay of approximately
+	// the p50, but not more than the upload threshold. Thus, the threshold
+	// must be above the p50, and above the rest at the p95 (p95 - p50).
+	if c := r.CrossDelayMs; c.N > 0 {
+		floor := math.Ceil(c.P95 + calCrossMarginMs)
+		why := fmt.Sprintf("floor p95 + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		if p.LearnCrossDelay {
+			floor = math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs)
+			why = fmt.Sprintf("learned delay p50, floor max(p50, p95 - p50) + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		}
+		if floor > p.UlThrMs {
+			p.UlThrMs = floor
+			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p50 %.1f, p95 %.1f ms, %s", c.P50, c.P95, why)
+		}
+	}
 }
 
 // propose makes the config proposal from the result.
@@ -679,7 +788,7 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// usually has), min = p5 / 2 (the shaper must be able to go below the
 	// low capacity values; the 1 s means hide short decreases). On a
 	// stable link, p25 is the capacity: base = calStableBaseFactor x p25.
-	stable := func(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
+	stable := calStable
 	base := func(c calDist, step int) (int, string) {
 		if stable(c) {
 			// A coarse step can round the base up to the capacity (for
@@ -715,62 +824,15 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		p.UlBase = max(p.UlBase, p.UlMin)
 	}
 
-	// Thresholds. A stable direction has a lower minimum.
-	floor := func(c calDist) float64 {
-		if stable(c) {
-			return calStableThrMs
-		}
-		return calDefaultThrMs
-	}
-	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
-	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
-	if j := r.IdleJitterMs; j.N > 0 {
-		jit := math.Ceil(calJitterFactor * j.P50)
-		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
-		p.Why["download threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, dlFloor, calJitterFactor)
-		p.Why["upload threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, ulFloor, calJitterFactor)
-	}
-	if c := r.CrossDelayMs; c.N > 0 {
-		p.LearnCrossDelay = c.P50 > calCrossDelayMinMs
-		p.Why["learn_cross_delay"] = fmt.Sprintf("upload delay from download activity: p50 %.1f, p95 %.1f ms (on above %.0f ms)", c.P50, c.P95, calCrossDelayMinMs)
-	}
-	if g := r.GrantDelayMs; g.N > 0 {
-		floor := math.Ceil(g.P50 + calGrantMarginMs)
-		grant := fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings), floor p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
-		if w := p.Why["upload threshold"]; w != "" {
-			p.Why["upload threshold"] = w + "; " + grant + "; threshold = max of the two"
-		} else {
-			p.Why["upload threshold"] = grant + fmt.Sprintf("; threshold = max(%.0f, floor)", ulFloor)
-		}
-		p.UlThrMs = math.Max(p.UlThrMs, floor)
-	}
-	// Without learn_cross_delay, the upload delay from download activity
-	// stays in the upload delta. Below its p95, the download pushes the
-	// upload rate down to the minimum.
-	// With learn_cross_delay, core removes a learned delay of approximately
-	// the p50, but not more than the upload threshold. Thus, the threshold
-	// must be above the p50, and above the rest at the p95 (p95 - p50).
-	if c := r.CrossDelayMs; c.N > 0 {
-		floor := math.Ceil(c.P95 + calCrossMarginMs)
-		why := fmt.Sprintf("floor p95 + %.0f ms = %.0f ms", calCrossMarginMs, floor)
-		if p.LearnCrossDelay {
-			floor = math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs)
-			why = fmt.Sprintf("learned delay p50, floor max(p50, p95 - p50) + %.0f ms = %.0f ms", calCrossMarginMs, floor)
-		}
-		if floor > p.UlThrMs {
-			p.UlThrMs = floor
-			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p50 %.1f, p95 %.1f ms, %s", c.P50, c.P95, why)
-		}
-	}
-
 	// Ping method and reflectors.
 	// The program selects the active reflectors at random from the list
 	// (and the spares from the rest). Thus, the list must not contain the
 	// reflectors with a high jitter: keep the best pinger_count + 2, and
-	// leave out the ones with more than 2 x the median jitter.
+	// leave out the ones above the jitter limit.
+	refLimit := r.reflectorLimit()
 	var owd []string
 	for _, rf := range r.Reflectors {
-		if rf.OWD && (r.IdleJitterMs.N == 0 || rf.IdleP95Ms <= calReflectorMaxJitter*r.IdleJitterMs.P50) {
+		if rf.OWD && rf.IdleP95Ms <= refLimit {
 			owd = append(owd, rf.Addr)
 		}
 	}
@@ -780,9 +842,13 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		n := len(owd)
 		p.Reflectors = owd[:min(len(owd), max(pingerCount+calSpareReflectors, calMinReflectors))]
 		p.Why["reflectors"] = fmt.Sprintf("%d reflectors reply to ICMP timestamps with a low idle jitter; the %d with the lowest jitter (the program selects %d of them at random)", n, len(p.Reflectors), min(pingerCount, len(p.Reflectors)))
+		if len(p.Reflectors) < pingerCount {
+			p.Why["reflectors"] += fmt.Sprintf("; fewer than pinger_count (%d): add reflectors with a low jitter, or set a lower pinger_count", pingerCount)
+		}
 	} else {
 		p.Why["ping_method"] = fmt.Sprintf("only %d reflectors reply to ICMP timestamps (need %d)", len(owd), calMinReflectors)
 	}
+	r.setThresholds(&p, r.recordedJitter(p.Reflectors), fmt.Sprintf("the %d reflectors in the list", len(p.Reflectors)))
 	return p
 }
 

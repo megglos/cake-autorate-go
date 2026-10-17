@@ -155,7 +155,12 @@ Requirements for `icmp-timestamp`:
     - fsn1-speed.hetzner.com
     - nbg1-speed.hetzner.com
     - hel1-speed.hetzner.com
+    - lon-gb-ping.vultr.com
+    - waw-pl-ping.vultr.com
+    - ping.online.net
   ```
+
+  These reflectors are in Europe. In other regions, use the online calibration: it also tests reflectors in North America, Asia and Australia, and proposes the ones with the lowest jitter.
 
   If you set reflectors, use only reflectors that reply. The program shows a warning for each reflector that is known to not reply (the default reflectors for `icmp`). If all reflectors of a link are known to not reply, the program does not start. The program does not test the other reflectors at the start. The program replaces a reflector that does not reply with a spare reflector from the list (see [Reflectors](#reflectors)).
 - A firewall that lets ICMP timestamp replies (type 14) through.
@@ -404,7 +409,7 @@ For the full procedure (how to record the session, what the script does, and how
 | Measurement | From | Config value |
 |---|---|---|
 | Capacity (1 s means) | unshaped `dl`, `ul` and `both` blocks | `min_rate_kbps` (p5 / 2), `base_rate_kbps` (p25; upload: not more than the p50 with download load), `max_rate_kbps` (p95) |
-| Idle jitter of each reflector | the idle time at the start of each block | delay thresholds (at least 2 × the median jitter, at least 30 ms); `reflectors`: the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the median (the program selects the active reflectors at random from the list) |
+| Idle jitter of each reflector | the idle time at the start of each block | delay thresholds (at least 2 × the median jitter of the reflectors in the list, at least 30 ms); `reflectors`: the `pinger_count` + 2 (at least 4) with the lowest jitter, without the ones above 2 × the p25 of the jitter + 2 ms (the program selects the active reflectors at random from the list) |
 | Upload delay from download activity | autorate `dl` blocks | `learn_cross_delay` (on if the median is more than 10 ms; without these blocks, the value of the session config stays) |
 | Upload grant delay (5G) | autorate `ul` blocks, while the upload shaper rate is less than half of the capacity | upload threshold: at least the median + 10 ms |
 | ICMP timestamp replies | all blocks | `ping_method` (`icmp-timestamp` with 4 or more reflectors) |
