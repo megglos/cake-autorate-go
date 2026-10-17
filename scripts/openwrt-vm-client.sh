@@ -57,10 +57,29 @@ cmd_up() {
 }
 
 cmd_down() {
+	# Deleting the namespace does not stop its processes. A Firefox in a
+	# deleted namespace keeps the lock of its profile. Thus, stop all
+	# processes in the namespace first and wait for them (10 s at most).
+	local pids i
+	pids=$(ip netns pids "$NS" 2>/dev/null || true)
+	if [ -n "$pids" ]; then
+		# shellcheck disable=SC2086
+		kill $pids 2>/dev/null || true
+		for i in $(seq 1 50); do
+			[ -z "$(ip netns pids "$NS" 2>/dev/null || true)" ] && break
+			sleep 0.2
+		done
+		pids=$(ip netns pids "$NS" 2>/dev/null || true)
+		if [ -n "$pids" ]; then
+			echo "processes in $NS do not stop: $pids" >&2
+			exit 1
+		fi
+	fi
 	ip netns del "$NS" 2>/dev/null || true
 	ip link del "$VETH" 2>/dev/null || true
 	ip link del "$BR" 2>/dev/null || true
-	ip link del "$TAP" 2>/dev/null || true
+	# "ip link del" does not delete a persistent tap device.
+	ip tuntap del dev "$TAP" mode tap 2>/dev/null || true
 	rm -rf "/etc/netns/$NS"
 }
 
