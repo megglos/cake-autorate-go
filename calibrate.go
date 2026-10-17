@@ -105,6 +105,7 @@ type calDist struct {
 	P10 float64 `json:"p10"`
 	P25 float64 `json:"p25"`
 	P50 float64 `json:"p50"`
+	P75 float64 `json:"p75"`
 	P90 float64 `json:"p90"`
 	P95 float64 `json:"p95"`
 }
@@ -116,7 +117,7 @@ func newCalDist(v []float64) calDist {
 	s := slices.Clone(v)
 	sort.Float64s(s)
 	q := func(p float64) float64 { return s[min(len(s)-1, int(p*float64(len(s))))] }
-	return calDist{N: len(s), P5: q(0.05), P10: q(0.10), P25: q(0.25), P50: q(0.50), P90: q(0.90), P95: q(0.95)}
+	return calDist{N: len(s), P5: q(0.05), P10: q(0.10), P25: q(0.25), P50: q(0.50), P75: q(0.75), P90: q(0.90), P95: q(0.95)}
 }
 
 // calReflector is the result for one reflector.
@@ -601,9 +602,30 @@ const (
 	// calJitterFactor: the threshold is at least this factor times the p95
 	// of the idle jitter. Else the jitter alone shows bufferbloat.
 	calJitterFactor = 2.0
+	// calStableRatio: a direction has a stable capacity (for example
+	// fiber or cable, not 5G) if the p25 of its unshaped capacity is at
+	// least this ratio of the p75. The p5 and the p95 are not robust: a
+	// session has few 1 s means, and one dip (a new connection of the
+	// load) is the p5.
+	calStableRatio = 0.9
+	// calStableBaseFactor: on a stable link, the base rate is this factor
+	// times the p25 of the capacity. Then the shaper is below the
+	// bottleneck, and the queue is in CAKE, not in the network.
+	calStableBaseFactor = 0.95
+	// calStableThrMs is the minimum delay threshold on a stable link. A
+	// fiber line with 3 ms idle delay and a queue of +12 ms in the
+	// network did not get a rate decrease with 30 ms. With 10 ms, the
+	// delay under load was +5 ms at a higher rate.
+	calStableThrMs = 10.0
 	// calCrossDelayMinMs: above this median upload delay from download
 	// activity, learn_cross_delay is useful.
 	calCrossDelayMinMs = 10.0
+	// calCrossMarginMs: without learn_cross_delay, the upload threshold is
+	// at least the p95 of the cross delay plus this margin. On a fiber
+	// line (cross delay p50 1 ms, p95 14 ms), an upload threshold of 10 ms
+	// pushed the upload rate to the minimum during the download: 246
+	// instead of 334 Mbit/s in the upload test.
+	calCrossMarginMs = 10.0
 	// calGrantMarginMs: the upload threshold is at least the median of the
 	// grant delay plus this margin. Below it, the upload rate collapses. On
 	// the 5G link, the median was 13 to 15 ms; a threshold of 15 ms gave
@@ -655,45 +677,90 @@ func (r *calResult) propose(cfg *Config) calProposal {
 
 	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
 	// usually has), min = p5 / 2 (the shaper must be able to go below the
-	// low capacity values; the 1 s means hide short decreases).
+	// low capacity values; the 1 s means hide short decreases). On a
+	// stable link, p25 is the capacity: base = calStableBaseFactor x p25.
+	stable := func(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
+	base := func(c calDist, step int) (int, string) {
+		if stable(c) {
+			// A coarse step can round the base up to the capacity (for
+			// example 9500 to 10000 kbit/s): then use a finer step.
+			target := calStableBaseFactor * c.P25
+			b := int(math.Floor(target))
+			for _, st := range []int{step, step / 10} {
+				if v := round(target, st); float64(v) < c.P25 {
+					b = v
+					break
+				}
+			}
+			return b, fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
+		}
+		return round(c.P25, step), ""
+	}
 	if c := r.DlCapacity; c.N > 0 {
-		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), round(c.P25, 1000), round(c.P95, 1000)
-		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95))
+		b, why := base(c, 1000)
+		p.DlMin, p.DlBase, p.DlMax = round(c.P5/2, 1000), b, round(c.P95, 1000)
+		p.Why["download rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
 	}
 	if c := r.UlCapacity; c.N > 0 {
-		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), round(c.P25, 500), round(c.P95, 500)
-		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95))
+		b, why := base(c, 500)
+		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), b, round(c.P95, 500)
+		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
 		// With download load, the upload capacity can be much lower. The
 		// minimum must be below it.
 		if b := r.UlCapacityBoth; b.N > 0 {
 			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
 			p.UlBase = min(p.UlBase, round(b.P50, 500))
-			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(p25, p50 with download load))", mbit(b.P5), mbit(b.P50))
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(base, p50 with download load))", mbit(b.P5), mbit(b.P50))
 		}
 		p.UlBase = max(p.UlBase, p.UlMin)
 	}
 
-	// Thresholds.
-	p.DlThrMs, p.UlThrMs = calDefaultThrMs, calDefaultThrMs
+	// Thresholds. A stable direction has a lower minimum.
+	floor := func(c calDist) float64 {
+		if stable(c) {
+			return calStableThrMs
+		}
+		return calDefaultThrMs
+	}
+	dlFloor, ulFloor := floor(r.DlCapacity), floor(r.UlCapacity)
+	p.DlThrMs, p.UlThrMs = dlFloor, ulFloor
 	if j := r.IdleJitterMs; j.N > 0 {
-		p.DlThrMs = math.Max(calDefaultThrMs, math.Ceil(calJitterFactor*j.P50))
-		p.Why["download threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, calDefaultThrMs, calJitterFactor)
+		jit := math.Ceil(calJitterFactor * j.P50)
+		p.DlThrMs, p.UlThrMs = math.Max(dlFloor, jit), math.Max(ulFloor, jit)
+		p.Why["download threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, dlFloor, calJitterFactor)
+		p.Why["upload threshold"] = fmt.Sprintf("idle jitter (p95 of each reflector): median %.1f ms; threshold = max(%.0f, %.0f x jitter)", j.P50, ulFloor, calJitterFactor)
 	}
 	if c := r.CrossDelayMs; c.N > 0 {
 		p.LearnCrossDelay = c.P50 > calCrossDelayMinMs
 		p.Why["learn_cross_delay"] = fmt.Sprintf("upload delay from download activity: p50 %.1f, p95 %.1f ms (on above %.0f ms)", c.P50, c.P95, calCrossDelayMinMs)
 	}
-	p.UlThrMs = p.DlThrMs
-	p.Why["upload threshold"] = p.Why["download threshold"]
 	if g := r.GrantDelayMs; g.N > 0 {
 		floor := math.Ceil(g.P50 + calGrantMarginMs)
 		grant := fmt.Sprintf("upload grant delay: p50 %.1f, p95 %.1f ms (%d pings), floor p50 + %.0f ms = %.0f ms", g.P50, g.P95, g.N, calGrantMarginMs, floor)
 		if w := p.Why["upload threshold"]; w != "" {
 			p.Why["upload threshold"] = w + "; " + grant + "; threshold = max of the two"
 		} else {
-			p.Why["upload threshold"] = grant + "; threshold = max(30, floor)"
+			p.Why["upload threshold"] = grant + fmt.Sprintf("; threshold = max(%.0f, floor)", ulFloor)
 		}
 		p.UlThrMs = math.Max(p.UlThrMs, floor)
+	}
+	// Without learn_cross_delay, the upload delay from download activity
+	// stays in the upload delta. Below its p95, the download pushes the
+	// upload rate down to the minimum.
+	// With learn_cross_delay, core removes a learned delay of approximately
+	// the p50, but not more than the upload threshold. Thus, the threshold
+	// must be above the p50, and above the rest at the p95 (p95 - p50).
+	if c := r.CrossDelayMs; c.N > 0 {
+		floor := math.Ceil(c.P95 + calCrossMarginMs)
+		why := fmt.Sprintf("floor p95 + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		if p.LearnCrossDelay {
+			floor = math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs)
+			why = fmt.Sprintf("learned delay p50, floor max(p50, p95 - p50) + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		}
+		if floor > p.UlThrMs {
+			p.UlThrMs = floor
+			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p50 %.1f, p95 %.1f ms, %s", c.P50, c.P95, why)
+		}
 	}
 
 	// Ping method and reflectors.

@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -35,6 +36,12 @@ type calTestLink struct {
 	loadStartDelayS      int     // load_start in blocks.tsv is this time late (warm-up program setup)
 	noSessionTxt         bool    // do not write session.txt
 	linkPingerCount      int     // the link overrides pinger_count (0: no override)
+	// capSwing makes the capacity variable (as on 5G): in each 5 s, the
+	// capacity steps down each second by capSwing/4 of the value.
+	capSwing float64
+	// dipEvery: each dipEvery seconds, the capacity is 75 % for one
+	// second (a new connection of the load). 0: no dips.
+	dipEvery int
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -95,6 +102,11 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 				case ulActive:
 					ul = l.ulCapKbps
 				}
+				swing := 1 - l.capSwing*float64((ms/1000)%5)/4
+				if l.dipEvery > 0 && (ms/1000)%l.dipEvery == 0 {
+					swing *= 0.75
+				}
+				dl, ul = dl*swing, ul*swing
 				if ms%200 == 0 {
 					rec.Rate("wan", RateStats{Timestamp: ts, DlRateKbps: dl, UlRateKbps: ul})
 				}
@@ -192,16 +204,19 @@ func TestCalibrateSession(t *testing.T) {
 		t.Errorf("notes = %v, want none", res.Notes)
 	}
 
+	// The capacity is constant: a stable link. Base = 95 % of p5. The
+	// download threshold has the minimum of a stable link. The upload
+	// threshold has the floor of the learned cross delay.
 	p := res.propose(cfg)
-	if p.DlMax != 200000 || p.DlBase != 200000 || p.DlMin != 100000 {
-		t.Errorf("download rates %d/%d/%d, want 100000/200000/200000", p.DlMin, p.DlBase, p.DlMax)
+	if p.DlMax != 200000 || p.DlBase != 190000 || p.DlMin != 100000 {
+		t.Errorf("download rates %d/%d/%d, want 100000/190000/200000", p.DlMin, p.DlBase, p.DlMax)
 	}
 	// Upload: min and base from the capacity with download load.
 	if p.UlMax != 40000 || p.UlBase != 10000 || p.UlMin != 5000 {
 		t.Errorf("upload rates %d/%d/%d, want 5000/10000/40000", p.UlMin, p.UlBase, p.UlMax)
 	}
-	if p.DlThrMs != 30 || p.UlThrMs != 30 {
-		t.Errorf("thresholds %.0f/%.0f ms, want 30/30", p.DlThrMs, p.UlThrMs)
+	if c := res.CrossDelayMs; p.DlThrMs != 10 || p.UlThrMs != math.Ceil(c.P50+calCrossMarginMs) {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and cross delay p50 %.1f + %.0f ms", p.DlThrMs, p.UlThrMs, c.P50, calCrossMarginMs)
 	}
 	if !p.LearnCrossDelay {
 		t.Error("learn_cross_delay = false, want true (cross delay 20 ms)")
@@ -228,6 +243,113 @@ func TestCalibrateSession(t *testing.T) {
 	}
 	if !got.LearnCrossDelay || got.Links[0].Upload.MinRateKbps != 5000 || len(got.Links[0].Reflectors) != 5 {
 		t.Errorf("generated config does not contain the proposal:\n%s", buf.String())
+	}
+}
+
+// A fiber line: stable capacity, low jitter, no grant delay. The base
+// rate is below the capacity, and the thresholds are 10 ms: else a queue
+// in the network of 10 to 20 ms does not decrease the rate. A dip of the
+// capacity in some seconds (a new connection of the load) is the p5: it
+// must not change the result.
+func TestCalibrateSession_StableLink(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, dipEvery: 7,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := res.DlCapacity; c.P5 > 500000 {
+		t.Fatalf("download capacity p5 %.0f kbit/s, want the dip (487500)", c.P5)
+	}
+	p := res.propose(cfg)
+	if p.DlBase != 618000 || p.DlMax != 650000 || p.UlBase != 313500 || p.UlMax != 330000 {
+		t.Errorf("rates dl base %d max %d, ul base %d max %d; want 618000/650000, 313500/330000", p.DlBase, p.DlMax, p.UlBase, p.UlMax)
+	}
+	// The upload threshold has also the floor of the grant delay: p50
+	// (approximately 1 ms here) + 10 ms.
+	if p.DlThrMs != 10 || p.UlThrMs < 10 || p.UlThrMs > 12 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and 10 to 12", p.DlThrMs, p.UlThrMs)
+	}
+	if w := p.Why["download rates"]; !strings.Contains(w, "stable capacity") {
+		t.Errorf("download rates comment %q, want the stable capacity", w)
+	}
+}
+
+// A stable link with a short upload delay from download activity (below
+// the limit of learn_cross_delay): the upload threshold must be above it.
+// Else the download pushes the upload rate down to the minimum.
+func TestCalibrateSession_StableLinkCrossDelay(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, crossDelayMs: 8,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if p.LearnCrossDelay {
+		t.Fatal("learn_cross_delay = true, want false (cross delay 8 ms)")
+	}
+	if want := math.Ceil(res.CrossDelayMs.P95 + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, res.CrossDelayMs.P95)
+	}
+}
+
+// A stable link with a long upload delay from download activity:
+// learn_cross_delay is on. Core removes a learned delay of not more than
+// the upload threshold. Thus, the threshold must be above the cross delay,
+// also if the stable link and the grant delay give a low threshold.
+func TestCalibrateSession_StableLinkLearnedCrossDelay(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, crossDelayMs: 30, grantDelayMs: 1,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if !p.LearnCrossDelay {
+		t.Fatal("learn_cross_delay = false, want true (cross delay 30 ms)")
+	}
+	c := res.CrossDelayMs
+	if want := math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p50 %.1f, p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, c.P50, c.P95)
+	}
+}
+
+// On a slow stable link, the rounding step must not round the base up to
+// the capacity.
+func TestCalibrateSession_StableSlowLinkBaseBelowCapacity(t *testing.T) {
+	for _, c := range []struct{ dl, ul float64 }{{10000, 5000}, {1800, 1000}} {
+		dir := writeCalSession(t, calTestLink{dlCapKbps: c.dl, ulCapKbps: c.ul, ulCapBothKbps: c.ul, idleJitterMs: 2})
+		res, cfg, err := calibrateSession(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := res.propose(cfg)
+		if float64(p.DlBase) >= c.dl || float64(p.UlBase) >= c.ul || float64(p.DlBase) < 0.9*c.dl || float64(p.UlBase) < 0.9*c.ul {
+			t.Errorf("capacity %.0f/%.0f kbit/s: base %d/%d, want between 90 %% and 100 %% of the capacity", c.dl, c.ul, p.DlBase, p.UlBase)
+		}
+	}
+}
+
+// A variable capacity (5G): base = p25 and the default minimum of the
+// thresholds, as before.
+func TestCalibrateSession_VariableLink(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 300000, ulCapKbps: 40000, ulCapBothKbps: 40000, idleJitterMs: 2, capSwing: 0.5,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if c := res.DlCapacity; p.DlBase != int(math.Round(c.P25/1000))*1000 {
+		t.Errorf("download base %d, want the p25 %.0f", p.DlBase, c.P25)
+	}
+	if p.DlThrMs != 30 || p.UlThrMs != 30 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 30/30", p.DlThrMs, p.UlThrMs)
 	}
 }
 
@@ -603,7 +725,9 @@ func TestCalibrateSession_NoUploadCapacityNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.ContainsFunc(res.Notes, func(n string) bool { return strings.Contains(n, "grant delay is not measured: it needs the upload capacity") }) {
+	if !slices.ContainsFunc(res.Notes, func(n string) bool {
+		return strings.Contains(n, "grant delay is not measured: it needs the upload capacity")
+	}) {
 		t.Errorf("notes %q, want the grant delay note about the missing upload capacity", res.Notes)
 	}
 }
