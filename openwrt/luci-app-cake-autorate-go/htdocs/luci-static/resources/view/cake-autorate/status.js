@@ -13,6 +13,7 @@
 'require ui';
 'require cake-autorate.common as common';
 'require cake-autorate.calibration as calibration';
+'require cake-autorate.bufferbloat as bufferbloat';
 
 const STATUS_FILE = '/var/run/cake-autorate/status.json';
 const ERROR_FILE = '/var/run/cake-autorate/config-error';
@@ -706,6 +707,15 @@ return view.extend({
 				'data-focus': focusKey(ls.name, 'calibrate', ''),
 				'click': ui.createHandlerFn(this, function() { calibration.open(ls); })
 			}, _('Calibrate…')));
+			// The test changes the shaping for its second run: not during a
+			// calibration, and not while the user turned the shaping off.
+			nodes.push(' ', E('button', {
+				'class': 'cbi-button cbi-button-action cake-autorate-bufferbloat',
+				'style': 'font-size:small; vertical-align:middle',
+				'disabled': (ls.calibrating || ls.unshaped || bufferbloat.running) ? '' : null,
+				'data-focus': focusKey(ls.name, 'bufferbloat', ''),
+				'click': ui.createHandlerFn(this, function() { bufferbloat.open(ls); })
+			}, _('Bufferbloat test…')));
 		}
 		return nodes;
 	},
