@@ -289,11 +289,20 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [calibration.md](calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
 | `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
 | `calibrate stop [SESSION]` | Stop the session (with `SESSION`: only if that session runs). The rate control continues as before the session. |
+| `pin LINK SECONDS` | Send all traffic to the load hosts of the LuCI app (`speed.cloudflare.com`) through the link, for `SECONDS` (1 to 3600). See below. |
+| `unpin [LINK]` | End `pin` (with `LINK`: only if this link has the traffic). |
 | `history` | Answer with the samples of the last 15 minutes of each link, as one line of JSON. The program adds one sample each second, when it writes the status file. Only with `status_history: true` and a status file. |
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.
 
 Each `unshape` sets the rates again, also when the shaping is already off; after an error answer of `unshape` or `shape`, send the command again. Use `unshape` for a short comparison, for example a bufferbloat test with and without the shaper. The delay measurement and the status continue. An idle link starts its pings at once, and the link does not go to `IDLE` while the shaping is off. While the shaping is off, the program refuses `pause`, `resume` and `calibrate start`; during a calibration, it refuses `unshape`. The unshaped state does not survive a restart, and the program turns the shaping on again before it stops. The status file shows the state of each link (`unshaped`) and, for `unshape LINK SECONDS`, the time left (`unshaped_left_s`). A program that turns the shaping off for a test (for example a web page) should send `SECONDS`. Then the shaping comes back also when that program stops. A recording contains the mode (`unshaped`) and the rate changes of `unshape` (`fixed_rate`) and of `shape` (`pause`).
+
+`pin` is for a router with more than one WAN link (for example with mwan3). The calibration and the bufferbloat test of the LuCI app use the browser to make the load. Without `pin`, the routing of the router selects the link of this traffic. `pin` makes these changes:
+
+- Route table 7370 gets the default route of the upload device of the link (`upload.interface`), for IPv4 and IPv6. The program uses the route of the main table, else of another table (for example of mwan3). If the device has no IPv6 default route, the IPv6 route is `unreachable`: the browser then uses IPv4.
+- For each address of `speed.cloudflare.com` (DNS lookup of the router), one rule `to ADDRESS lookup 7370` with priority 900. The rules of mwan3 have priorities from 1001: thus, the rules of `pin` come first.
+
+Only one link at a time can have the traffic. A second `pin` of the same link does the DNS lookup again and starts the time again. The program removes the rules and the routes at the end of the time, at `unpin`, at its stop and at its start (after a crash). During `pin`, the traffic of all clients to these addresses uses the link. If a browser gets other addresses for `speed.cloudflare.com` (for example with DNS over HTTPS), the rules have no effect.
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

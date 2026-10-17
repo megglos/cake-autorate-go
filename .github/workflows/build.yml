@@ -28,6 +28,13 @@ jobs:
       - name: Vet for 32 bit
         run: GOARCH=386 go vet ./...
 
+      # The rules and routes of "pin" with the kernel, in a new network
+      # namespace (root is necessary).
+      - name: Pin test in a network namespace
+        run: |
+          go test -c -o pin.test .
+          sudo CAKE_PIN_NETNS=1 unshare -n ./pin.test -test.run TestPinner_Kernel -test.v
+
       # Show the baseline comparison, the simulator scorecard and the known
       # issues in the job summary. This step also runs when the tests fail.
       - name: Simulator scorecard

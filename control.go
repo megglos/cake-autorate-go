@@ -40,6 +40,9 @@ import (
 //	calibrate status      answer: the status of the session as one line
 //	                      of JSON (see CalStatus)
 //	calibrate stop [SESSION] stop the session (only the session SESSION)
+//	pin LINK SECONDS      send the traffic to the load hosts of the LuCI
+//	                      app through the link (1 to 3600 s, see Pinner)
+//	unpin [LINK]          end the pin (of the link)
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
@@ -68,6 +71,12 @@ type LinkControl interface {
 	SetUnshaped(on bool, d time.Duration) error
 }
 
+// PinControl is the part of the Pinner that the control socket uses.
+type PinControl interface {
+	Pin(link string, d time.Duration) error
+	Unpin(link string) error
+}
+
 // CalControl is the part of the Calibrator that the control socket uses.
 type CalControl interface {
 	Start(link string, times calTimes) error
@@ -75,13 +84,14 @@ type CalControl interface {
 	Status() CalStatus
 }
 
-// ControlHandler has what the commands of the control socket use. History
-// and Calib can be nil.
+// ControlHandler has what the commands of the control socket use. History,
+// Calib and Pin can be nil.
 type ControlHandler struct {
 	Names   []string
 	Links   map[string]LinkControl
 	History HistorySource
 	Calib   CalControl
+	Pin     PinControl
 }
 
 // handleControlCommand runs one command and returns the answer line.
@@ -108,6 +118,8 @@ func handleControlCommand(line string, h *ControlHandler) string {
 		return string(data)
 	case "calibrate":
 		return handleCalibrateCommand(f[1:], h)
+	case "pin", "unpin":
+		return handlePinCommand(f, h)
 	case "pause", "resume":
 		if len(f) < 2 || len(f) > 3 {
 			return fmt.Sprintf("error: usage: %s LINK [dl|ul]", f[0])
@@ -159,6 +171,38 @@ func handleControlCommand(line string, h *ControlHandler) string {
 	default:
 		return fmt.Sprintf("error: unknown command %q", f[0])
 	}
+}
+
+// handlePinCommand runs "pin LINK SECONDS" and "unpin [LINK]".
+func handlePinCommand(f []string, h *ControlHandler) string {
+	if h.Pin == nil {
+		return "error: " + errNoPinner.Error()
+	}
+	var err error
+	if f[0] == "pin" {
+		if len(f) != 3 {
+			return "error: usage: pin LINK SECONDS"
+		}
+		// Check the range before the conversion to a duration.
+		s, convErr := strconv.Atoi(f[2])
+		if convErr != nil || s < 1 || s > maxPinSeconds {
+			return fmt.Sprintf("error: SECONDS must be 1 to %d", maxPinSeconds)
+		}
+		err = h.Pin.Pin(f[1], time.Duration(s)*time.Second)
+	} else {
+		if len(f) > 2 {
+			return "error: usage: unpin [LINK]"
+		}
+		link := ""
+		if len(f) == 2 {
+			link = f[1]
+		}
+		err = h.Pin.Unpin(link)
+	}
+	if err != nil {
+		return "error: " + oneLine.Replace(err.Error())
+	}
+	return "ok"
 }
 
 // handleCalibrateCommand runs "calibrate start|status|stop".

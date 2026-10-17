@@ -165,7 +165,13 @@ func main() {
 	}
 
 	var calib *Calibrator
+	var pinner *Pinner
 	if cfg.ControlSocket != "" {
+		// Rules of an earlier process (after a crash) go away. At the stop,
+		// the rules of this process go away.
+		pinner = NewPinner(cfg.Links, logger)
+		pinner.Clear()
+		defer pinner.Clear()
 		// The calibration sessions write their files next to the
 		// control socket (a RAM file system on OpenWrt).
 		targets := make(map[string]CalTarget, len(controls))
@@ -177,7 +183,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RunControlSocket(ctx, cfg.ControlSocket, &ControlHandler{Names: names, Links: controls, History: historySource(board), Calib: calib}, logger); err != nil {
+			if err := RunControlSocket(ctx, cfg.ControlSocket, &ControlHandler{Names: names, Links: controls, History: historySource(board), Calib: calib, Pin: pinner}, logger); err != nil {
 				logger.Errorf("control socket: %v", err)
 			}
 		}()
