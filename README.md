@@ -201,8 +201,8 @@ apk add --allow-untrusted ./cake-autorate-go-*.apk ./luci-app-cake-autorate-go-*
 
 Then:
 
-1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`).
-2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
+1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`): queue discipline `cake`, script `piece_of_cake.qos` or `layer_cake.qos`. The rates in SQM are only start values: the service changes them.
+2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link. With SQM, select the queue in **SQM queue**: the page sets the interfaces. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
 3. Open the tab **Status**. If an interface has no CAKE, the page shows a warning.
 
 ### Configuration with UCI
@@ -259,7 +259,7 @@ An empty field uses the default value of the program. The field shows this value
 
 ![The dialog of a link](docs/images/luci-link.png)
 
-The shapers must have CAKE: set them up with SQM (`luci-app-sqm`) or `tc`, then select the same interfaces in the link.
+The shapers must have CAKE: set them up with SQM (`luci-app-sqm`) or `tc`, then select the same interfaces in the link. If `/etc/config/sqm` has a queue, the dialog shows the field **SQM queue**. It lists the enabled SQM queues. A queue sets the upload interface to the WAN device of the queue and the download interface to its IFB (`ifb4` and the device name, cut to 15 characters). The dialog also shows a warning if no enabled SQM queue shapes an interface of the link with CAKE. Other CAKE setups (for example with `tc`) can ignore this warning.
 
 ![The section of the app on the Overview page](docs/images/luci-overview.png)
 

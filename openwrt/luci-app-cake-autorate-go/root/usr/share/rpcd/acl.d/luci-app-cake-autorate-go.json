@@ -10,7 +10,7 @@
 				"cake-autorate": [ "history", "qdisc" ],
 				"file": [ "read" ]
 			},
-			"uci": [ "cake-autorate" ]
+			"uci": [ "cake-autorate", "sqm" ]
 		},
 		"write": {
 			"ubus": {
