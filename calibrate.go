@@ -747,10 +747,19 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// Without learn_cross_delay, the upload delay from download activity
 	// stays in the upload delta. Below its p95, the download pushes the
 	// upload rate down to the minimum.
-	if c := r.CrossDelayMs; c.N > 0 && !p.LearnCrossDelay {
-		if floor := math.Ceil(c.P95 + calCrossMarginMs); floor > p.UlThrMs {
+	// With learn_cross_delay, core removes a learned delay of approximately
+	// the p50, but not more than the upload threshold. Thus, the threshold
+	// must be above the p50, and above the rest at the p95 (p95 - p50).
+	if c := r.CrossDelayMs; c.N > 0 {
+		floor := math.Ceil(c.P95 + calCrossMarginMs)
+		why := fmt.Sprintf("floor p95 + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		if p.LearnCrossDelay {
+			floor = math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs)
+			why = fmt.Sprintf("learned delay p50, floor max(p50, p95 - p50) + %.0f ms = %.0f ms", calCrossMarginMs, floor)
+		}
+		if floor > p.UlThrMs {
 			p.UlThrMs = floor
-			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p95 %.1f ms, floor p95 + %.0f ms = %.0f ms", c.P95, calCrossMarginMs, floor)
+			p.Why["upload threshold"] += fmt.Sprintf("; upload delay from download activity: p50 %.1f, p95 %.1f ms, %s", c.P50, c.P95, why)
 		}
 	}
 

@@ -204,9 +204,9 @@ func TestCalibrateSession(t *testing.T) {
 		t.Errorf("notes = %v, want none", res.Notes)
 	}
 
-	// The capacity is constant: a stable link. Base = 95 % of p5, and the
-	// thresholds have the minimum of a stable link (the upload has the
-	// floor of the grant delay).
+	// The capacity is constant: a stable link. Base = 95 % of p5. The
+	// download threshold has the minimum of a stable link. The upload
+	// threshold has the floor of the learned cross delay.
 	p := res.propose(cfg)
 	if p.DlMax != 200000 || p.DlBase != 190000 || p.DlMin != 100000 {
 		t.Errorf("download rates %d/%d/%d, want 100000/190000/200000", p.DlMin, p.DlBase, p.DlMax)
@@ -215,8 +215,8 @@ func TestCalibrateSession(t *testing.T) {
 	if p.UlMax != 40000 || p.UlBase != 10000 || p.UlMin != 5000 {
 		t.Errorf("upload rates %d/%d/%d, want 5000/10000/40000", p.UlMin, p.UlBase, p.UlMax)
 	}
-	if p.DlThrMs != 10 || p.UlThrMs < 24 || p.UlThrMs > 28 {
-		t.Errorf("thresholds %.0f/%.0f ms, want 10 and approximately 26 (grant delay)", p.DlThrMs, p.UlThrMs)
+	if c := res.CrossDelayMs; p.DlThrMs != 10 || p.UlThrMs != math.Ceil(c.P50+calCrossMarginMs) {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and cross delay p50 %.1f + %.0f ms", p.DlThrMs, p.UlThrMs, c.P50, calCrossMarginMs)
 	}
 	if !p.LearnCrossDelay {
 		t.Error("learn_cross_delay = false, want true (cross delay 20 ms)")
@@ -293,6 +293,28 @@ func TestCalibrateSession_StableLinkCrossDelay(t *testing.T) {
 	}
 	if want := math.Ceil(res.CrossDelayMs.P95 + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
 		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, res.CrossDelayMs.P95)
+	}
+}
+
+// A stable link with a long upload delay from download activity:
+// learn_cross_delay is on. Core removes a learned delay of not more than
+// the upload threshold. Thus, the threshold must be above the cross delay,
+// also if the stable link and the grant delay give a low threshold.
+func TestCalibrateSession_StableLinkLearnedCrossDelay(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, crossDelayMs: 30, grantDelayMs: 1,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if !p.LearnCrossDelay {
+		t.Fatal("learn_cross_delay = false, want true (cross delay 30 ms)")
+	}
+	c := res.CrossDelayMs
+	if want := math.Ceil(math.Max(c.P50, c.P95-c.P50) + calCrossMarginMs); p.UlThrMs < want || p.DlThrMs != 10 {
+		t.Errorf("thresholds %.0f/%.0f ms, want 10 and %.0f or more (cross delay p50 %.1f, p95 %.1f ms)", p.DlThrMs, p.UlThrMs, want, c.P50, c.P95)
 	}
 }
 
