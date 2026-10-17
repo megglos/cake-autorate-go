@@ -26,7 +26,7 @@ cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of
 - **One process for all links**, in one static binary. Netlink sets the CAKE bandwidth: no new process for each change.
 - **One-way delays with ICMP timestamps** in the program (`ping_method: icmp-timestamp`), without an external pinger. A queue in one direction decreases only the rate of that direction.
 - **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise` and `refractory_on_decrease`. Their default is off. Thus, the default behavior stays near the original.
-- **OpenWrt package with a LuCI app:** configuration of all settings and links, a status page with graphs, pause and resume of the rate control, and calibration of a link from the browser.
+- **OpenWrt package with a LuCI app:** configuration of all settings and links, a status page with graphs, pause and resume of the rate control, a button to turn the shaping off, and calibration and a bufferbloat test of a link from the browser.
 - **`calibrate`** makes a proposed config from a test session on your link.
 - **Config checks:** a warning for each unknown key, and for each reflector that is known to not reply to ICMP timestamp requests.
 - **Recording and replay** of the controller inputs and decisions, a link simulator, and link emulations for the tests.
