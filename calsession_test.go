@@ -663,6 +663,8 @@ type fakePin struct {
 	mu    sync.Mutex
 	calls []string
 	err   error
+	// onUnpin, if set, runs in Unpin.
+	onUnpin func()
 }
 
 func (f *fakePin) Pin(owner, link string, d time.Duration) error {
@@ -676,6 +678,9 @@ func (f *fakePin) Unpin(owner, link string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "unpin "+owner+" "+link)
+	if f.onUnpin != nil {
+		f.onUnpin()
+	}
 	return nil
 }
 
@@ -692,6 +697,10 @@ func TestCalibrationPinsTheLink(t *testing.T) {
 			pin.err = errors.New("no IPv4 default route")
 		}
 		k.pin = pin
+		// The unpin comes before the final state: else a new session of
+		// the link could pin first, and the unpin would remove its pin.
+		var stateAtUnpin string
+		pin.onUnpin = func() { stateAtUnpin = k.Status().State }
 		if err := k.Start("wan", times); err != nil {
 			t.Fatal(err)
 		}
@@ -706,6 +715,9 @@ func TestCalibrationPinsTheLink(t *testing.T) {
 		}
 		if fmt.Sprint(pin.calls) != fmt.Sprint(want) {
 			t.Errorf("failed pin %v: calls %v, want %v", failed, pin.calls, want)
+		}
+		if !failed && stateAtUnpin != "running" {
+			t.Errorf("state at the unpin %q, want running", stateAtUnpin)
 		}
 		note := strings.Contains(strings.Join(st.Result.Notes, "\n"), "not pinned to the link: no IPv4 default route")
 		if note != failed {

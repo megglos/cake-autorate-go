@@ -68,8 +68,10 @@ func pinTestLinks() []LinkConfig {
 }
 
 // With mwan3, the main table and the table of mwan3 have the default
-// route. The pin uses the route of the main table, for IPv4 and IPv6, and
-// adds one rule for each address.
+// route. The pin uses the IPv4 route of the main table and adds one rule
+// for each address. IPv6 is unreachable, also if the link has IPv6: with
+// native IPv6 on more than one link, the browser can use a source
+// address of another link.
 func TestPinner_PinAddsRoutesAndRules(t *testing.T) {
 	f := newFakeIP(t, map[string]string{
 		"-4": "default via 10.0.0.1 table 1 proto static metric 10\ndefault via 10.0.0.254 proto static metric 10\n",
@@ -84,7 +86,7 @@ func TestPinner_PinAddsRoutesAndRules(t *testing.T) {
 	for _, want := range []string{
 		"ip -4 route show table all default dev eth1",
 		"ip -4 route replace default via 10.0.0.254 dev eth1 table 7370",
-		"ip -6 route replace default via fe80::1 dev eth1 table 7370",
+		"ip -6 route replace unreachable default table 7370",
 		"ip -4 rule add to 162.159.140.220 lookup 7370 priority 900",
 		"ip -4 rule add to 172.66.0.218 lookup 7370 priority 900",
 		"ip -6 rule add to 2606:4700:7::da lookup 7370 priority 900",
@@ -274,11 +276,32 @@ func TestPinner_RouteAttributes(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ip -4 route replace default via inet6 fe80::1 dev eth1 table 7370 onlink",
-		"ip -6 route replace default via fe80::1 dev eth1 table 7370 onlink",
 	} {
 		if !f.has(want) {
 			t.Errorf("no call %q in %q", want, f.calls)
 		}
+	}
+}
+
+// A failed removal keeps the pin: Unpin reports the error, and the next
+// Unpin tries again.
+func TestPinner_FailedRemovalKeepsPin(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	f.fail = "-4 rule del"
+	if err := p.Unpin(PinOwnerControl, "wan"); err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Errorf("unpin with a failed removal: %v", err)
+	}
+	if p.link != "wan" || f.rules["-4"] != 1 {
+		t.Errorf("link %q, rules %v; want the pin to stay", p.link, f.rules)
+	}
+	f.fail = ""
+	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || p.link != "" || f.rules["-4"] != 0 {
+		t.Errorf("second unpin: %v, link %q, rules %v", err, p.link, f.rules)
 	}
 }
 
@@ -339,6 +362,9 @@ func TestPinner_Kernel(t *testing.T) {
 		{"addr", "add", "10.2.0.2/24", "dev", "wan2"},
 		{"route", "add", "default", "via", "10.1.0.1", "dev", "wan1", "metric", "10"},
 		{"route", "add", "default", "via", "10.2.0.1", "dev", "wan2", "metric", "20"},
+		// Only wan1 has IPv6.
+		{"-6", "addr", "add", "2001:db8:1::2/64", "dev", "wan1", "nodad"},
+		{"-6", "route", "add", "default", "via", "2001:db8:1::1", "dev", "wan1"},
 	} {
 		ip(c...)
 	}
@@ -362,9 +388,13 @@ func TestPinner_Kernel(t *testing.T) {
 	if got := ip("-4", "route", "get", "192.0.2.11"); !strings.Contains(got, "dev wan1") {
 		t.Errorf("route to another address: %s", got)
 	}
-	// wan2 has no IPv6 route: the IPv6 address is unreachable.
+	// IPv6 to the pinned address is unreachable (not through wan1), and
+	// another IPv6 address uses wan1.
 	if out, err := exec.Command("ip", "-6", "route", "get", "2001:db8::10").CombinedOutput(); err == nil && !strings.Contains(string(out), "unreachable") {
 		t.Errorf("IPv6 route to the pinned address: %s", out)
+	}
+	if got := ip("-6", "route", "get", "2001:db8::11"); !strings.Contains(got, "dev wan1") {
+		t.Errorf("IPv6 route to another address: %s", got)
 	}
 	p.Clear()
 	if got := ip("-4", "route", "get", "192.0.2.10"); !strings.Contains(got, "dev wan1") {

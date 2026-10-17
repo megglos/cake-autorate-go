@@ -23,9 +23,11 @@ import (
 // another link. The Pinner sends all traffic to the addresses of pinHosts
 // through one link, for a time:
 //
-//   - a route table (pinTable) with the default route of the link, for
-//     IPv4 and IPv6. Without an IPv6 route on the link, the IPv6 default
-//     route of the table is "unreachable": the browser then uses IPv4.
+//   - a route table (pinTable) with the IPv4 default route of the link.
+//     The IPv6 default route of the table is "unreachable": the browser
+//     then uses IPv4. With native IPv6 on more than one WAN link, the
+//     browser can use a source address of another link: the provider of
+//     the pinned link can refuse these packets.
 //   - one "ip rule" for each address (to ADDR lookup pinTable), with the
 //     priority pinPriority. mwan3 uses priorities from 1001: the rules of
 //     the Pinner come first.
@@ -38,6 +40,10 @@ const pinPriority = "900"
 
 // maxPinSeconds is the maximum time of "pin LINK SECONDS".
 const maxPinSeconds = 3600
+
+// pinRetry is the time until the next try of a failed removal at the end
+// of a pin.
+const pinRetry = 10 * time.Second
 
 // pinLookupTimeout is the maximum time of the DNS lookup of pinHosts.
 const pinLookupTimeout = 5 * time.Second
@@ -145,16 +151,13 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	if !ok4 {
 		return fmt.Errorf("device %s of link %q has no IPv4 default route", dev, link)
 	}
-	route6, ok6, err := defaultRoute("-6", dev)
-	if err != nil {
-		return err
-	}
 
 	// Remove the rules of an earlier pin: the addresses can change.
+	if err := clearPin(); err != nil {
+		return err
+	}
 	p.stopTimer()
-	clearPin()
-	cmds := [][]string{routeCmd("-4", dev, route4, true)}
-	cmds = append(cmds, routeCmd("-6", dev, route6, ok6))
+	cmds := [][]string{routeCmd("-4", dev, route4, true), routeCmd("-6", dev, pinRoute{}, false)}
 	for _, a := range v4 {
 		cmds = append(cmds, []string{"-4", "rule", "add", "to", a, "lookup", pinTable, "priority", pinPriority})
 	}
@@ -164,7 +167,9 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	p.link, p.owner = "", ""
 	for _, c := range cmds {
 		if out, err := execCommand("ip", c...); err != nil {
-			clearPin()
+			if cerr := clearPin(); cerr != nil {
+				p.logger.Errorf("[%s] %v", link, cerr)
+			}
 			return fmt.Errorf("ip %s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
@@ -201,8 +206,7 @@ func (p *Pinner) Unpin(owner, link string) error {
 		}
 		return nil
 	}
-	p.unpinLocked()
-	return nil
+	return p.unpinLocked()
 }
 
 // Clear removes all rules and routes of the Pinner, also of an earlier
@@ -212,7 +216,9 @@ func (p *Pinner) Clear() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopTimer()
-	clearPin()
+	if err := clearPin(); err != nil {
+		p.logger.Errorf("%v", err)
+	}
 	p.link, p.owner = "", ""
 }
 
@@ -223,14 +229,22 @@ func (p *Pinner) expire(gen int) {
 	if p.link == "" || p.gen != gen {
 		return
 	}
-	p.unpinLocked()
+	if err := p.unpinLocked(); err != nil {
+		p.logger.Errorf("[%s] %v (next try in %v)", p.link, err, pinRetry)
+		p.timer = time.AfterFunc(pinRetry, func() { p.expire(gen) })
+	}
 }
 
-func (p *Pinner) unpinLocked() {
-	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
+// unpinLocked removes the rules of the pin. If that fails, the pin stays:
+// a next Unpin or the timer tries again.
+func (p *Pinner) unpinLocked() error {
 	p.stopTimer()
-	clearPin()
+	if err := clearPin(); err != nil {
+		return err
+	}
+	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
 	p.link, p.owner = "", ""
+	return nil
 }
 
 func (p *Pinner) stopTimer() {
@@ -240,17 +254,37 @@ func (p *Pinner) stopTimer() {
 	}
 }
 
-// clearPin removes the rules and the routes of pinTable. The errors are
-// not important: "ip rule del" fails when no rule is left.
-func clearPin() {
+// clearPin removes the rules and the routes of pinTable. "ip rule del"
+// fails when no rule is left, and "ip route flush" fails when the table
+// does not exist: these errors are the end. Other errors are failures.
+func clearPin() error {
+	var errs []error
 	for _, fam := range []string{"-4", "-6"} {
-		for range pinMaxRules {
-			if _, err := execCommand("ip", fam, "rule", "del", "lookup", pinTable); err != nil {
+		for i := 0; ; i++ {
+			out, err := execCommand("ip", fam, "rule", "del", "lookup", pinTable)
+			if err != nil {
+				if !pinAbsent(out) {
+					errs = append(errs, fmt.Errorf("ip %s rule del: %v: %s", fam, err, strings.TrimSpace(string(out))))
+				}
+				break
+			}
+			if i >= pinMaxRules {
+				errs = append(errs, fmt.Errorf("ip %s rule del: more than %d rules of table %s", fam, pinMaxRules, pinTable))
 				break
 			}
 		}
-		_, _ = execCommand("ip", fam, "route", "flush", "table", pinTable)
+		if out, err := execCommand("ip", fam, "route", "flush", "table", pinTable); err != nil && !pinAbsent(out) {
+			errs = append(errs, fmt.Errorf("ip %s route flush: %v: %s", fam, err, strings.TrimSpace(string(out))))
+		}
 	}
+	return errors.Join(errs...)
+}
+
+// pinAbsent reports whether the output of "ip" tells that the rule or the
+// table does not exist.
+func pinAbsent(out []byte) bool {
+	s := string(out)
+	return strings.Contains(s, "No such file or directory") || strings.Contains(s, "does not exist")
 }
 
 // routeCmd returns the arguments of "ip" for the default route of

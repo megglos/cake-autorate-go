@@ -404,15 +404,12 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	// The load of the session goes through the link. Without it, the
 	// session runs: on a router with one WAN link, the load uses the link.
 	var pinErr error
+	pinned := false
 	if k.pin != nil {
 		if pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, pinErr)
 		} else {
-			defer func() {
-				if err := k.pin.Unpin(PinOwnerCalibration, link); err != nil {
-					k.logger.Errorf("[%s] calibration: %v", link, err)
-				}
-			}()
+			pinned = true
 		}
 	}
 	// The session restores the rate control after the last block, before
@@ -434,6 +431,13 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 			err = fmt.Errorf("restore the rate control: %v (after: %v)", ferr, err)
 		} else {
 			err = fmt.Errorf("restore the rate control: %w", ferr)
+		}
+	}
+	// Unpin before the final state: after it, a new session of the link
+	// can start and pin the link again.
+	if pinned {
+		if err := k.pin.Unpin(PinOwnerCalibration, link); err != nil {
+			k.logger.Errorf("[%s] calibration: %v", link, err)
 		}
 	}
 	k.mu.Lock()
