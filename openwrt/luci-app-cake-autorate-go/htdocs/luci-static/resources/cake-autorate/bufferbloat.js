@@ -112,9 +112,21 @@ return baseclass.extend({
 		};
 	},
 
-	// The time of one run (s).
-	runSeconds: function() {
-		return this.phases.reduce((s, p) => s + p.seconds, 0);
+	// The phases of a run. Only the last run has the phase without load:
+	// without load, the shaping has no effect, and the delay is the same in
+	// the two runs. With the shaping on, an idle link also stops its pings.
+	runPhases: function(last) {
+		return this.phases.filter((p) => p.load || last);
+	},
+
+	// The time of a run with the phases (s).
+	runSeconds: function(phases) {
+		return phases.reduce((s, p) => s + p.seconds, 0);
+	},
+
+	// The time of the test with runs runs (s).
+	testSeconds: function(runs) {
+		return this.runSeconds(this.runPhases(true)) + (runs - 1) * (this.runSeconds(this.runPhases(false)) + PAUSE_S);
 	},
 
 	// The data volume of one run with the maximum rates of the link.
@@ -138,12 +150,12 @@ return baseclass.extend({
 		const update = () => {
 			const runs = compare.checked ? 2 : 1;
 			info.replaceChildren(text(_('Time: approximately %d s. Data volume: approximately %s with the maximum rates of the link. Without the shaping, a link that is faster than its maximum rate uses more data.')
-				.format(runs * this.runSeconds() + (runs - 1) * PAUSE_S, volume(runs * this.estimate(ls)))));
+				.format(this.testSeconds(runs), volume(runs * this.estimate(ls)))));
 		};
 		compare.addEventListener('change', update);
 		update();
 		ui.showModal(_('Bufferbloat test of the link %s').format(ls.name), [
-			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. The traffic of this browser must go through this link (on a router with more than one WAN link, check the routing). Do not use the network during the test.'))),
+			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. The traffic of this browser must go through this link (on a router with more than one WAN link, check the routing). Do not use the network during the test. With the comparison, only the run without shaping has the phase without load: without load, the shaping has no effect.'))),
 			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-compare' }, _('Compare without shaping')),
 				E('div', { 'class': 'cbi-value-field' }, [
@@ -182,7 +194,7 @@ return baseclass.extend({
 		const total = compare ? 2 : 1;
 		return (async () => {
 			try {
-				runs.push(await this.run(link, _('With shaping'), 1, total, false));
+				runs.push(await this.run(link, _('With shaping'), 1, total, false, this.runPhases(!compare)));
 				if (compare && !this.cancelled)
 					await this.wait(link, PAUSE_S, _('Pause between the runs'));
 				// A stop in the pause: no change of the shaping.
@@ -193,9 +205,10 @@ return baseclass.extend({
 					// can leave the shaping off, and the end of the test
 					// must turn it on again.
 					this.unshaped = true;
-					checkAnswer(await callUnshape(link, this.runSeconds() + 60));
+					const phases = this.runPhases(true);
+					checkAnswer(await callUnshape(link, this.runSeconds(phases) + 60));
 					await this.waitForShaping(link, true);
-					runs.push(await this.run(link, _('Without shaping'), 2, total, true));
+					runs.push(await this.run(link, _('Without shaping'), 2, total, true, phases));
 				}
 			}
 			catch (e) {
@@ -266,22 +279,20 @@ return baseclass.extend({
 		}
 	},
 
-	// Runs the phases once. Returns { title, phases: [ { key, samples,
-	// dl, ul, seconds } ] }.
 	// Runs the phases once. Returns { title, phases: [ { key, dl, ul, idle,
 	// bytes, seconds } ] }. The phases end at their time: a slow status
 	// request does not make a phase longer. unshaped is true for the run
 	// without shaping: then each status must show the unshaped link.
-	run: async function(link, title, number, total, unshaped) {
+	run: async function(link, title, number, total, unshaped, phases) {
 		const result = { title: title, phases: [] };
 		// The number of ping replies before the run: a status with more
 		// replies has a new delay. The count goes on across the phases.
 		// The Stop button shows before the first status request.
-		this.renderRunning(_('Run %d of %d (%s)').format(number, total, title), this.runSeconds(), null);
+		this.renderRunning(_('Run %d of %d (%s)').format(number, total, title), this.runSeconds(phases), null);
 		const first = await this.readLink(link, 1000);
 		this.checkState(first, unshaped);
 		let lastReplies = (first && !isNaN(+first.ls.replies)) ? +first.ls.replies : null;
-		for (const p of this.phases) {
+		for (const p of phases) {
 			if (this.cancelled)
 				break;
 			// linkKbps is the largest rate of the link (from the program)

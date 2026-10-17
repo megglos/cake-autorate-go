@@ -188,13 +188,19 @@ test('the comparison turns the shaping off for the second run, with a time limit
 	try {
 		const modal = await openDialog(page);
 		await modal.locator('#cake-autorate-bufferbloat-compare').check();
-		await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 19 s');
+		// The run with shaping has no phase without load: 6 s, 3 s pause and
+		// 8 s.
+		await expect(modal.locator('.cake-autorate-estimate')).toContainText('approximately 17 s');
 		await modal.getByRole('button', { name: 'Start' }).click();
 		await expect(modal.locator('.cake-autorate-phase')).toContainText('Run 2 of 2 (Without shaping)', { timeout: 20000 });
 		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('true');
 		const tables = modal.locator('table.cake-autorate-bufferbloat-result');
 		await expect(tables).toHaveCount(2, { timeout: 20000 });
 		await expect(modal.locator('#cake-autorate-bufferbloat h4')).toHaveText([ 'With shaping', 'Without shaping' ]);
+		// Only the run without shaping has the phase without load.
+		await expect(tables.nth(0).locator('tr[data-phase]')).toHaveCount(3);
+		await expect(tables.nth(0).locator('tr[data-phase="idle"]')).toHaveCount(0);
+		await expect(tables.nth(1).locator('tr[data-phase="idle"]')).toHaveCount(1);
 		// The time limit: the run (8 s) and 60 s.
 		expect(calls).toEqual([ [ 'unshape', { link: 'wan', seconds: 68 } ], [ 'shape', { link: 'wan' } ] ]);
 		await expect.poll(() => unshapedInFile(), { timeout: 10000 }).toBe('false');
