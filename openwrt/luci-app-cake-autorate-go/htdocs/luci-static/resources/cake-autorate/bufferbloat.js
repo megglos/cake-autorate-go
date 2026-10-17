@@ -332,6 +332,9 @@ return baseclass.extend({
 					// comes late can be from the warm-up.
 					const asked = performance.now();
 					const st = await this.readLink(link, end - asked);
+					// A stop during the request: no sample (the load stopped).
+					if (this.cancelled)
+						break;
 					// Also a load error during the last status request.
 					if (this.load.errors > 0)
 						throw new Error(_('The load failed: %s').format(this.load.lastError));
@@ -353,7 +356,9 @@ return baseclass.extend({
 					// ("replies" increases). Without new replies (Idle, Stall,
 					// reflectors that do not reply), the phase gets no sample.
 					const replies = st ? +st.ls.replies : NaN;
-					if (st && measuring && lastReplies != null && replies > lastReplies) {
+					// Only in RUNNING: before IDLE or STALL, the counter can
+					// increase, and the delay delta stays from before.
+					if (st && measuring && st.ls.state == 'RUNNING' && lastReplies != null && replies > lastReplies) {
 						ph.dl.push(+st.ls.download.delta_ms || 0);
 						ph.ul.push(+st.ls.upload.delta_ms || 0);
 					}
@@ -372,9 +377,15 @@ return baseclass.extend({
 			finally {
 				clearTimeout(warmTimer);
 			}
+			// A stopped phase is not complete: its samples can be from the
+			// time after the load stopped. It gets no result.
+			if (this.cancelled) {
+				result.phases.pop();
+				break;
+			}
 			// A load phase without data in a direction of the load (the
 			// requests hang): its delay is not a delay under load.
-			if (!this.cancelled && p.load && ph.bytes) {
+			if (p.load && ph.bytes) {
 				for (const dir of [ 'dl', 'ul' ])
 					if ((p.load == dir || p.load == 'both') && ph.bytes[dir] == 0)
 						throw new Error(_('The load did not transfer data (%s).').format(dir == 'dl' ? _('download') : _('upload')));

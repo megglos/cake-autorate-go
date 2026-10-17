@@ -604,3 +604,45 @@ test('a load error during the last status request of a phase stops the test', as
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal).toContainText('The load failed: HTTP 403', { timeout: 20000 });
 });
+
+test('a status in Idle is not a sample, also with new replies', async ({ page }) => {
+	// The reply counter increases (default of the mock), but the link is in
+	// Idle: the delay delta is from before.
+	await routeUbus(page, (s) => {
+		s.links[0].state = 'IDLE';
+		Object.assign(s.links[0].download, { delta_ms: 0.1, achieved_kbps: 1e7 });
+		s.links[0].upload.achieved_kbps = 1e7;
+	});
+	await routeLoad(page);
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const table = modal.locator('table.cake-autorate-bufferbloat-result');
+	await expect(table).toHaveCount(1, { timeout: 20000 });
+	await expect(table.locator('tr[data-phase="dl"]')).toContainText('no ping replies');
+	await expect(table.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('a stopped phase is not in the result', async ({ page }) => {
+	await routeUbus(page, (s) => {
+		s.links[0].state = 'RUNNING';
+		Object.assign(s.links[0].download, { delta_ms: 2, achieved_kbps: 1e7 });
+	});
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'idle', load: '', seconds: 2 }, { key: 'dl', load: 'dl', seconds: 20 } ];
+		b.warmup = 0;
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal.locator('.cake-autorate-phase')).toContainText('download', { timeout: 10000 });
+	await page.waitForTimeout(3000);
+	await modal.getByRole('button', { name: 'Stop' }).click();
+	await expect(modal).toContainText('The test stopped.', { timeout: 10000 });
+	const table = modal.locator('table.cake-autorate-bufferbloat-result');
+	await expect(table.locator('tr[data-phase="idle"]')).toHaveCount(1);
+	await expect(table.locator('tr[data-phase="dl"]')).toHaveCount(0);
+});
