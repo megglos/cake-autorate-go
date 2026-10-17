@@ -339,14 +339,15 @@ return baseclass.extend({
 					// Also a load error during the last status request.
 					if (this.load.errors > 0)
 						throw new Error(_('The load failed: %s').format(this.load.lastError));
+					// The state also of a status that comes after the end.
+					this.checkState(st, unshaped);
 					if (performance.now() >= end)
 						break;
-					this.checkState(st, unshaped);
 					const measuring = asked >= warmEnd;
-				if (st && measuring) {
-					ph.linkKbps.dl = Math.max(ph.linkKbps.dl, +st.ls.download.achieved_kbps || 0);
-					ph.linkKbps.ul = Math.max(ph.linkKbps.ul, +st.ls.upload.achieved_kbps || 0);
-				}
+					if (st && measuring) {
+						ph.linkKbps.dl = Math.max(ph.linkKbps.dl, +st.ls.download.achieved_kbps || 0);
+						ph.linkKbps.ul = Math.max(ph.linkKbps.ul, +st.ls.upload.achieved_kbps || 0);
+					}
 					// Only a status with a new ping reply has a new delay delta
 					// ("replies" increases). Without new replies (Idle, Stall,
 					// reflectors that do not reply), the phase gets no sample.

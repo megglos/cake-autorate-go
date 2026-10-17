@@ -670,3 +670,33 @@ test('the first status of a run stops the test before the load', async ({ page }
 	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
 	expect(load.down + load.up).toBe(0);
 });
+
+test('a status that comes after the end of the phase is also checked', async ({ page }) => {
+	// From 1 s after Start, the status shows a calibration, and its answer
+	// comes after the end of the 1.8 s phase.
+	let t0 = Infinity;
+	await routeUbus(page, (s, asked) => {
+		s.links[0].state = 'RUNNING';
+		Object.assign(s.links[0].download, { delta_ms: 2, achieved_kbps: 1e7 });
+		if (asked - t0 > 900)
+			s.links[0].calibrating = true;
+	});
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 1.8 } ];
+		b.warmup = 0;
+		const read = b.readLink;
+		// A busy page: each answer comes 1 s after the request.
+		b.readLink = function(...args) {
+			return read.apply(this, args).then((v) => new Promise((resolve) => setTimeout(() => resolve(v), 1000)));
+		};
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	t0 = Date.now();
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
+	await expect(modal.locator('[data-grade]')).toHaveCount(0);
+});
