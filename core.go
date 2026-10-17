@@ -79,7 +79,28 @@ type reflectorDelay struct {
 	owdInit      bool
 	dlBaselineUs float64
 	ulBaselineUs float64
+	// owdTime is the time of the last reply with one-way delays.
+	owdTime time.Time
+	// dlLastUs and ulLastUs are the last deltas (before the limit to 0).
+	dlLastUs float64
+	ulLastUs float64
 }
+
+// maxClockSlewUsPerS is the maximum change of the clock offset that
+// owdDeltas moves between the one-way delay baselines during a queue (µs
+// for each second). It is the frequency limit of the Linux kernel. A path
+// change is faster: most of it does not move between the baselines.
+const maxClockSlewUsPerS = 500
+
+// minClockStepUs is the minimum clock step that owdDeltas finds from one
+// reply to the next. ntpd steps the clock for an offset of more than
+// 128 ms, and slews it for a smaller offset. A smaller value can come from
+// noise.
+const minClockStepUs = 50000
+
+// clockSplitGain is the part of a delta that owdDeltas moves to the
+// baseline for each reply while the RTT is near its baseline.
+const clockSplitGain = 0.25
 
 // Core is the cake-autorate control algorithm for one WAN link.
 //
@@ -357,17 +378,66 @@ func (c *Core) HandlePing(result PingResult) {
 // owdDeltas updates the one-way delay baselines of a reflector. It returns
 // the download and the upload delta. Each baseline contains the clock
 // offset between the hosts. Thus, the delta does not contain it.
+//
+// A change of the clock offset (for example, NTP after the boot) moves the
+// two one-way delays by the same value in opposite directions. The RTT
+// does not change. owdDeltas removes a clock change from the deltas with
+// three rules:
+//
+//   - The RTT is near its baseline: no queue in the two directions. Each
+//     baseline moves by clockSplitGain of its delta (a fast slew of ntpd
+//     after the boot).
+//   - A delay is below its baseline, and the delay of the other direction
+//     is above its baseline: a queue only increases a delay. The two
+//     baselines move by the smaller difference, with a limit of
+//     maxClockSlewUsPerS (a slow slew during a queue). A path change is
+//     faster: most of it does not move.
+//   - The two deltas change from one reply to the next by minClockStepUs
+//     or more in opposite directions, and the RTT stays near its baseline
+//     (a step). The two baselines move by the step at once. A queue stays
+//     in its delta.
 func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDeltaUs float64) {
 	dlUs := float64(result.DlOWD.Microseconds())
 	ulUs := float64(result.UlOWD.Microseconds())
 	if !rd.owdInit {
 		rd.owdInit = true
 		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
+		rd.owdTime = result.Timestamp
 		return 0, 0
+	}
+	// shift > 0: the clock offset moves delay from the upload to the
+	// download.
+	shift := math.Min(math.Max(rd.ulBaselineUs-ulUs, 0), math.Max(dlUs-rd.dlBaselineUs, 0)) -
+		math.Min(math.Max(rd.dlBaselineUs-dlUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0))
+	maxShift := maxClockSlewUsPerS * math.Max(result.Timestamp.Sub(rd.owdTime).Seconds(), 0)
+	shift = math.Max(-maxShift, math.Min(shift, maxShift))
+	// A clock step (NTP after the boot) changes the two deltas by the same
+	// value in opposite directions. A queue stays in its direction. A queue
+	// can also move from one direction to the other, but then the RTT
+	// stays above its baseline by the size of the queue.
+	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
+	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
+	rttExcessUs := (dlUs - rd.dlBaselineUs) + (ulUs - rd.ulBaselineUs)
+	if step := (dlChangeUs - ulChangeUs) / 2; math.Abs(step) >= minClockStepUs &&
+		math.Abs(dlChangeUs+ulChangeUs) < math.Abs(step)/2 && math.Abs(rttExcessUs) < math.Abs(step)/4 {
+		shift = step
+	}
+	rd.owdTime = result.Timestamp
+	rd.dlBaselineUs += shift
+	rd.ulBaselineUs -= shift
+	// The RTT is near its baseline (the RTT does not contain the clock
+	// offset): no queue in the two directions. Then a delta is a clock
+	// change (for example, a fast slew of ntpd after the boot). Move each
+	// baseline a part of the way to its delay: the delays have noise.
+	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
+	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
+		rd.dlBaselineUs += clockSplitGain * dlExcessUs
+		rd.ulBaselineUs += clockSplitGain * ulExcessUs
 	}
 	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
 	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
-	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
+	rd.dlLastUs, rd.ulLastUs = dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
+	return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
 }
 
 const (
