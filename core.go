@@ -103,6 +103,9 @@ type Core struct {
 	consecutiveTimeouts int
 	// lastPingOWD is true if the last ping reply had one-way delays.
 	lastPingOWD bool
+	// replies is the number of ping replies that Core used (in RUNNING),
+	// for the status: a reader can find the samples with a new delay.
+	replies int
 	// calibrating is true during a calibration session. Then Core does not
 	// go to IDLE: the session needs the pings also without load.
 	calibrating bool
@@ -326,6 +329,7 @@ func (c *Core) HandlePing(result PingResult) {
 	// If timeouts update lastPingTime, the stall detection does not operate.
 	c.lastPingTime = result.Timestamp
 	c.consecutiveTimeouts = 0
+	c.replies++
 
 	rttUs := float64(result.RTT.Microseconds())
 
