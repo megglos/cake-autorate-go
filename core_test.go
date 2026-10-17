@@ -1216,6 +1216,30 @@ func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
 	}
 }
 
+// The time in the reflector (40 ms) goes away, and a download queue of
+// 40 ms comes at the same time: the RTT does not change. The load is low
+// (the queue is in the network). The download delta must keep the queue.
+func TestOWDDeltas_ReflectorTimeReplacedByQueue(t *testing.T) {
+	c, _ := newTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 40; i++ {
+		dlMs, inMs := 10.0, 40.0
+		if i >= 20 {
+			dlMs, inMs = 50, 0
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10, dlMs)
+		p.ReflectorTime = time.Duration(inMs) * time.Millisecond
+		p.RTT += p.ReflectorTime
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
 // With the shaping off, the load is against 10 Gbit/s and stays low also
 // with a queue. A queue that moves from the upload to the download at the
 // same RTT must stay in the delta: it is not a clock step. Two paths: the

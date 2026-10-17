@@ -84,6 +84,9 @@ type reflectorDelay struct {
 	// dlLastUs and ulLastUs are the last deltas (before the limit to 0).
 	dlLastUs float64
 	ulLastUs float64
+	// pathBaselineUs is the baseline of the RTT without the time in the
+	// reflector. The one-way delays do not contain this time.
+	pathBaselineUs float64
 }
 
 // maxClockSlewUsPerS is the maximum change of the clock offset that
@@ -422,12 +425,15 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	if math.Abs(dlUs+ulUs+inReflectorUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
 		return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
 	}
+	pathUs := float64(result.RTT.Microseconds()) - inReflectorUs
 	if !rd.owdInit {
 		rd.owdInit = true
 		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
+		rd.pathBaselineUs = pathUs
 		rd.owdTime = result.Timestamp
 		return 0, 0
 	}
+	rd.pathBaselineUs = c.ewmaBaseline(rd.pathBaselineUs, pathUs)
 	// shift > 0: the clock offset moves delay from the upload to the
 	// download.
 	shift := math.Min(math.Max(rd.ulBaselineUs-ulUs, 0), math.Max(dlUs-rd.dlBaselineUs, 0)) -
@@ -455,13 +461,13 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	rd.dlBaselineUs += shift
 	rd.ulBaselineUs -= shift
 	// The load of the two directions is low: no queue can occur. If the RTT
-	// is also near its baseline (the RTT does not contain the clock
-	// offset), a delta is a clock change (for example, a fast slew of
-	// ntpd after the boot). Move each baseline a part of the way to its
+	// without the time in the reflector is also near its baseline (the RTT
+	// does not contain the clock offset), a delta is a clock change (for
+	// example, a fast slew of ntpd after the boot). Move each baseline a part of the way to its
 	// delay: the delays have noise. With a higher load, a path change and
 	// a queue can look like a clock change.
 	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
-	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); lowLoad &&
+	if rttExcess := math.Abs(pathUs - rd.pathBaselineUs); lowLoad &&
 		rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
 		rd.dlBaselineUs += clockSplitGain * dlExcessUs
 		rd.ulBaselineUs += clockSplitGain * ulExcessUs
