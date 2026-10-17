@@ -40,15 +40,19 @@ async function routeLoad(page, status) {
 	return load;
 }
 
+// The calls of pin and unpin of the last routeUbus.
+let pinCalls = [];
+
 // Changes the status file that the page reads (the file on the router
-// does not change), and records the calls of unshape and shape (in calls)
-// and of pin and unpin (in calls.pins).
+// does not change), and records the calls of unshape and shape. It
+// answers pin and unpin itself (the routing of the VM does not change)
+// and records them in pinCalls. With pinError, pin answers this error.
 // Each status read gets one more ping reply ("replies"), as a link with
 // pings; mutate(status, asked) can change it. asked is the time of the
 // request (Date.now()).
-async function routeUbus(page, mutate, failShape, statusDelay) {
+async function routeUbus(page, mutate, failShape, statusDelay, pinError) {
 	const calls = [];
-	calls.pins = [];
+	pinCalls = [];
 	let replies = 1000;
 	await page.route('**/ubus/**', async (route) => {
 		const request = route.request().postDataJSON();
@@ -56,8 +60,16 @@ async function routeUbus(page, mutate, failShape, statusDelay) {
 		for (const q of requests)
 			if (q && q.params && q.params[1] == 'cake-autorate' && /^(un)?shape$/.test(q.params[2]))
 				calls.push([ q.params[2], q.params[3] ]);
-			else if (q && q.params && q.params[1] == 'cake-autorate' && /^(un)?pin$/.test(q.params[2]))
-				calls.pins.push([ q.params[2], q.params[3] ]);
+		const isPin = (q) => q && q.params && q.params[1] == 'cake-autorate' && /^(un)?pin$/.test(q.params[2]);
+		if (requests.some(isPin)) {
+			// The page sends pin and unpin alone (not in a batch).
+			const answers = requests.map((q) => {
+				pinCalls.push([ q.params[2], q.params[3] ]);
+				const result = (pinError && q.params[2] == 'pin') ? { error: pinError } : { result: 'ok' };
+				return { jsonrpc: '2.0', id: q.id, result: [ 0, result ] };
+			});
+			return route.fulfill({ json: Array.isArray(request) ? answers : answers[0] });
+		}
 		// "shape" fails: an answer with an error, the router gets nothing.
 		const shape = requests.find((q) => q && q.params && q.params[2] == 'shape');
 		if (failShape && shape && requests.length == 1) {
@@ -713,32 +725,29 @@ test('replies from the warm-up are not samples, also in a late status', async ({
 });
 
 test('the test pins the link for its time and unpins it at the end', async ({ page }) => {
-	const calls = await routeUbus(page);
+	await routeUbus(page);
 	await routeLoad(page);
 	const modal = await openDialog(page);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('table.cake-autorate-bufferbloat-result')).toHaveCount(1, { timeout: 20000 });
 	// The time: the run (8 s) and 60 s.
-	expect(calls.pins).toEqual([ [ 'pin', { link: 'wan', seconds: 68 } ], [ 'unpin', { link: 'wan' } ] ]);
+	expect(pinCalls).toEqual([ [ 'pin', { link: 'wan', seconds: 68 } ], [ 'unpin', { link: 'wan' } ] ]);
 	await expect(modal.locator('[data-pin-error]')).toHaveCount(0);
 });
 
 test('a failed pin shows a notice, and the test runs', async ({ page }) => {
-	await routeUbus(page);
+	await routeUbus(page, (s) => {
+		Object.assign(s.links[0], { state: 'RUNNING' });
+		// The load goes through the link.
+		Object.assign(s.links[0].download, { delta_ms: 2, achieved_kbps: 1e7 });
+		Object.assign(s.links[0].upload, { delta_ms: 2, achieved_kbps: 1e7 });
+	}, false, 0, 'device eth1 of link "wan" has no IPv4 default route');
 	await routeLoad(page);
-	// The last route comes first: it answers pin with an error.
-	await page.route('**/ubus/**', async (route) => {
-		const body = route.request().postDataJSON();
-		const requests = Array.isArray(body) ? body : [ body ];
-		const pin = requests.find((q) => q && q.params && q.params[1] == 'cake-autorate' && q.params[2] == 'pin');
-		if (!pin || requests.length != 1)
-			return route.fallback();
-		const answer = { jsonrpc: '2.0', id: pin.id, result: [ 0, { error: 'device eth1 of link "wan" has no IPv4 default route' } ] };
-		return route.fulfill({ json: Array.isArray(body) ? [ answer ] : answer });
-	});
 	const modal = await openDialog(page);
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('table.cake-autorate-bufferbloat-result')).toHaveCount(1, { timeout: 20000 });
 	await expect(modal.locator('[data-pin-error]')).toContainText('The load was not pinned to this link: device eth1 of link "wan" has no IPv4 default route.');
-	await expect(modal.locator('tr[data-phase="dl"] [data-grade]')).toHaveCount(1);
+	await expect(modal.locator('tr[data-phase="dl"] [data-grade]')).toHaveText('A+');
+	// Without a pin, the page does not unpin.
+	expect(pinCalls.map((c) => c[0])).toEqual([ 'pin' ]);
 });

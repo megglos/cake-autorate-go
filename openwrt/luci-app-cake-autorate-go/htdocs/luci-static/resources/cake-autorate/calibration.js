@@ -67,6 +67,11 @@ const LINK_SHARE = 0.5;
 // against the load.
 const LINK_CHECK_MIN_KBPS = 1000;
 
+// The maximum time of the read of the status file (ms). The next status
+// request comes after it: the service stops a session after 15 s without
+// status requests.
+const LINK_READ_MS = 2000;
+
 // The load times that the user can select (s).
 const LOAD_TIMES = [ 20, 40, 80 ];
 
@@ -339,8 +344,12 @@ return baseclass.extend({
 		this.load.stop();
 		this.load = new Load();
 		const same = saved && saved.link == link && (own || (saved.session && saved.session == session));
-		if (same)
+		if (same) {
 			this.load.bytes = { dl: saved.dl, ul: saved.ul };
+			// The rates of the check of the load path of the same session.
+			if (saved.linkRates)
+				this.linkRates = saved.linkRates;
+		}
 		this.stopping = false;
 		this.node = E('div', { 'id': 'cake-autorate-calibration' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
@@ -419,7 +428,7 @@ return baseclass.extend({
 				return this.checkLink(st).then(() => {
 					if (!this.active)
 						return;
-					this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
+					this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul, linkRates: this.linkRates });
 					this.renderRunning(st);
 					if (!this.stopping)
 						this.timer = setTimeout(() => this.poll(), POLL_MS);
@@ -462,7 +471,8 @@ return baseclass.extend({
 		this.phaseKey = key;
 		if (first || st.phase != 'load' || !st.load)
 			return Promise.resolve();
-		return L.resolveDefault(fs.read(STATUS_FILE), null).then((data) => {
+		const timeout = new Promise((resolve) => setTimeout(() => resolve(null), LINK_READ_MS));
+		return Promise.race([ L.resolveDefault(fs.read(STATUS_FILE), null), timeout ]).then((data) => {
 			let ls = null;
 			try {
 				ls = (JSON.parse(data).links || []).find((l) => l.name == this.link);
@@ -516,8 +526,14 @@ return baseclass.extend({
 	readSession: function() {
 		try {
 			const v = JSON.parse(sessionStorage.getItem(SESSION_KEY));
-			return (v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
-				v.dl >= 0 && v.ul >= 0) ? v : null;
+			if (!(v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
+				v.dl >= 0 && v.ul >= 0))
+				return null;
+			// Invalid rates of the check of the load path: start again.
+			const valid = (r) => r && [ r.link, r.browser, r.n ].every((x) => typeof x == 'number' && x >= 0);
+			if (v.linkRates && !(valid(v.linkRates.dl) && valid(v.linkRates.ul)))
+				delete v.linkRates;
+			return v;
 		}
 		catch (e) {
 			return null;
