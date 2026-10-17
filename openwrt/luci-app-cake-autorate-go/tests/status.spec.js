@@ -98,7 +98,11 @@ test.beforeEach(async ({ page }) => {
 	page.on('pageerror', (e) => errors.push(e.message));
 });
 
-test.afterEach(() => {
+test.afterEach(async ({ page }) => {
+	// A route handler can still wait (a delayed status answer) when the
+	// test ends. Remove the routes and ignore the errors of these handlers:
+	// else the end of the page makes the test fail.
+	await page.unrouteAll({ behavior: 'ignoreErrors' });
 	expect(errors, 'JavaScript errors on the page').toEqual([]);
 });
 
