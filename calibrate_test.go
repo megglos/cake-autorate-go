@@ -276,6 +276,22 @@ func TestCalibrateSession_StableLink(t *testing.T) {
 	}
 }
 
+// On a slow stable link, the rounding step must not round the base up to
+// the capacity.
+func TestCalibrateSession_StableSlowLinkBaseBelowCapacity(t *testing.T) {
+	for _, c := range []struct{ dl, ul float64 }{{10000, 5000}, {1800, 1000}} {
+		dir := writeCalSession(t, calTestLink{dlCapKbps: c.dl, ulCapKbps: c.ul, ulCapBothKbps: c.ul, idleJitterMs: 2})
+		res, cfg, err := calibrateSession(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := res.propose(cfg)
+		if float64(p.DlBase) >= c.dl || float64(p.UlBase) >= c.ul || float64(p.DlBase) < 0.9*c.dl || float64(p.UlBase) < 0.9*c.ul {
+			t.Errorf("capacity %.0f/%.0f kbit/s: base %d/%d, want between 90 %% and 100 %% of the capacity", c.dl, c.ul, p.DlBase, p.UlBase)
+		}
+	}
+}
+
 // A variable capacity (5G): base = p25 and the default minimum of the
 // thresholds, as before.
 func TestCalibrateSession_VariableLink(t *testing.T) {

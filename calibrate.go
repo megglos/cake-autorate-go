@@ -676,7 +676,17 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	stable := func(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
 	base := func(c calDist, step int) (int, string) {
 		if stable(c) {
-			return round(calStableBaseFactor*c.P25, step), fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
+			// A coarse step can round the base up to the capacity (for
+			// example 9500 to 10000 kbit/s): then use a finer step.
+			target := calStableBaseFactor * c.P25
+			b := int(math.Floor(target))
+			for _, st := range []int{step, step / 10} {
+				if v := round(target, st); float64(v) < c.P25 {
+					b = v
+					break
+				}
+			}
+			return b, fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
 		}
 		return round(c.P25, step), ""
 	}
