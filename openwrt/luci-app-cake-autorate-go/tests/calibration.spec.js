@@ -580,8 +580,10 @@ async function routeFastLoad(page) {
 }
 
 // Sets the achieved rates of the link "wan" in the status file that the
-// page reads (only a request that reads only the status file).
+// page reads (only a request that reads only the status file). kbps is a
+// rate, or a function of the time since the first read (ms).
 async function routeLinkRate(page, kbps) {
+	let first = null;
 	await page.route('**/ubus/**', async (route) => {
 		const body = route.request().postDataJSON();
 		const requests = Array.isArray(body) ? body : [ body ];
@@ -596,10 +598,12 @@ async function routeLinkRate(page, kbps) {
 				if (!data)
 					continue;
 				const status = JSON.parse(data);
+				first = first ?? Date.now();
+				const rate = typeof kbps == 'function' ? kbps(Date.now() - first) : kbps;
 				for (const ls of status.links || [])
 					if (ls.name == 'wan') {
-						ls.download = Object.assign({}, ls.download, { achieved_kbps: kbps });
-						ls.upload = Object.assign({}, ls.upload, { achieved_kbps: kbps });
+						ls.download = Object.assign({}, ls.download, { achieved_kbps: rate });
+						ls.upload = Object.assign({}, ls.upload, { achieved_kbps: rate });
 					}
 				res.result[1].data = JSON.stringify(status);
 			}
@@ -614,7 +618,7 @@ async function routeLinkRate(page, kbps) {
 // The load of the browser does not go through the link: the rate of the
 // link stays below half the rate of the browser. The dialog shows a
 // warning for the direction of the load. With the load on the link, it
-// shows no warning.
+// shows no warning, also if the status file shows the load 2 s late.
 for (const onLink of [ false, true ]) {
 	test(`the dialog shows if the load does not go through the link (load on the link: ${onLink})`, async ({ page }) => {
 		const steps = [];
@@ -624,11 +628,15 @@ for (const onLink of [ false, true ]) {
 		const session = fakeSession(steps);
 		await routeSession(page, session);
 		await routeFastLoad(page);
-		await routeLinkRate(page, onLink ? 10000000 : 0);
+		// The first reads come before the load phase: the late rate starts
+		// approximately 2 s after the load.
+		let loadSeen = null;
+		await routeLinkRate(page, onLink ? () => (loadSeen != null && Date.now() - loadSeen > 2000 ? 10000000 : 0) : 0);
 		await page.goto(PAGE);
 		await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
 		await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
 		await expect(page.locator('.modal .cake-autorate-block')).toContainText('Phase: load', { timeout: 15000 });
+		loadSeen = Date.now();
 		const warning = page.locator('.modal [data-off-link]');
 		if (onLink) {
 			// Some statuses of the load phase.

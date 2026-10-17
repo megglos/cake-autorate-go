@@ -72,6 +72,12 @@ const LINK_CHECK_MIN_KBPS = 1000;
 // status requests.
 const LINK_READ_MS = 2000;
 
+// The time from the start of a load phase until the check of the load path
+// uses the rates (ms). The program publishes the rates each second, and it
+// writes the status file each second: the file can show the rates of up
+// to 2 s before.
+const LINK_LAG_MS = 3000;
+
 // The load times that the user can select (s).
 const LOAD_TIMES = [ 20, 40, 80 ];
 
@@ -459,17 +465,20 @@ return baseclass.extend({
 	resetLinkRates: function() {
 		this.linkRates = { dl: { link: 0, browser: 0, n: 0 }, ul: { link: 0, browser: 0, n: 0 } };
 		this.phaseKey = null;
+		this.phaseStart = 0;
 	},
 
 	// Adds the rates of a status in a load phase: the rate of this browser
 	// and the rate of the link (from the status file) in each direction of
-	// the load. The first status of a load phase is not used: its browser
-	// rate is partly from the time before the load.
+	// the load. The statuses of the first LINK_LAG_MS of a load phase are
+	// not used: the status file can show the rates before the load.
 	checkLink: function(st) {
 		const key = st.block + ' ' + st.phase;
-		const first = key != this.phaseKey;
-		this.phaseKey = key;
-		if (first || st.phase != 'load' || !st.load)
+		if (key != this.phaseKey) {
+			this.phaseKey = key;
+			this.phaseStart = performance.now();
+		}
+		if (st.phase != 'load' || !st.load || performance.now() - this.phaseStart < LINK_LAG_MS)
 			return Promise.resolve();
 		const timeout = new Promise((resolve) => setTimeout(() => resolve(null), LINK_READ_MS));
 		return Promise.race([ L.resolveDefault(fs.read(STATUS_FILE), null), timeout ]).then((data) => {
