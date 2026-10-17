@@ -312,6 +312,10 @@ return baseclass.extend({
 			// The rates count from the end of the warm-up, independent of the
 			// status requests.
 			let warm = null;
+			// The first status after the warm-up sets the reply count of the
+			// phase: the program writes the status up to 2 s late, thus its
+			// replies can be from the warm-up. Samples come only after it.
+			let baseline = !p.load || this.warmup == 0;
 			const takeWarm = () => {
 				if (warm == null)
 					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
@@ -354,7 +358,10 @@ return baseclass.extend({
 					const replies = st ? +st.ls.replies : NaN;
 					// Only in RUNNING: before IDLE or STALL, the counter can
 					// increase, and the delay delta stays from before.
-					if (st && measuring && st.ls.state == 'RUNNING' && lastReplies != null && replies > lastReplies) {
+					if (st && measuring && !baseline) {
+						baseline = true;
+					}
+					else if (st && measuring && st.ls.state == 'RUNNING' && lastReplies != null && replies > lastReplies) {
 						ph.dl.push(+st.ls.download.delta_ms || 0);
 						ph.ul.push(+st.ls.upload.delta_ms || 0);
 					}

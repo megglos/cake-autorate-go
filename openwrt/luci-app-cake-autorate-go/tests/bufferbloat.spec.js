@@ -700,3 +700,31 @@ test('a status that comes after the end of the phase is also checked', async ({ 
 	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
 	await expect(modal.locator('[data-grade]')).toHaveCount(0);
 });
+
+test('replies from the warm-up are not samples, also in a late status', async ({ page }) => {
+	// The replies stop at the end of the warm-up (3 s); the status after
+	// the warm-up still has a new reply (with a delay of the warm-up).
+	let t0 = Infinity;
+	let replies = 0;
+	await routeUbus(page, (s, asked) => {
+		s.links[0].state = 'RUNNING';
+		Object.assign(s.links[0].download, { delta_ms: 100, achieved_kbps: 1e7 });
+		if (asked - t0 < 3400)
+			replies++;
+		s.links[0].replies = replies;
+	});
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 6 } ];
+		b.warmup = 3;
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	t0 = Date.now();
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const dl = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"]');
+	await expect(dl).toContainText('no ping replies', { timeout: 30000 });
+	await expect(dl.locator('[data-grade]')).toHaveCount(0);
+});
