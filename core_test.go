@@ -1098,18 +1098,55 @@ func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
 	}
 }
 
-// A clock step and a new download queue of 40 ms in the same reply: the
-// queue must stay in the download delta, and the upload delta stays 0.
-func TestOWDDeltas_ClockStepWithNewQueue(t *testing.T) {
-	c, _ := newTestCore(t)
-	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
-		if t >= 10*time.Second {
-			return 10 - 650, 10 + 650 + 40
+// A clock step and a new download queue of 40 ms in the same reply,
+// under load: the part of each direction is not known, so the step stays
+// in the delta (as without the clock correction). When the queue and the
+// load end, the deltas go back to 0.
+func TestOWDDeltas_ClockStepWithNewQueueRecovers(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c, _ := newTestCore(t)
+		start := time.Now()
+		var dl, ul float64
+		for ts := time.Duration(0); ts <= 30*time.Second; ts += 300 * time.Millisecond {
+			ulMs, dlMs := 10.0, 10.0
+			c.dl.loadPercent = 0
+			if ts >= 10*time.Second {
+				ulMs, dlMs = 10-sign*650, 10+sign*650
+			}
+			if ts >= 10*time.Second && ts < 15*time.Second {
+				dlMs += 40
+				c.dl.loadPercent = 0.9
+			}
+			p := owdPing("1.1.1.1", start.Add(ts), ulMs, dlMs)
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
 		}
-		return 10, 10
-	})
-	if dl < 38 || ul > 1 {
-		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms after the load, want approximately 0", sign*650, dl, ul)
+		}
+	}
+}
+
+// The first reply spans a clock step of -650 ms: it has the step only in
+// the download delay. It must not set the baselines.
+func TestOWDDeltas_FirstReplyDuringClockStep(t *testing.T) {
+	c, _ := newTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 20; i++ {
+		ulMs, dlMs := 660.0, -640.0
+		if i == 0 {
+			ulMs = 10
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		p.RTT = 20 * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl > 1 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 0", dl, ul)
 	}
 }
 
@@ -1138,16 +1175,20 @@ func TestOWDDeltas_PathChangeUnderLoadKeepsQueue(t *testing.T) {
 // with a high load: the delta of the active direction must stay near the
 // queue.
 func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
-	c, _ := newTestCore(t)
-	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
-	dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
-		if int(t.Seconds()/30)%2 == 0 {
-			return 10 + 40, 10
+	// 40 ms, and 80 ms (more than a clock step). The baselines start with
+	// the queue: the program starts under load.
+	for _, q := range []float64{40, 80} {
+		c, _ := newTestCore(t)
+		c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+		dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
+			if int(t.Seconds()/30)%2 == 0 {
+				return 10 + q, 10
+			}
+			return 10, 10 + q
+		})
+		if active := math.Max(dl, ul); active < q-5 {
+			t.Errorf("queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately %.0f in the active direction", q, dl, ul, q)
 		}
-		return 10, 10 + 40
-	})
-	if active := math.Max(dl, ul); active < 35 {
-		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 in the active direction", dl, ul)
 	}
 }
 

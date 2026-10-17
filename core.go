@@ -104,10 +104,14 @@ const minClockStepUs = 50000
 // the reflector can reply later than it received the request.
 const maxOWDRTTDiffUs = minClockStepUs / 2
 
-// clockSplitMaxLoad is the maximum load (achieved rate / shaper rate) of
-// each direction for the move of the baselines with clockSplitGain. At
-// this load, the shaper has no queue.
-const clockSplitMaxLoad = 0.5
+// clockMaxLoad is the maximum load (achieved rate / shaper rate) of each
+// direction for a clock step and for the move of the baselines with
+// clockSplitGain. At this load, the shaper has no queue.
+const clockMaxLoad = 0.5
+
+// maxStepRTTChangeUs is the maximum change of the RTT from one reply to
+// the next at a clock step (noise and whole milliseconds).
+const maxStepRTTChangeUs = 5000
 
 // clockSplitGain is the part of a delta that owdDeltas moves to the
 // baseline for each reply while the RTT is near its baseline.
@@ -410,18 +414,18 @@ func (c *Core) HandlePing(result PingResult) {
 func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDeltaUs float64) {
 	dlUs := float64(result.DlOWD.Microseconds())
 	ulUs := float64(result.UlOWD.Microseconds())
-	if !rd.owdInit {
-		rd.owdInit = true
-		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
-		rd.owdTime = result.Timestamp
-		return 0, 0
-	}
 	// A clock step while the ping is in flight: the reply has the step only
 	// in the download delay. The RTT (monotonic clock) does not have it.
 	// Do not use this reply: the next reply shows the step in the two
 	// delays.
 	if math.Abs(dlUs+ulUs-float64(result.RTT.Microseconds())) > maxOWDRTTDiffUs {
 		return math.Max(rd.dlLastUs, 0), math.Max(rd.ulLastUs, 0)
+	}
+	if !rd.owdInit {
+		rd.owdInit = true
+		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
+		rd.owdTime = result.Timestamp
+		return 0, 0
 	}
 	// shift > 0: the clock offset moves delay from the upload to the
 	// download.
@@ -430,19 +434,17 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	maxShift := maxClockSlewUsPerS * math.Max(result.Timestamp.Sub(rd.owdTime).Seconds(), 0)
 	shift = math.Max(-maxShift, math.Min(shift, maxShift))
 	// A clock step (NTP after the boot) changes the two deltas by the same
-	// value in opposite directions. A queue stays in its direction. A queue
-	// can also move from one direction to the other, but then the RTT
-	// stays above its baseline by the size of the queue. A new queue at the
-	// time of the step only increases a delay: the step is the smaller of
-	// the two changes, and the rest stays in its direction.
+	// value in opposite directions, and the RTT does not change. A change
+	// of a queue at the same time changes the RTT: then the part of each
+	// direction is not known. Thus, a step moves only while the load is
+	// low (no queue) and the RTT does not change. Else it stays in the
+	// delta until the load is low: then the rule below removes it.
+	lowLoad := c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad
 	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
 	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
-	rttExcessUs := (dlUs - rd.dlBaselineUs) + (ulUs - rd.ulBaselineUs)
-	if a, b := dlChangeUs, -ulChangeUs; a*b > 0 {
-		step := math.Copysign(math.Min(math.Abs(a), math.Abs(b)), a)
-		if math.Abs(step) >= minClockStepUs && math.Abs(a-b) < math.Abs(step)/2 && math.Abs(rttExcessUs) < math.Abs(step)/4 {
-			shift = step
-		}
+	if step := (dlChangeUs - ulChangeUs) / 2; lowLoad && math.Abs(step) >= minClockStepUs &&
+		math.Abs(dlChangeUs+ulChangeUs) <= maxStepRTTChangeUs {
+		shift = step
 	}
 	rd.owdTime = result.Timestamp
 	rd.dlBaselineUs += shift
@@ -454,7 +456,7 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// delay: the delays have noise. With a higher load, a path change and
 	// a queue can look like a clock change.
 	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
-	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); c.dl.loadPercent < clockSplitMaxLoad && c.ul.loadPercent < clockSplitMaxLoad &&
+	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); lowLoad &&
 		rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
 		rd.dlBaselineUs += clockSplitGain * dlExcessUs
 		rd.ulBaselineUs += clockSplitGain * ulExcessUs
