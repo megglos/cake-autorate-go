@@ -34,6 +34,13 @@ if docker container inspect "$NAME" >/dev/null 2>&1; then
 	fi
 fi
 
+# The feeds of the packages: base (for example ucode, tc) and luci
+# (luci.mk). Without a prebuilt program, the SDK builds the program with
+# golang from the feed packages. The feed packages is large: CI builds the
+# program before and does not need it.
+FEEDS="base luci action"
+[ -x "$REPO/openwrt/cake-autorate-go/prebuilt/cake-autorate-go" ] || FEEDS="base luci packages action"
+
 if ! docker container inspect "$NAME" >/dev/null 2>&1; then
 	docker run -d --name "$NAME" -v "$REPO:/feed:ro" \
 		"openwrt/sdk:$ARCH" sleep infinity >/dev/null
@@ -45,13 +52,11 @@ if ! docker container inspect "$NAME" >/dev/null 2>&1; then
 			-e "s,https://git.openwrt.org/project/,https://github.com/openwrt/," \
 			feeds.conf.default > feeds.conf
 		echo "src-link action /feed/" >> feeds.conf
-		# Only the feeds of the packages: base (for example ucode, tc) and
-		# luci (luci.mk). The other feeds are large.
-		./scripts/feeds update base luci action
+		./scripts/feeds update '"$FEEDS"'
 		make defconfig'
 else
 	docker start "$NAME" >/dev/null
-	docker exec "$NAME" ./scripts/feeds update action
+	docker exec "$NAME" ./scripts/feeds update $FEEDS
 fi
 
 for pkg in $PACKAGES; do

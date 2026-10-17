@@ -102,7 +102,10 @@ jobs:
 
       - name: Start the package build
         run: |
+          # The step shell has "set -e": write the exit code also after an
+          # error, else the next step waits for its time limit.
           (
+            set +e
             GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
               -ldflags="-s -w -X main.version=$(git describe --tags --always)" \
               -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go . &&
