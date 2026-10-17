@@ -58,6 +58,18 @@ const callShape = rpc.declare({
 	params: [ 'link' ]
 });
 
+const callPin = rpc.declare({
+	object: 'cake-autorate',
+	method: 'pin',
+	params: [ 'link', 'seconds' ]
+});
+
+const callUnpin = rpc.declare({
+	object: 'cake-autorate',
+	method: 'unpin',
+	params: [ 'link' ]
+});
+
 // Returns a text node. The values come from the program, and E() reads a
 // string as HTML.
 function text(v) {
@@ -155,7 +167,7 @@ return baseclass.extend({
 		compare.addEventListener('change', update);
 		update();
 		ui.showModal(_('Bufferbloat test of the link %s').format(ls.name), [
-			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. The traffic of this browser must go through this link (on a router with more than one WAN link, check the routing). Do not use the network during the test. With the comparison, only the run without shaping has the phase without load: without load, the shaping has no effect.'))),
+			E('p', {}, text(_('The test measures the delay of the link without load, with download, with upload and with both. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). The delay comes from the reflectors of the service. During the test, the service sends the traffic to speed.cloudflare.com through this link, also on a router with more than one WAN link. Do not use the network during the test. With the comparison, only the run without shaping has the phase without load: without load, the shaping has no effect.'))),
 			E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title', 'for': 'cake-autorate-bufferbloat-compare' }, _('Compare without shaping')),
 				E('div', { 'class': 'cbi-value-field' }, [
@@ -190,10 +202,20 @@ return baseclass.extend({
 		window.addEventListener('beforeunload', this.onUnload);
 
 		const runs = [];
-		let error = null, shapeError = null;
+		let error = null, shapeError = null, pinError = null, pinned = false;
 		const total = compare ? 2 : 1;
 		return (async () => {
 			try {
+				// The load goes through this link, also on a router with
+				// more than one WAN link. Without the pin, the test runs: on
+				// a router with one WAN link, the load uses this link.
+				try {
+					checkAnswer(await callPin(link, this.testSeconds(total) + 60));
+					pinned = true;
+				}
+				catch (e) {
+					pinError = e.message || String(e);
+				}
 				runs.push(await this.run(link, _('With shaping'), 1, total, false, this.runPhases(!compare)));
 				if (compare && !this.cancelled)
 					await this.wait(link, PAUSE_S, _('Pause between the runs'));
@@ -225,10 +247,13 @@ return baseclass.extend({
 						shapeError = e.message || String(e);
 					}
 				}
+				// The service also removes the pin at the end of its time.
+				if (pinned)
+					await L.resolveDefault(callUnpin(link), null);
 				this.running = false;
 				window.removeEventListener('beforeunload', this.onUnload);
 			}
-			this.renderResult(runs, error, shapeError);
+			this.renderResult(runs, error, shapeError, pinError);
 		})();
 	},
 
@@ -472,8 +497,10 @@ return baseclass.extend({
 		];
 	},
 
-	renderResult: function(runs, error, shapeError) {
+	renderResult: function(runs, error, shapeError, pinError) {
 		const nodes = [];
+		if (pinError)
+			nodes.push(E('p', { 'class': 'alert-message notice', 'data-pin-error': '' }, text(_('The load was not pinned to this link: %s. On a router with more than one WAN link, the load can use another link.').format(pinError))));
 		if (shapeError)
 			nodes.push(E('p', { 'class': 'alert-message danger', 'data-shape-error': '' }, text(_('The shaping did not come back: %s. Click "Turn shaping on" on the status page. Else the service turns it on after the time limit of the test.').format(shapeError))));
 		if (error)
