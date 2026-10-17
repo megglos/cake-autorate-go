@@ -104,6 +104,11 @@ const minClockStepUs = 50000
 // the reflector can reply later than it received the request.
 const maxOWDRTTDiffUs = minClockStepUs / 2
 
+// clockSplitMaxLoad is the maximum load (achieved rate / shaper rate) of
+// each direction for the move of the baselines with clockSplitGain. At
+// this load, the shaper has no queue.
+const clockSplitMaxLoad = 0.5
+
 // clockSplitGain is the part of a delta that owdDeltas moves to the
 // baseline for each reply while the RTT is near its baseline.
 const clockSplitGain = 0.25
@@ -427,23 +432,30 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// A clock step (NTP after the boot) changes the two deltas by the same
 	// value in opposite directions. A queue stays in its direction. A queue
 	// can also move from one direction to the other, but then the RTT
-	// stays above its baseline by the size of the queue.
+	// stays above its baseline by the size of the queue. A new queue at the
+	// time of the step only increases a delay: the step is the smaller of
+	// the two changes, and the rest stays in its direction.
 	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
 	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
 	rttExcessUs := (dlUs - rd.dlBaselineUs) + (ulUs - rd.ulBaselineUs)
-	if step := (dlChangeUs - ulChangeUs) / 2; math.Abs(step) >= minClockStepUs &&
-		math.Abs(dlChangeUs+ulChangeUs) < math.Abs(step)/2 && math.Abs(rttExcessUs) < math.Abs(step)/4 {
-		shift = step
+	if a, b := dlChangeUs, -ulChangeUs; a*b > 0 {
+		step := math.Copysign(math.Min(math.Abs(a), math.Abs(b)), a)
+		if math.Abs(step) >= minClockStepUs && math.Abs(a-b) < math.Abs(step)/2 && math.Abs(rttExcessUs) < math.Abs(step)/4 {
+			shift = step
+		}
 	}
 	rd.owdTime = result.Timestamp
 	rd.dlBaselineUs += shift
 	rd.ulBaselineUs -= shift
-	// The RTT is near its baseline (the RTT does not contain the clock
-	// offset): no queue in the two directions. Then a delta is a clock
-	// change (for example, a fast slew of ntpd after the boot). Move each
-	// baseline a part of the way to its delay: the delays have noise.
+	// The load of the two directions is low: no queue can occur. If the RTT
+	// is also near its baseline (the RTT does not contain the clock
+	// offset), a delta is a clock change (for example, a fast slew of
+	// ntpd after the boot). Move each baseline a part of the way to its
+	// delay: the delays have noise. With a higher load, a path change and
+	// a queue can look like a clock change.
 	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
-	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
+	if rttExcess := math.Abs(float64(result.RTT.Microseconds()) - rd.baselineUs); c.dl.loadPercent < clockSplitMaxLoad && c.ul.loadPercent < clockSplitMaxLoad &&
+		rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
 		rd.dlBaselineUs += clockSplitGain * dlExcessUs
 		rd.ulBaselineUs += clockSplitGain * ulExcessUs
 	}

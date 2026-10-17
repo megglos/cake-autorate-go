@@ -1098,6 +1098,59 @@ func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
 	}
 }
 
+// A clock step and a new download queue of 40 ms in the same reply: the
+// queue must stay in the download delta, and the upload delta stays 0.
+func TestOWDDeltas_ClockStepWithNewQueue(t *testing.T) {
+	c, _ := newTestCore(t)
+	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		if t >= 10*time.Second {
+			return 10 - 650, 10 + 650 + 40
+		}
+		return 10, 10
+	})
+	if dl < 38 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
+// A shorter upload path (50 ms) during a download queue with a high load:
+// the RTT is near its baseline, but the download delta must keep the
+// queue.
+func TestOWDDeltas_PathChangeUnderLoadKeepsQueue(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.dl.loadPercent = 0.9
+	dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
+		ul, queue := 100.0, 0.0
+		if t >= 5*time.Second {
+			queue = 40
+		}
+		if t >= 20*time.Second {
+			ul = 50
+		}
+		return ul, 10 + queue
+	})
+	if dl < 35 {
+		t.Errorf("download delta %.1f ms after the path change, want approximately 38 (the queue)", dl)
+	}
+}
+
+// A queue of 40 ms that moves between the directions each 30 s, for 540 s,
+// with a high load: the delta of the active direction must stay near the
+// queue.
+func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
+		if int(t.Seconds()/30)%2 == 0 {
+			return 10 + 40, 10
+		}
+		return 10, 10 + 40
+	})
+	if active := math.Max(dl, ul); active < 35 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 in the active direction", dl, ul)
+	}
+}
+
 // A download queue with upload jitter is not a clock change: the download
 // delta must be the same as without the jitter. (The download baseline
 // increases slowly in the two runs.)
