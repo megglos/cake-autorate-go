@@ -440,7 +440,11 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// direction is not known. Thus, a step moves only while the load is
 	// low (no queue) and the RTT does not change. Else it stays in the
 	// delta until the load is low: then the rule below removes it.
-	lowLoad := c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad
+	// With the shaping off (unshape, the unshaped blocks of a calibration),
+	// the load is against unshapedKbps: a low load does not show that there
+	// is no queue.
+	lowLoad := c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad &&
+		!c.unshaped && c.dl.shaperRateKbps < unshapedKbps && c.ul.shaperRateKbps < unshapedKbps
 	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
 	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
 	if step := (dlChangeUs - ulChangeUs) / 2; lowLoad && math.Abs(step) >= minClockStepUs &&

@@ -40,7 +40,7 @@ All other lines have these fields:
 | Type | Fields | Description |
 |---|---|---|
 | `start` | — | The controller started for the link. |
-| `ping` | `reflector`, `rtt_us`, `timeout`, `dl_owd_us`, `ul_owd_us` | A ping reply or a ping timeout. `dl_owd_us` and `ul_owd_us` are the one-way delays (only with `ping_method: icmp-timestamp`). They contain the clock offset between the hosts. |
+| `ping` | `reflector`, `rtt_us`, `timeout`, `dl_owd_us`, `ul_owd_us`, `reflector_us` | A ping reply or a ping timeout. `dl_owd_us` and `ul_owd_us` are the one-way delays (only with `ping_method: icmp-timestamp`). They contain the clock offset between the hosts. `reflector_us` is the time in the reflector (from the receive to the transmit time). The RTT contains it, the one-way delays do not. |
 | `rate` | `dl_kbps`, `ul_kbps` | A sample of the measured throughput. |
 | `reflector_reset` | `reflector` | The controller removed the delay data of a reflector (a spare reflector became active). |
 | `pause` | `dir`, `paused` | A user paused or resumed the rate control of a direction (control socket). |

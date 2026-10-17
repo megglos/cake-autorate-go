@@ -1216,6 +1216,35 @@ func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
 	}
 }
 
+// With the shaping off, the load is against 10 Gbit/s and stays low also
+// with a queue. A queue that moves from the upload to the download at the
+// same RTT must stay in the delta: it is not a clock step. Two paths: the
+// command unshape, and the unshaped blocks of a calibration (fixed rate).
+func TestOWDDeltas_UnshapedQueueStays(t *testing.T) {
+	for _, mode := range []string{"unshape", "fixed rate"} {
+		c, _ := newTestCore(t)
+		if mode == "unshape" {
+			c.SetUnshaped(true, time.Now())
+		}
+		c.SetFixedRate(DL, unshapedKbps)
+		c.SetFixedRate(UL, unshapedKbps)
+		c.dl.loadPercent, c.ul.loadPercent = 0.01, 0.01
+		dl, ul := owdRun(c, 20*time.Second, func(t time.Duration) (float64, float64) {
+			switch {
+			case t < 5*time.Second:
+				return 10, 10
+			case t < 15*time.Second:
+				return 90, 10 // upload queue 80 ms
+			default:
+				return 10, 90 // download queue 80 ms, same RTT
+			}
+		})
+		if dl < 70 || ul > 10 {
+			t.Errorf("%s: delta dl %.1f ms, ul %.1f ms, want approximately 80 and 0", mode, dl, ul)
+		}
+	}
+}
+
 // A download queue with upload jitter is not a clock change: the download
 // delta must be the same as without the jitter. (The download baseline
 // increases slowly in the two runs.)

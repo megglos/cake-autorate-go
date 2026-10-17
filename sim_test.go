@@ -189,6 +189,10 @@ type simScenario struct {
 	// constant.
 	ulGrantMs, ulGrantJitterMs float64
 
+	// reflectorTimeMs is the time in the reflector (ICMP timestamps only):
+	// the RTT contains it, the one-way delays do not.
+	reflectorTimeMs float64
+
 	// link contains the rate limits and thresholds. The simulator sets Adjust=true.
 	link LinkConfig
 	// tune changes the controller config (optional).
@@ -401,6 +405,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
 				rtt := base + queueMs + jitter + ulNoise
+				if owd {
+					rtt += sc.reflectorTimeMs
+				}
 				result := PingResult{
 					Reflector: link.Reflectors[i],
 					RTT:       time.Duration(rtt * float64(time.Millisecond)),
@@ -415,6 +422,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					result.OWD = true
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
 					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond
+					result.ReflectorTime = time.Duration(sc.reflectorTimeMs * float64(time.Millisecond))
 				}
 				// Draw a random number only with ping loss. Then the other
 				// scenarios keep the same random sequence (and baseline).
