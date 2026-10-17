@@ -646,3 +646,27 @@ test('a stopped phase is not in the result', async ({ page }) => {
 	await expect(table.locator('tr[data-phase="idle"]')).toHaveCount(1);
 	await expect(table.locator('tr[data-phase="dl"]')).toHaveCount(0);
 });
+
+test('the first status of a run stops the test before the load', async ({ page }) => {
+	// Only the first status of the run (in the first 500 ms after Start)
+	// shows a calibration; the later status requests get no answer in
+	// time.
+	let t0 = Infinity;
+	await routeUbus(page, (s, asked) => {
+		if (asked - t0 < 500)
+			s.links[0].calibrating = true;
+	}, false, (asked) => asked - t0 >= 500 ? 30000 : 0);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = phases;
+		b.warmup = 0;
+		b.open({ name: 'wan', download: {}, upload: {} });
+	}), PHASES);
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	t0 = Date.now();
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
+	expect(load.down + load.up).toBe(0);
+});

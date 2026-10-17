@@ -296,6 +296,7 @@ return baseclass.extend({
 		// The Stop button shows before the first status request.
 		this.renderRunning(_('Run %d of %d (%s)').format(number, total, title), this.runSeconds(), null);
 		const first = await this.readLink(link, 1000);
+		this.checkState(first, unshaped);
 		let lastReplies = (first && !isNaN(+first.ls.replies)) ? +first.ls.replies : null;
 		for (const p of this.phases) {
 			if (this.cancelled)
@@ -340,13 +341,7 @@ return baseclass.extend({
 						throw new Error(_('The load failed: %s').format(this.load.lastError));
 					if (performance.now() >= end)
 						break;
-					if (st && !!st.ls.unshaped != unshaped)
-						throw new Error(unshaped
-							? _('The shaping came back before the end of the run without shaping.')
-							: _('The shaping is off: the run with shaping needs it on.'));
-					// A calibration changes the shaper rates.
-					if (st && st.ls.calibrating)
-						throw new Error(_('A calibration of the link runs.'));
+					this.checkState(st, unshaped);
 					const measuring = asked >= warmEnd;
 				if (st && measuring) {
 					ph.linkKbps.dl = Math.max(ph.linkKbps.dl, +st.ls.download.achieved_kbps || 0);
@@ -393,6 +388,20 @@ return baseclass.extend({
 		}
 		this.load.set('');
 		return result;
+	},
+
+	// Throws an error if the status st of the link does not allow the run:
+	// a calibration changes the shaper rates, and the shaping must be off
+	// (unshaped) or on as the run needs it. A null status allows it.
+	checkState: function(st, unshaped) {
+		if (!st)
+			return;
+		if (st.ls.calibrating)
+			throw new Error(_('A calibration of the link runs.'));
+		if (!!st.ls.unshaped != unshaped)
+			throw new Error(unshaped
+				? _('The shaping came back before the end of the run without shaping.')
+				: _('The shaping is off: the run with shaping needs it on.'));
 	},
 
 	phaseTitle: function(key) {
