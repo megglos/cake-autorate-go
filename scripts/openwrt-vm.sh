@@ -122,21 +122,36 @@ wan_netdev() {
 		echo "error: tap device $WAN_TAP has no IPv4 address (see the setup in $0)" >&2
 		exit 1
 	fi
+	wan_addr >/dev/null
 	echo "tap,id=wan,ifname=$WAN_TAP,script=no,downscript=no"
+}
+
+# wan_addr: prints the WAN address of the VM, the netmask and the gateway:
+# the address of the tap device is the gateway, the VM has the next
+# address. Exits with an error if the next address is not a usable host
+# address of the subnet.
+wan_addr() {
+	local cidr
+	cidr=$(ip -4 -o addr show dev "$WAN_TAP" | awk '{ print $4; exit }')
+	python3 - "$cidr" <<'PY' || exit 1
+import ipaddress, sys
+iface = ipaddress.ip_interface(sys.argv[1])
+vm = iface.ip + 1
+if vm not in list(iface.network.hosts()):
+    sys.exit("error: tap device %s: the next address %s is not a usable host address of %s" % (sys.argv[1], vm, iface.network))
+print(vm, iface.network.netmask, iface.ip)
+PY
 }
 
 # wan_static: sets a static WAN in the VM, from the address of the tap
 # device: the host is the gateway, the VM has the next address.
 wan_static() {
-	local cidr ip prefix last
-	cidr=$(ip -4 -o addr show dev "$WAN_TAP" | awk '{ print $4; exit }')
-	ip=${cidr%/*}
-	prefix=${cidr#*/}
-	last=${ip##*.}
+	local vm mask gw
+	read -r vm mask gw < <(wan_addr)
 	ssh_vm "uci set network.wan.proto=static &&
-		uci set network.wan.ipaddr=${ip%.*}.$((last + 1)) &&
-		uci set network.wan.netmask=$(python3 -c "import ipaddress; print(ipaddress.ip_network('0.0.0.0/$prefix').netmask)") &&
-		uci set network.wan.gateway=$ip &&
+		uci set network.wan.ipaddr=$vm &&
+		uci set network.wan.netmask=$mask &&
+		uci set network.wan.gateway=$gw &&
 		{ uci -q delete network.wan.dns || true; } &&
 		uci add_list network.wan.dns=1.1.1.1 &&
 		uci add_list network.wan.dns=9.9.9.9 &&
