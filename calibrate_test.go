@@ -39,6 +39,9 @@ type calTestLink struct {
 	// capSwing makes the capacity variable (as on 5G): in each 5 s, the
 	// capacity steps down each second by capSwing/4 of the value.
 	capSwing float64
+	// dipEvery: each dipEvery seconds, the capacity is 75 % for one
+	// second (a new connection of the load). 0: no dips.
+	dipEvery int
 }
 
 // writeCalSession writes a session directory like scripts/record-session.sh:
@@ -100,6 +103,9 @@ func writeCalSession(t *testing.T, l calTestLink) string {
 					ul = l.ulCapKbps
 				}
 				swing := 1 - l.capSwing*float64((ms/1000)%5)/4
+				if l.dipEvery > 0 && (ms/1000)%l.dipEvery == 0 {
+					swing *= 0.75
+				}
 				dl, ul = dl*swing, ul*swing
 				if ms%200 == 0 {
 					rec.Rate("wan", RateStats{Timestamp: ts, DlRateKbps: dl, UlRateKbps: ul})
@@ -242,14 +248,19 @@ func TestCalibrateSession(t *testing.T) {
 
 // A fiber line: stable capacity, low jitter, no grant delay. The base
 // rate is below the capacity, and the thresholds are 10 ms: else a queue
-// in the network of 10 to 20 ms does not decrease the rate.
+// in the network of 10 to 20 ms does not decrease the rate. A dip of the
+// capacity in some seconds (a new connection of the load) is the p5: it
+// must not change the result.
 func TestCalibrateSession_StableLink(t *testing.T) {
 	dir := writeCalSession(t, calTestLink{
-		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2,
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 330000, idleJitterMs: 2, dipEvery: 7,
 	})
 	res, cfg, err := calibrateSession(dir)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c := res.DlCapacity; c.P5 > 500000 {
+		t.Fatalf("download capacity p5 %.0f kbit/s, want the dip (487500)", c.P5)
 	}
 	p := res.propose(cfg)
 	if p.DlBase != 618000 || p.DlMax != 650000 || p.UlBase != 313500 || p.UlMax != 330000 {

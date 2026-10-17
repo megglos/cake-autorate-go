@@ -105,6 +105,7 @@ type calDist struct {
 	P10 float64 `json:"p10"`
 	P25 float64 `json:"p25"`
 	P50 float64 `json:"p50"`
+	P75 float64 `json:"p75"`
 	P90 float64 `json:"p90"`
 	P95 float64 `json:"p95"`
 }
@@ -116,7 +117,7 @@ func newCalDist(v []float64) calDist {
 	s := slices.Clone(v)
 	sort.Float64s(s)
 	q := func(p float64) float64 { return s[min(len(s)-1, int(p*float64(len(s))))] }
-	return calDist{N: len(s), P5: q(0.05), P10: q(0.10), P25: q(0.25), P50: q(0.50), P90: q(0.90), P95: q(0.95)}
+	return calDist{N: len(s), P5: q(0.05), P10: q(0.10), P25: q(0.25), P50: q(0.50), P75: q(0.75), P90: q(0.90), P95: q(0.95)}
 }
 
 // calReflector is the result for one reflector.
@@ -602,11 +603,13 @@ const (
 	// of the idle jitter. Else the jitter alone shows bufferbloat.
 	calJitterFactor = 2.0
 	// calStableRatio: a direction has a stable capacity (for example
-	// fiber or cable, not 5G) if the p5 of its unshaped capacity is at
-	// least this ratio of the p95.
+	// fiber or cable, not 5G) if the p25 of its unshaped capacity is at
+	// least this ratio of the p75. The p5 and the p95 are not robust: a
+	// session has few 1 s means, and one dip (a new connection of the
+	// load) is the p5.
 	calStableRatio = 0.9
 	// calStableBaseFactor: on a stable link, the base rate is this factor
-	// times the p5 of the capacity. Then the shaper is below the
+	// times the p25 of the capacity. Then the shaper is below the
 	// bottleneck, and the queue is in CAKE, not in the network.
 	calStableBaseFactor = 0.95
 	// calStableThrMs is the minimum delay threshold on a stable link. A
@@ -669,11 +672,11 @@ func (r *calResult) propose(cfg *Config) calProposal {
 	// Rates: max = p95 of the capacity, base = p25 (a rate that the link
 	// usually has), min = p5 / 2 (the shaper must be able to go below the
 	// low capacity values; the 1 s means hide short decreases). On a
-	// stable link, p25 is the capacity: base = calStableBaseFactor x p5.
-	stable := func(c calDist) bool { return c.N > 0 && c.P5 >= calStableRatio*c.P95 }
+	// stable link, p25 is the capacity: base = calStableBaseFactor x p25.
+	stable := func(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
 	base := func(c calDist, step int) (int, string) {
 		if stable(c) {
-			return round(calStableBaseFactor*c.P5, step), fmt.Sprintf("; stable capacity (p5 >= %.0f %% of p95): base = %.0f %% of p5", 100*calStableRatio, 100*calStableBaseFactor)
+			return round(calStableBaseFactor*c.P25, step), fmt.Sprintf("; stable capacity (p25 %s >= %.0f %% of p75 %s): base = %.0f %% of p25", mbit(c.P25), 100*calStableRatio, mbit(c.P75), 100*calStableBaseFactor)
 		}
 		return round(c.P25, step), ""
 	}
