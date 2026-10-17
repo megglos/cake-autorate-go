@@ -302,7 +302,7 @@ Each `unshape` sets the rates again, also when the shaping is already off; after
 - Route table 7370 gets the default route of the upload device of the link (`upload.interface`), for IPv4 and IPv6. The program uses the route of the main table, else of another table (for example of mwan3). If the device has no IPv6 default route, the IPv6 route is `unreachable`: the browser then uses IPv4.
 - For each address of `speed.cloudflare.com` (DNS lookup of the router), one rule `to ADDRESS lookup 7370` with priority 900. The rules of mwan3 have priorities from 1001: thus, the rules of `pin` come first.
 
-Only one link at a time can have the traffic. A second `pin` of the same link does the DNS lookup again and starts the time again. The program removes the rules and the routes at the end of the time, at `unpin`, at its stop and at its start (after a crash). During `pin`, the traffic of all clients to these addresses uses the link. If a browser gets other addresses for `speed.cloudflare.com` (for example with DNS over HTTPS), the rules have no effect.
+A calibration session (`calibrate start`) pins its link itself, until the end of the session. If the pin fails, the session continues, and the result has a note. Only one link at a time can have the traffic. A second `pin` of the same link does the DNS lookup again and starts the time again. The program removes the rules and the routes at the end of the time, at `unpin`, at its stop and at its start (after a crash). During `pin`, the traffic of all clients to these addresses uses the link. If a browser gets other addresses for `speed.cloudflare.com` (for example with DNS over HTTPS), the rules have no effect.
 
 ```bash
 echo "pause primary ul" | nc -U /var/run/cake-autorate/control.sock

@@ -180,6 +180,7 @@ func main() {
 		}
 		calib = NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
 		calib.probe = probeTimestamps
+		calib.pin = pinner
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

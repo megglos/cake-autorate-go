@@ -658,6 +658,62 @@ func TestCalibrationTruncatedRecording(t *testing.T) {
 
 // With fewer reflectors than the analysis needs (a small pinger_count),
 // the proposal keeps the ping method and the reflectors of the config.
+// fakePin records the pin calls of a session.
+type fakePin struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (f *fakePin) Pin(link string, d time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fmt.Sprintf("pin %s %v", link, d))
+	return f.err
+}
+
+func (f *fakePin) Unpin(link string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "unpin "+link)
+	return nil
+}
+
+// A session pins its link until its end: the time of the session and a
+// margin. A failed pin does not stop the session, but the result has a
+// note.
+func TestCalibrationPinsTheLink(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	total := time.Duration(len(calSessionBlocks))*(times.Idle+times.Load+times.Tail) + calPinMargin
+	for _, failed := range []bool{false, true} {
+		k, _, _ := newTestCalibrator(t, times)
+		pin := &fakePin{}
+		if failed {
+			pin.err = errors.New("no IPv4 default route")
+		}
+		k.pin = pin
+		if err := k.Start("wan", times); err != nil {
+			t.Fatal(err)
+		}
+		k.Wait()
+		st := k.Status()
+		if st.State != "done" {
+			t.Fatalf("failed pin %v: status %+v", failed, st)
+		}
+		want := []string{fmt.Sprintf("pin wan %v", total), "unpin wan"}
+		if failed {
+			want = want[:1]
+		}
+		if fmt.Sprint(pin.calls) != fmt.Sprint(want) {
+			t.Errorf("failed pin %v: calls %v, want %v", failed, pin.calls, want)
+		}
+		note := strings.Contains(strings.Join(st.Result.Notes, "\n"), "not pinned to the link: no IPv4 default route")
+		if note != failed {
+			t.Errorf("failed pin %v: notes %v", failed, st.Result.Notes)
+		}
+	}
+}
+
 func TestCalibrationFewReflectors(t *testing.T) {
 	times := defaultCalTimes(30 * time.Second)
 	k, target, _ := newTestCalibrator(t, times)
