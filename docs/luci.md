@@ -121,6 +121,22 @@ scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
 scripts/openwrt-vm.sh stop
 ```
 
+The WAN of the VM is the QEMU user network. It sends only ICMP echo, not ICMP timestamps. For a live test with ICMP timestamps, give the VM a tap device of your computer as WAN. The comment at the start of `scripts/openwrt-vm.sh` shows the commands to set up the tap device and the NAT. Then start the VM with `VM_WAN_TAP`:
+
+```bash
+VM_WAN_TAP=cavtap0 scripts/openwrt-vm.sh start
+```
+
+The script sets a static WAN address in the VM. If a firewall on your computer drops forwarded packets (for example ufw or Docker), let the traffic of the tap device through.
+
+The calibration and the bufferbloat test need the load of the browser on the WAN of the VM. Use an SSH tunnel to the VM as SOCKS proxy for a separate browser profile:
+
+```bash
+ssh -N -D 127.0.0.1:1081 -i ~/.cache/cake-autorate-vm/id_ed25519 -p 2222 root@localhost
+```
+
+In the browser, set the SOCKS5 proxy `127.0.0.1:1081` with DNS through the proxy. Then open LuCI at `http://192.168.1.1`. The tunnel encrypts the data on the CPU of the VM: on a fast link, the tunnel can be slower than the link.
+
 ## Without the package: setup.sh
 
 Run [`setup.sh`](../setup.sh) on your router. It installs the binary, makes a default config and makes a procd service:
