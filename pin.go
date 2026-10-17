@@ -42,8 +42,8 @@ const pinPriority = "900"
 const maxPinSeconds = 3600
 
 // pinRetry is the time until the next try of a failed removal at the end
-// of a pin.
-const pinRetry = 10 * time.Second
+// of a pin. Tests change it.
+var pinRetry = 10 * time.Second
 
 // pinLookupTimeout is the maximum time of the DNS lookup of pinHosts.
 const pinLookupTimeout = 5 * time.Second
@@ -82,6 +82,8 @@ type Pinner struct {
 	// gen identifies the pin: a timer of an earlier pin can fire while a
 	// new pin waits for the lock. Then it must not remove the new pin.
 	gen int
+	// closed is true after Close: Pin refuses.
+	closed bool
 }
 
 // NewPinner returns a Pinner for the links. The traffic goes through the
@@ -105,9 +107,9 @@ type pinRoute struct {
 }
 
 // Pin sends the traffic to pinHosts through the link for the time d. A
-// second Pin of the same link and owner sets the rules again (new
-// addresses) and starts the time again. A calibration session replaces a
-// pin of the control socket. Else Pin refuses while a pin exists.
+// calibration session replaces a pin of the control socket. Else Pin
+// refuses while a pin exists: two tests (for example in two browser tabs)
+// must not share a pin, because the end of one test removes it.
 func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	dev, ok := p.devices[link]
 	if !ok {
@@ -118,12 +120,15 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		return errors.New("the service stops")
+	}
 	replace := owner == PinOwnerCalibration && p.owner == PinOwnerControl
-	if p.link != "" && (p.link != link || p.owner != owner) && !replace {
+	if p.link != "" && !replace {
 		if p.owner == PinOwnerCalibration {
 			return fmt.Errorf("a calibration of link %q has the traffic of the load", p.link)
 		}
-		return fmt.Errorf("link %q has the traffic of the load, unpin it first", p.link)
+		return fmt.Errorf("a test of link %q has the traffic of the load", p.link)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pinLookupTimeout)
 	defer cancel()
@@ -152,11 +157,17 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 		return fmt.Errorf("device %s of link %q has no IPv4 default route", dev, link)
 	}
 
-	// Remove the rules of an earlier pin: the addresses can change.
+	// Remove the rules of a replaced pin (or of an earlier process). If
+	// that fails, the replaced pin stays with its timer.
 	if err := clearPin(); err != nil {
 		return err
 	}
 	p.stopTimer()
+	// From here, the Pinner tracks the rules: a failed removal tries
+	// again.
+	p.link, p.owner = link, owner
+	p.gen++
+	gen := p.gen
 	cmds := [][]string{routeCmd("-4", dev, route4, true), routeCmd("-6", dev, pinRoute{}, false)}
 	for _, a := range v4 {
 		cmds = append(cmds, []string{"-4", "rule", "add", "to", a, "lookup", pinTable, "priority", pinPriority})
@@ -164,18 +175,15 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	for _, a := range v6 {
 		cmds = append(cmds, []string{"-6", "rule", "add", "to", a, "lookup", pinTable, "priority", pinPriority})
 	}
-	p.link, p.owner = "", ""
 	for _, c := range cmds {
 		if out, err := execCommand("ip", c...); err != nil {
-			if cerr := clearPin(); cerr != nil {
-				p.logger.Errorf("[%s] %v", link, cerr)
+			err = fmt.Errorf("ip %s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
+			if uerr := p.unpinLocked(); uerr != nil {
+				p.logger.Errorf("[%s] %v (next try in %v)", link, uerr, pinRetry)
 			}
-			return fmt.Errorf("ip %s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
+			return err
 		}
 	}
-	p.link, p.owner = link, owner
-	p.gen++
-	gen := p.gen
 	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
 	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(append(v4, v6...), " "))
 	return nil
@@ -210,8 +218,7 @@ func (p *Pinner) Unpin(owner, link string) error {
 }
 
 // Clear removes all rules and routes of the Pinner, also of an earlier
-// process (after a crash). The program calls it at the start and at the
-// stop.
+// process (after a crash). The program calls it at the start.
 func (p *Pinner) Clear() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -222,6 +229,16 @@ func (p *Pinner) Clear() {
 	p.link, p.owner = "", ""
 }
 
+// Close removes all rules and routes, and Pin refuses after it. The
+// program calls it at the stop: a control command that is still open
+// cannot pin again after the removal.
+func (p *Pinner) Close() {
+	p.mu.Lock()
+	p.closed = true
+	p.mu.Unlock()
+	p.Clear()
+}
+
 // expire removes the rules at the end of the time of the pin gen.
 func (p *Pinner) expire(gen int) {
 	p.mu.Lock()
@@ -229,19 +246,25 @@ func (p *Pinner) expire(gen int) {
 	if p.link == "" || p.gen != gen {
 		return
 	}
+	// This timer fired: a failed removal starts a new one.
+	p.timer = nil
 	if err := p.unpinLocked(); err != nil {
 		p.logger.Errorf("[%s] %v (next try in %v)", p.link, err, pinRetry)
-		p.timer = time.AfterFunc(pinRetry, func() { p.expire(gen) })
 	}
 }
 
-// unpinLocked removes the rules of the pin. If that fails, the pin stays:
-// a next Unpin or the timer tries again.
+// unpinLocked removes the rules of the pin. If that fails, the pin stays
+// with its timer (or a new timer of pinRetry): a next Unpin or the timer
+// tries again.
 func (p *Pinner) unpinLocked() error {
-	p.stopTimer()
 	if err := clearPin(); err != nil {
+		if p.timer == nil {
+			gen := p.gen
+			p.timer = time.AfterFunc(pinRetry, func() { p.expire(gen) })
+		}
 		return err
 	}
+	p.stopTimer()
 	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
 	p.link, p.owner = "", ""
 	return nil

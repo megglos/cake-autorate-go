@@ -169,7 +169,7 @@ func main() {
 	// go away.
 	pinner := NewPinner(cfg.Links, logger)
 	pinner.Clear()
-	defer pinner.Clear()
+	defer pinner.Close()
 
 	var calib *Calibrator
 	if cfg.ControlSocket != "" {

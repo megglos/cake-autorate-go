@@ -21,6 +21,8 @@ type fakeIP struct {
 	calls  []string
 	rules  map[string]int // family: rules of pinTable
 	fail   string         // a call with this text fails
+	// failDel: "ip rule del" fails while rules exist (a failed removal).
+	failDel bool
 }
 
 func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP {
@@ -40,6 +42,9 @@ func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP 
 		case args[1] == "rule" && args[2] == "add":
 			f.rules[args[0]]++
 		case args[1] == "rule" && args[2] == "del":
+			if f.failDel && f.rules[args[0]] > 0 {
+				return []byte("RTNETLINK answers: Operation not permitted"), &exec.ExitError{}
+			}
 			if f.rules[args[0]] == 0 {
 				return []byte("RTNETLINK answers: No such file or directory"), &exec.ExitError{}
 			}
@@ -163,11 +168,13 @@ func TestPinner_OneLinkAtATime(t *testing.T) {
 	if err := p.Unpin(PinOwnerControl, "lte"); err == nil {
 		t.Error("unpin of a link without the traffic: no error")
 	}
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
-		t.Errorf("second pin of the same link: %v", err)
+	// A second test of the same link (another browser tab) does not share
+	// the pin: the end of one test would remove it.
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+		t.Error("second pin of the same link: no error")
 	}
 	if f.rules["-4"] != 1 {
-		t.Errorf("rules %v after the second pin, want 1 (the old rule is removed)", f.rules)
+		t.Errorf("rules %v after the second pin, want 1", f.rules)
 	}
 	if err := p.Unpin(PinOwnerControl, "wan"); err != nil {
 		t.Fatal(err)
@@ -243,9 +250,9 @@ func TestPinner_Owners(t *testing.T) {
 	}
 }
 
-// The timer of an earlier pin fires while a renewal waits for the lock:
+// The timer of a replaced pin fires while the new pin waits for the lock:
 // it must not remove the new pin.
-func TestPinner_OldTimerKeepsRenewal(t *testing.T) {
+func TestPinner_OldTimerKeepsNewPin(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
@@ -253,12 +260,88 @@ func TestPinner_OldTimerKeepsRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := p.gen
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	p.expire(old)
 	if p.link != "wan" || f.rules["-4"] != 1 {
-		t.Errorf("after the old timer: link %q, rules %v; want the renewed pin", p.link, f.rules)
+		t.Errorf("after the old timer: link %q, rules %v; want the new pin", p.link, f.rules)
+	}
+}
+
+// A failed setup with a failed rollback keeps the pin: the timer tries the
+// removal again.
+func TestPinner_FailedRollbackRetries(t *testing.T) {
+	old := pinRetry
+	pinRetry = 20 * time.Millisecond
+	t.Cleanup(func() { pinRetry = old })
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220", "172.66.0.218")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	f.fail, f.failDel = "rule add to 172.66.0.218", true
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+		t.Fatal("no error")
+	}
+	p.mu.Lock()
+	link, rules := p.link, f.rules["-4"]
+	p.mu.Unlock()
+	if link != "wan" || rules != 1 {
+		t.Fatalf("after the failed rollback: link %q, rules %d; want the pin to stay", link, rules)
+	}
+	if err := p.Unpin(PinOwnerControl, "wan"); err == nil {
+		t.Error("unpin with a failed removal: no error")
+	}
+	p.mu.Lock()
+	f.failDel = false
+	p.mu.Unlock()
+	waitPinGone(t, p, f)
+}
+
+// A failed Unpin keeps the timer of the pin: at the end of the time, the
+// timer tries the removal again.
+func TestPinner_FailedUnpinKeepsTimer(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	if err := p.Pin(PinOwnerCalibration, "wan", 100*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	f.fail = "-4 rule del"
+	if err := p.Unpin(PinOwnerCalibration, "wan"); err == nil {
+		t.Fatal("no error")
+	}
+	p.mu.Lock()
+	f.fail = ""
+	p.mu.Unlock()
+	waitPinGone(t, p, f)
+}
+
+// After Close, Pin refuses: a control command that is still open at the
+// stop cannot pin again.
+func TestPinner_CloseRefusesPin(t *testing.T) {
+	newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	p.Close()
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil || !strings.Contains(err.Error(), "stops") {
+		t.Errorf("pin after Close: %v", err)
+	}
+}
+
+// waitPinGone waits until the Pinner has no pin and no rules.
+func waitPinGone(t *testing.T, p *Pinner, f *fakeIP) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		p.mu.Lock()
+		link, rules := p.link, f.rules["-4"]
+		p.mu.Unlock()
+		if link == "" && rules == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("link %q, rules %d; want no pin", link, rules)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
