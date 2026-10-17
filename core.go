@@ -490,9 +490,14 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// known.
 	lowLoad := c.rateSeen && c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad &&
 		!c.unshaped && c.dl.shaperRateKbps < unshapedKbps && c.ul.shaperRateKbps < unshapedKbps
+	// Also with a low load, the path can have a queue (for example after a
+	// capacity decrease below the shaper rate). Then a queue that moves
+	// from one direction to the other looks like a clock step. Thus, the
+	// RTT without the time in the reflector must also be near its baseline.
+	queueFree := math.Abs(pathUs-rd.pathBaselineUs) <= maxClockQueueUs
 	dlChangeUs := dlUs - rd.dlBaselineUs - rd.dlLastUs
 	ulChangeUs := ulUs - rd.ulBaselineUs - rd.ulLastUs
-	if step := (dlChangeUs - ulChangeUs) / 2; lowLoad && math.Abs(step) >= minClockStepUs &&
+	if step := (dlChangeUs - ulChangeUs) / 2; lowLoad && queueFree && math.Abs(step) >= minClockStepUs &&
 		math.Abs(dlChangeUs+ulChangeUs) <= maxStepRTTChangeUs {
 		shift = step
 	}
@@ -506,10 +511,7 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// delay: the delays have noise. With a higher load, a path change and
 	// a queue can look like a clock change.
 	dlExcessUs, ulExcessUs := dlUs-rd.dlBaselineUs, ulUs-rd.ulBaselineUs
-	// Also with a low load, the path can have a queue (for example after a
-	// capacity decrease below the shaper rate): the RTT without the time in
-	// the reflector must also be near its baseline.
-	if rttExcess := math.Abs(pathUs - rd.pathBaselineUs); lowLoad && rttExcess <= maxClockQueueUs &&
+	if rttExcess := math.Abs(pathUs - rd.pathBaselineUs); lowLoad && queueFree &&
 		rttExcess < math.Max(math.Abs(dlExcessUs), math.Abs(ulExcessUs))/2 {
 		rd.dlBaselineUs += clockSplitGain * dlExcessUs
 		rd.ulBaselineUs += clockSplitGain * ulExcessUs

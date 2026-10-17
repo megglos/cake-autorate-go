@@ -1085,24 +1085,43 @@ func TestOWDDeltas_ClockStepDuringPing(t *testing.T) {
 }
 
 // A clock step of 650 ms (NTP after the boot of a router without a
-// battery clock) must not go into the delta, also during a download queue.
+// A clock step of 650 ms (NTP at the boot of a router without a battery
+// clock) must not go into the delta.
 func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
-	for _, queue := range []float64{0, 40} {
-		for _, sign := range []float64{1, -1} {
-			c := newOWDTestCore(t)
-			dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
-				step, q := 0.0, 0.0
-				if t >= 5*time.Second {
-					q = queue
-				}
-				if t >= 10*time.Second {
-					step = sign * 650
-				}
-				return 10 - step, 10 + q + step
-			})
-			if dl > queue+1 || ul > 1 {
-				t.Errorf("step %+.0f ms, queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want dl approximately the queue, ul 0", sign*650, queue, dl, ul)
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+			step := 0.0
+			if t >= 10*time.Second {
+				step = sign * 650
 			}
+			return 10 - step, 10 + step
+		})
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*650, dl, ul)
+		}
+	}
+}
+
+// A clock step during a download queue of 40 ms at a low load (the queue
+// is in the network). The RTT shows the queue: the replies cannot show the
+// part of the clock, and the step stays in the deltas during the queue.
+// After the queue, the deltas go back to 0.
+func TestOWDDeltas_ClockStepDuringQueueRecovers(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		dl, ul := owdRun(c, 30*time.Second, func(t time.Duration) (float64, float64) {
+			step, q := 0.0, 0.0
+			if t >= 5*time.Second && t < 15*time.Second {
+				q = 40
+			}
+			if t >= 10*time.Second {
+				step = sign * 650
+			}
+			return 10 - step, 10 + q + step
+		})
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms after the queue, want approximately 0", sign*650, dl, ul)
 		}
 	}
 }
@@ -1347,9 +1366,16 @@ func TestOWDDeltas_QueueMoveBeforeFirstRate(t *testing.T) {
 }
 
 // After a capacity decrease, the link is saturated at a load below 50 %
-// of the shaper rate. A queue of 80 ms moves from the upload to the
-// download at the same RTT: the download delta must show it.
+// of the shaper rate. A queue of 80 ms or 200 ms (more than a clock step)
+// moves from the upload to the download at the same RTT: the download
+// delta must show it.
 func TestOWDDeltas_QueueMoveAfterCapacityDrop(t *testing.T) {
+	for _, q := range []float64{80, 200} {
+		queueMoveAfterCapacityDrop(t, q)
+	}
+}
+
+func queueMoveAfterCapacityDrop(t *testing.T, q float64) {
 	c := newOWDTestCore(t)
 	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
 	start := time.Now()
@@ -1358,17 +1384,17 @@ func TestOWDDeltas_QueueMoveAfterCapacityDrop(t *testing.T) {
 		ulMs, dlMs := 10.0, 10.0
 		switch {
 		case i >= 40:
-			ulMs, dlMs = 10, 90
+			ulMs, dlMs = 10, 10+q
 		case i >= 20:
-			ulMs, dlMs = 90, 10
+			ulMs, dlMs = 10+q, 10
 		}
 		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
 		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
 		dlUs, ulUs := c.owdDeltas(rd, p)
 		dl, ul = dlUs/1000, ulUs/1000
 	}
-	if dl < 70 || ul > 10 {
-		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 80 and 0", dl, ul)
+	if dl < q-10 || ul > 10 {
+		t.Errorf("queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately %.0f and 0", q, dl, ul, q)
 	}
 }
 
