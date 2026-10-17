@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 #
 # Builds the OpenWrt packages of this repository in the OpenWrt SDK
-# (Docker image openwrt/sdk). It does the same steps as the CI workflow.
+# (Docker image openwrt/sdk). The CI workflow (package.yml) runs it too.
 #
 # Usage: scripts/openwrt-build.sh [ARCH] [PACKAGES]
 #   ARCH      SDK image tag, default aarch64_cortex-a53-25.12.5
