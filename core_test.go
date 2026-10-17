@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -973,6 +974,117 @@ func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
 	}
 	if c.dl.shaperRateKbps < dlBefore {
 		t.Errorf("download rate %.0f, want no decrease from %.0f", c.dl.shaperRateKbps, dlBefore)
+	}
+}
+
+// owdRun sends pings of one reflector at 300 ms for d. owd returns the
+// upload and the download delay (ms) at the time t since the start. It
+// returns the deltas of the last ping (ms).
+func owdRun(c *Core, d time.Duration, owd func(t time.Duration) (ulMs, dlMs float64)) (dlDeltaMs, ulDeltaMs float64) {
+	rd := &reflectorDelay{}
+	start := time.Now()
+	for t := time.Duration(0); t <= d; t += 300 * time.Millisecond {
+		ul, dl := owd(t)
+		p := owdPing("1.1.1.1", start.Add(t), ul, dl)
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dlDeltaMs, ulDeltaMs = dlUs/1000, ulUs/1000
+	}
+	return dlDeltaMs, ulDeltaMs
+}
+
+// A clock change of 10 ms in 30 s (NTP after the boot) moves 10 ms from the
+// upload to the download delay. Without load, the deltas must stay 0.
+func TestOWDDeltas_ClockSlewIsNotDelay(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c, _ := newTestCore(t)
+		dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
+			drift := sign * 10 * math.Min(t.Seconds()/30, 1)
+			return 10 - drift, 10 + drift
+		})
+		if dl > 0.5 || ul > 0.5 {
+			t.Errorf("clock change %+.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*10, dl, ul)
+		}
+	}
+}
+
+// A clock step of 650 ms (NTP after the boot of a router without a
+// battery clock) must not go into the delta, also during a download queue.
+func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
+	for _, queue := range []float64{0, 40} {
+		for _, sign := range []float64{1, -1} {
+			c, _ := newTestCore(t)
+			dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+				step, q := 0.0, 0.0
+				if t >= 5*time.Second {
+					q = queue
+				}
+				if t >= 10*time.Second {
+					step = sign * 650
+				}
+				return 10 - step, 10 + q + step
+			})
+			if dl > queue+1 || ul > 1 {
+				t.Errorf("step %+.0f ms, queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want dl approximately the queue, ul 0", sign*650, queue, dl, ul)
+			}
+		}
+	}
+}
+
+// A download queue with upload jitter is not a clock change: the download
+// delta must be the same as without the jitter. (The download baseline
+// increases slowly in the two runs.)
+func TestOWDDeltas_QueueWithJitterStays(t *testing.T) {
+	run := func(jitterMs float64) float64 {
+		c, _ := newTestCore(t)
+		dl, _ := owdRun(c, 60*time.Second, func(t time.Duration) (float64, float64) {
+			jitter := float64(int(t/(300*time.Millisecond))%5) * jitterMs
+			queue := 0.0
+			if t >= 5*time.Second {
+				queue = 40
+			}
+			return 10 + jitter, 10 + queue
+		})
+		return dl
+	}
+	if with, without := run(0.5), run(0); with < without-0.5 {
+		t.Errorf("download delta %.1f ms with upload jitter, %.1f ms without", with, without)
+	}
+}
+
+// A path change is faster than a clock slew. A shorter path (10 ms less in
+// each direction) during a download queue of 40 ms must not move the
+// upload decrease to the download baseline: the download delta decreases
+// only by the path change of the download (10 ms).
+func TestOWDDeltas_PathChangeIsNotClockChange(t *testing.T) {
+	run := func(changeMs float64) float64 {
+		c, _ := newTestCore(t)
+		dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
+			base, queue := 20.0, 0.0
+			if t >= 5*time.Second {
+				queue = 40
+			}
+			if t >= 20*time.Second {
+				base -= changeMs
+			}
+			return base, base + queue
+		})
+		return dl
+	}
+	if with, without := run(10), run(0); with < without-10.5 {
+		t.Errorf("download delta %.1f ms after the path change, %.1f ms without it", with, without)
+	}
+}
+
+// A shorter route decreases the two delays: no clock change, the two
+// baselines follow.
+func TestOWDDeltas_ShorterRouteInBothDirections(t *testing.T) {
+	c, _ := newTestCore(t)
+	rd := &reflectorDelay{}
+	ts := time.Now()
+	c.owdDeltas(rd, owdPing("1.1.1.1", ts, 20, 20))
+	c.owdDeltas(rd, owdPing("1.1.1.1", ts.Add(time.Second), 15, 15))
+	if rd.dlBaselineUs > 16000 || rd.ulBaselineUs > 16000 {
+		t.Errorf("baselines dl %.0f us, ul %.0f us, want approximately 15000", rd.dlBaselineUs, rd.ulBaselineUs)
 	}
 }
 
