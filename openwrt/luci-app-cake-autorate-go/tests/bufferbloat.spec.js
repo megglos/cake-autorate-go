@@ -479,3 +479,70 @@ test('a status that was asked in the warm-up is not a sample', async ({ page }) 
 	await expect(dl).toContainText('ms (p95', { timeout: 30000 });
 	await expect(dl).toContainText('10.0 ms (p95 10.0)');
 });
+
+test('the test stops when a calibration runs', async ({ page }) => {
+	await routeUbus(page, (s) => { Object.assign(s.links[0], { state: 'RUNNING', calibrating: true }); });
+	await routeLoad(page);
+	// The button is disabled during a calibration (it can start after the
+	// dialog opens): open the dialog from the module.
+	await page.goto(PAGE);
+	await page.evaluate((phases) => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = phases;
+		b.warmup = 0;
+		b.open({ name: 'wan', download: {}, upload: {} });
+	}), PHASES);
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('A calibration of the link runs.', { timeout: 20000 });
+	await expect(modal.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('a load that transfers no data stops the test', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; });
+	await routeLoad(page);
+	// The downloads hang: no answer, no error.
+	await page.route('https://speed.cloudflare.com/__down*', () => new Promise(() => {}));
+	const modal = await openDialog(page);
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	await expect(modal).toContainText('The load did not transfer data (download).', { timeout: 20000 });
+	await expect(modal.locator('[data-grade]')).toHaveCount(0);
+});
+
+test('the Stop button keeps the keyboard focus during the refreshes', async ({ page }) => {
+	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; });
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'idle', load: '', seconds: 8 } ];
+		b.warmup = 0;
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const stop = modal.getByRole('button', { name: 'Stop' });
+	await stop.focus();
+	await page.waitForTimeout(3500);
+	await expect(stop).toBeFocused();
+});
+
+test('the rates count from the end of the warm-up, also with slow status requests', async ({ page }) => {
+	// Status answers come 5 s late: no status answer in the phase after
+	// the warm-up.
+	await routeUbus(page, (s) => { s.links[0].state = 'RUNNING'; }, false, 5000);
+	await routeLoad(page);
+	await page.goto(PAGE);
+	await page.evaluate(() => L.require('cake-autorate.bufferbloat').then((b) => {
+		b.phases = [ { key: 'dl', load: 'dl', seconds: 6 } ];
+		b.warmup = 1;
+	}));
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-bufferbloat').click();
+	const modal = page.locator('.modal');
+	await noLimit(modal);
+	await modal.getByRole('button', { name: 'Start' }).click();
+	const rate = modal.locator('table.cake-autorate-bufferbloat-result tr[data-phase="dl"] td').nth(1);
+	await expect(rate).toContainText('Mbit/s', { timeout: 30000 });
+	expect(parseFloat(await rate.textContent())).toBeGreaterThan(0);
+});

@@ -302,49 +302,69 @@ return baseclass.extend({
 			const start = performance.now();
 			const end = start + p.seconds * 1000;
 			const warmEnd = start + (p.load ? this.warmup * 1000 : 0);
+			// The rates count from the end of the warm-up, independent of the
+			// status requests.
 			let warm = null;
-			const what = _('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key));
-			// The Stop button shows before the first status request.
-			this.renderRunning(what, p.seconds, null);
-			for (let s = 1; !this.cancelled; s++) {
-				await sleep(Math.max(0, Math.min(start + s * 1000, end) - performance.now()));
-				// A failed load request (for example, the speed test is
-				// blocked): the delay without load would get a good grade.
-				if (this.load.errors > 0)
-					throw new Error(_('The load failed: %s').format(this.load.lastError));
-				if (performance.now() >= end - 50)
-					break;
-				// The time of the request, not of the answer: a status that
-				// comes late can be from the warm-up.
-				const asked = performance.now();
-				const st = await this.readLink(link, end - asked);
-				if (performance.now() >= end)
-					break;
-				if (st && !!st.ls.unshaped != unshaped)
-					throw new Error(unshaped
-						? _('The shaping came back before the end of the run without shaping.')
-						: _('The shaping is off: the run with shaping needs it on.'));
-				const measuring = asked >= warmEnd;
-				if (measuring && warm == null)
+			const takeWarm = () => {
+				if (warm == null)
 					warm = { t: performance.now(), dl: this.load.sent.dl, ul: this.load.sent.ul };
-				// Only a status with a new ping reply has a new delay delta
-				// ("replies" increases). Without new replies (Idle, Stall,
-				// reflectors that do not reply), the phase gets no sample.
-				const replies = st ? +st.ls.replies : NaN;
-				if (st && measuring && lastReplies != null && replies > lastReplies) {
-					ph.dl.push(+st.ls.download.delta_ms || 0);
-					ph.ul.push(+st.ls.upload.delta_ms || 0);
+			};
+			const warmTimer = setTimeout(takeWarm, Math.max(0, warmEnd - performance.now()));
+			try {
+				const what = _('Run %d of %d (%s): %s').format(number, total, title, this.phaseTitle(p.key));
+				// The Stop button shows before the first status request.
+				this.renderRunning(what, p.seconds, null);
+				for (let s = 1; !this.cancelled; s++) {
+					await sleep(Math.max(0, Math.min(start + s * 1000, end) - performance.now()));
+					// A failed load request (for example, the speed test is
+					// blocked): the delay without load would get a good grade.
+					if (this.load.errors > 0)
+						throw new Error(_('The load failed: %s').format(this.load.lastError));
+					if (performance.now() >= end - 50)
+						break;
+					// The time of the request, not of the answer: a status that
+					// comes late can be from the warm-up.
+					const asked = performance.now();
+					const st = await this.readLink(link, end - asked);
+					if (performance.now() >= end)
+						break;
+					if (st && !!st.ls.unshaped != unshaped)
+						throw new Error(unshaped
+							? _('The shaping came back before the end of the run without shaping.')
+							: _('The shaping is off: the run with shaping needs it on.'));
+					// A calibration changes the shaper rates.
+					if (st && st.ls.calibrating)
+						throw new Error(_('A calibration of the link runs.'));
+					const measuring = asked >= warmEnd;
+					// Only a status with a new ping reply has a new delay delta
+					// ("replies" increases). Without new replies (Idle, Stall,
+					// reflectors that do not reply), the phase gets no sample.
+					const replies = st ? +st.ls.replies : NaN;
+					if (st && measuring && lastReplies != null && replies > lastReplies) {
+						ph.dl.push(+st.ls.download.delta_ms || 0);
+						ph.ul.push(+st.ls.upload.delta_ms || 0);
+					}
+					else if (st && measuring && lastReplies != null) {
+						ph.idle++;
+					}
+					if (st && !isNaN(replies))
+						lastReplies = replies;
+					this.renderRunning(what, Math.max(0, Math.round((end - performance.now()) / 1000)), st && st.ls);
 				}
-				else if (st && measuring && lastReplies != null) {
-					ph.idle++;
+				if (warm) {
+					ph.seconds = (performance.now() - warm.t) / 1000;
+					ph.bytes = { dl: this.load.sent.dl - warm.dl, ul: this.load.sent.ul - warm.ul };
 				}
-				if (st && !isNaN(replies))
-					lastReplies = replies;
-				this.renderRunning(what, Math.max(0, Math.round((end - performance.now()) / 1000)), st && st.ls);
 			}
-			if (warm) {
-				ph.seconds = (performance.now() - warm.t) / 1000;
-				ph.bytes = { dl: this.load.sent.dl - warm.dl, ul: this.load.sent.ul - warm.ul };
+			finally {
+				clearTimeout(warmTimer);
+			}
+			// A load phase without data in a direction of the load (the
+			// requests hang): its delay is not a delay under load.
+			if (!this.cancelled && p.load && ph.bytes) {
+				for (const dir of [ 'dl', 'ul' ])
+					if ((p.load == dir || p.load == 'both') && ph.bytes[dir] == 0)
+						throw new Error(_('The load did not transfer data (%s).').format(dir == 'dl' ? _('download') : _('upload')));
 			}
 		}
 		this.load.set('');
@@ -368,11 +388,19 @@ return baseclass.extend({
 			nodes.push(E('p', { 'class': 'cake-autorate-delay' }, text(_('Delay delta now: download %.1f ms, upload %.1f ms. State: %s.')
 				.format(+ls.download.delta_ms || 0, +ls.upload.delta_ms || 0, ls.state))));
 		nodes.push(E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s of %s.').format(volume(this.load.used()), volume(this.load.limit)))));
-		nodes.push(E('div', { 'class': 'right' }, E('button', {
-			'class': 'cbi-button cbi-button-negative',
-			'click': ui.createHandlerFn(this, 'stop')
-		}, _('Stop'))));
-		this.node.replaceChildren(...nodes);
+		// The Stop button stays in the page: then it keeps the keyboard
+		// focus during the refreshes.
+		if (!this.runningView || !this.node.contains(this.runningView.info)) {
+			this.runningView = {
+				info: E('div', { 'class': 'cake-autorate-progress' }),
+				actions: E('div', { 'class': 'right' }, E('button', {
+					'class': 'cbi-button cbi-button-negative',
+					'click': ui.createHandlerFn(this, 'stop')
+				}, _('Stop')))
+			};
+			this.node.replaceChildren(this.runningView.info, this.runningView.actions);
+		}
+		this.runningView.info.replaceChildren(...nodes);
 	},
 
 	// Returns the cells of a phase: the rates of the browser, the median
