@@ -102,6 +102,66 @@ function timestampError(method, reflectors, where) {
 	return _('%s: no reflector replies to ICMP timestamp requests. Add other reflectors, or remove all reflectors to use the default list for icmp-timestamp.').format(where);
 }
 
+// The SQM scripts that put CAKE as the root qdisc on the WAN device and
+// on the IFB. The service changes only the root qdisc.
+const SQM_CAKE_SCRIPTS = [ 'piece_of_cake.qos', 'layer_cake.qos' ];
+
+// Returns the name of the IFB that SQM makes for the device ifname: "ifb4"
+// and the device name, cut to 15 characters (sqm-scripts, ifb_name).
+function sqmIfb(ifname) {
+	return ('ifb4' + ifname).substring(0, 15);
+}
+
+// Returns true if /etc/config/sqm has a queue section.
+function sqmPresent() {
+	return uci.sections('sqm', 'queue').length > 0;
+}
+
+// Returns the enabled SQM queues with a device. SQM starts a queue only if
+// "enabled" is 1. A rate of 0 does not shape that direction.
+function sqmQueues() {
+	return uci.sections('sqm', 'queue')
+		.filter((q) => q.enabled == '1' && !isEmpty(q.interface))
+		.map((q) => ({
+			ifname: q.interface,
+			ifb: sqmIfb(q.interface),
+			dl: +q.download > 0,
+			ul: +q.upload > 0,
+			cake: q.qdisc == 'cake' && SQM_CAKE_SCRIPTS.includes(q.script)
+		}));
+}
+
+// Returns the warnings for the interfaces of a link: the enabled SQM queues
+// must shape them with CAKE. dl and ul are the interface names, empty for
+// a direction that the service does not adjust.
+function sqmWarnings(dl, ul) {
+	const queues = sqmQueues();
+	const warnings = [];
+	const notCake = [];
+	if (!isEmpty(ul)) {
+		const q = queues.find((q) => q.ifname == ul);
+		if (!q)
+			warnings.push(_('No enabled SQM queue shapes the upload on %s.').format(ul));
+		else if (!q.ul)
+			warnings.push(_('The SQM queue on %s does not shape the upload (upload rate 0).').format(ul));
+		else if (!q.cake)
+			notCake.push(q.ifname);
+	}
+	if (!isEmpty(dl)) {
+		const q = queues.find((q) => q.ifb == dl);
+		if (!q)
+			warnings.push(_('No enabled SQM queue shapes the download on %s. SQM shapes the download on the IFB "ifb4" + WAN device, for example %s.')
+				.format(dl, sqmIfb(ul || 'wan')));
+		else if (!q.dl)
+			warnings.push(_('The SQM queue on %s does not shape the download (download rate 0).').format(q.ifname));
+		else if (!q.cake && !notCake.includes(q.ifname))
+			notCake.push(q.ifname);
+	}
+	for (const ifname of notCake)
+		warnings.push(_('The SQM queue on %s does not use CAKE as the root qdisc. Set the queue discipline "cake" and the script "piece_of_cake.qos" or "layer_cake.qos".').format(ifname));
+	return warnings;
+}
+
 // The global section and the link section of the page. The ping checks
 // read the values of the form from them.
 const page = { global: null, globalSid: null, links: null };
@@ -432,6 +492,62 @@ function linkSection(m) {
 	};
 	o.modalonly = true;
 
+	// The SQM fields show only if /etc/config/sqm has a queue. The values
+	// are not saved.
+	const sqmCheckNodes = Object.create(null);
+	const updateSqmCheck = function(section, sid) {
+		const node = sqmCheckNodes[sid];
+		if (!node)
+			return;
+		const ifname = (d) => section.formvalue(sid, d + '_adjust') == '0'
+			? '' : section.formvalue(sid, d + '_interface');
+		const warnings = sqmWarnings(ifname('dl'), ifname('ul'));
+		// Text nodes: the warnings contain UCI values.
+		node.replaceChildren(...(warnings.length == 0 ? [] : [
+			E('div', { 'class': 'alert-message warning' },
+				warnings.map((w) => E('p', {}, document.createTextNode(w))))
+		]));
+	};
+	const onInterfaceChange = function(ev, sid) {
+		updateSqmCheck(this.section, sid);
+	};
+
+	if (sqmPresent()) {
+		o = s.taboption('interfaces', form.ListValue, '_sqm_queue', _('SQM queue'),
+			_('Set the interfaces from an enabled SQM queue: the WAN device for the upload, its IFB for the download.'));
+		o.modalonly = true;
+		o.value('', sqmQueues().length ? _('Select a queue') : _('No enabled SQM queue'));
+		for (const q of sqmQueues())
+			o.value(q.ifname, _('%s (download: %s)').format(q.ifname, q.ifb));
+		o.cfgvalue = function(sid) {
+			const ul = uci.get('cake-autorate', sid, 'ul_interface');
+			const q = sqmQueues().find((q) => q.ifname == ul);
+			return (q && uci.get('cake-autorate', sid, 'dl_interface') == q.ifb) ? q.ifname : '';
+		};
+		o.write = o.remove = function() {};
+		o.onchange = function(ev, sid, value) {
+			const q = sqmQueues().find((q) => q.ifname == value);
+			if (!q)
+				return;
+			for (const [ d, ifname ] of [ [ 'dl', q.ifb ], [ 'ul', q.ifname ] ]) {
+				const el = this.section.getUIElement(sid, d + '_interface');
+				el.setValue(ifname);
+				el.triggerValidation();
+			}
+			updateSqmCheck(this.section, sid);
+		};
+
+		o = s.taboption('interfaces', form.DummyValue, '_sqm_check');
+		o.modalonly = true;
+		o.renderWidget = function(sid) {
+			const node = E('div');
+			sqmCheckNodes[sid] = node;
+			// The other fields are not in the form yet.
+			window.setTimeout(() => updateSqmCheck(this.section, sid), 0);
+			return node;
+		};
+	}
+
 	for (const [ d, title ] of DIRECTIONS) {
 		o = s.taboption('interfaces', widgets.DeviceSelect, d + '_interface', _('%s interface').format(title),
 			d == 'dl'
@@ -456,12 +572,14 @@ function linkSection(m) {
 				return _('The link "%s" uses this interface').format(used[value]);
 			return true;
 		};
+		o.onchange = onInterfaceChange;
 
 		o = s.taboption('interfaces', form.Flag, d + '_adjust', _('Adjust the %s rate').format(title.toLowerCase()),
 			_('Off: the service measures, but does not change the rate of this shaper.'));
 		o.default = '1';
 		o.rmempty = false;
 		o.modalonly = true;
+		o.onchange = onInterfaceChange;
 	}
 
 	for (const [ d, title ] of DIRECTIONS) {
@@ -570,7 +688,9 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			L.resolveDefault(fs.read(ERROR_FILE), ''),
-			uci.load('cake-autorate')
+			uci.load('cake-autorate'),
+			// Only to propose the interfaces. SQM can be missing.
+			L.resolveDefault(uci.load('sqm'), null)
 		]);
 	},
 
