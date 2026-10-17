@@ -288,6 +288,7 @@ return baseclass.extend({
 	// Opens the dialog to start a calibration of the link with the status
 	// ls.
 	open: function(ls) {
+		this.opened = true;
 		this.link = ls.name;
 		const select = E('select', { 'class': 'cbi-input-select', 'id': 'cake-autorate-calibrate-load' },
 			LOAD_TIMES.map((s) => E('option', { 'value': s, 'selected': s == 40 ? '' : null }, _('%d s').format(s))));
@@ -436,6 +437,10 @@ return baseclass.extend({
 	// Then it shows the progress and makes the load again.
 	resume: function() {
 		return L.resolveDefault(callStatus(), null).then((res) => {
+			// The user opened the dialog before the answer: the dialog
+			// shows the session.
+			if (this.opened)
+				return;
 			const st = parseStatus(res);
 			if (st.state == 'running')
 				this.attach(st.link, st.session, false);

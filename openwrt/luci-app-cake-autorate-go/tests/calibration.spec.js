@@ -55,6 +55,20 @@ async function routeSession(page, session) {
 		const isCal = (q) => q && q.params && q.params[1] == 'cake-autorate' && /^calibrate_/.test(q.params[2]);
 		if (!requests.some(isCal))
 			return route.continue();
+		// holdFirstStatus: the first status request (resume() at the load
+		// of the page) gets its answer right after the start request.
+		// Then the other status requests (the polls of the dialog) get their
+		// answer 1 s late: the answer of resume() comes first.
+		if (session.holdFirstStatus && requests.some((q) => isCal(q) && q.params[2] == 'calibrate_status')) {
+			if (!session.held) {
+				session.held = true;
+				while (!session.started)
+					await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			else {
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+			}
+		}
 		const others = requests.filter((q) => !isCal(q));
 		let answers = [];
 		if (others.length) {
@@ -190,6 +204,25 @@ test('the load stops the session at the data limit', async ({ page }) => {
 	await expect(modal).toContainText('The calibration stopped: the load reached the data limit of 1 MB.', { timeout: 10000 });
 	expect(session.stops).toBe(1);
 	expect(load.up).toBe(0);
+});
+
+test('a late answer at the load of the page does not take over the session of the dialog', async ({ page }) => {
+	const session = fakeSession([ running(1, 'dl', 'unshaped', 'load', 'dl') ]);
+	session.holdFirstStatus = true;
+	await routeSession(page, session);
+	const load = await routeLoad(page);
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 1 of 5', { timeout: 10000 });
+	// The answer of resume() came right after the start: "running", the
+	// session of the dialog.
+	await page.waitForTimeout(3000);
+	await expect(page.locator('.modal')).not.toContainText('this page did not start it');
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 1 of 5');
+	// The load keeps the data limit of the dialog.
+	await expect(page.locator('.modal .cake-autorate-used')).toContainText(/ of [\d.]+ (MB|GB)\./);
+	await expect.poll(() => load.down, { timeout: 10000 }).toBeGreaterThan(0);
 });
 
 test('the browser makes the load that the session asks for', async ({ page }) => {
