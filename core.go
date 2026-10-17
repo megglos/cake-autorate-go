@@ -95,6 +95,12 @@ type reflectorDelay struct {
 // change is faster: most of it does not move between the baselines.
 const maxClockSlewUsPerS = 500
 
+// maxClockSlewGap is the maximum time between two replies for the slew
+// limit. After a longer gap (Idle, Stall), a large allowance can move a
+// path change and a queue between the baselines. The rule for a low load
+// removes the rest of a slew after the gap.
+const maxClockSlewGap = 2 * time.Second
+
 // minClockStepUs is the minimum clock step that owdDeltas finds from one
 // reply to the next. ntpd steps the clock for an offset of more than
 // 128 ms, and slews it for a smaller offset. A smaller value can come from
@@ -438,7 +444,8 @@ func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDe
 	// download.
 	shift := math.Min(math.Max(rd.ulBaselineUs-ulUs, 0), math.Max(dlUs-rd.dlBaselineUs, 0)) -
 		math.Min(math.Max(rd.dlBaselineUs-dlUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0))
-	maxShift := maxClockSlewUsPerS * math.Max(result.Timestamp.Sub(rd.owdTime).Seconds(), 0)
+	gap := min(max(result.Timestamp.Sub(rd.owdTime), 0), maxClockSlewGap)
+	maxShift := maxClockSlewUsPerS * gap.Seconds()
 	shift = math.Max(-maxShift, math.Min(shift, maxShift))
 	// A clock step (NTP after the boot) changes the two deltas by the same
 	// value in opposite directions, and the RTT does not change. A change
