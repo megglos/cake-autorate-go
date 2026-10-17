@@ -2,7 +2,7 @@
 
 cake-autorate-go uses one YAML config file (default: `/etc/cake-autorate/config.yaml`). Each setting has a default value. Thus, set only the values that are different for your link.
 
-With the OpenWrt package, the service writes this file from the UCI configuration (see [luci.md](luci.md#configuration-with-uci)). The keys and their meaning are the same.
+With the OpenWrt package, do not use this file. The configuration is in UCI (`/etc/config/cake-autorate`). At each start, the service writes `/var/etc/cake-autorate.yaml` from it and uses that file (see [luci.md](luci.md#configuration-with-uci)). The UCI options have the same names and meaning as the keys on this page.
 
 To make a config file with the default values:
 
