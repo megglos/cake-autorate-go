@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"os/exec"
 	"slices"
@@ -99,7 +100,10 @@ type Pinner struct {
 // NewPinner returns a Pinner for the links. The traffic goes through the
 // device of the upload of a link (upload.interface).
 func NewPinner(links []LinkConfig, logger *Logger) *Pinner {
-	p := &Pinner{devices: make(map[string]string, len(links)), logger: logger}
+	// The IDs start at a random number: after a restart of the program, a
+	// late unpin of a client with an ID of the earlier process must not
+	// match a new pin.
+	p := &Pinner{devices: make(map[string]string, len(links)), logger: logger, nextID: rand.IntN(1 << 30)}
 	for _, l := range links {
 		p.devices[l.Name] = l.Upload.Interface
 	}

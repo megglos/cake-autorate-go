@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -500,6 +501,39 @@ func TestPinner_LateUnpinKeepsNewerPin(t *testing.T) {
 	}
 }
 
+// After a restart of the program (a new Pinner), the ID of a pin of the
+// earlier process does not match the new pin.
+func TestPinner_IDsDifferAfterRestart(t *testing.T) {
+	newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	same := 0
+	for range 20 {
+		p1 := NewPinner(pinTestLinks(), testLogger(t))
+		a, err := p1.Pin(PinOwnerControl, "wan", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p1.Close()
+		p2 := NewPinner(pinTestLinks(), testLogger(t))
+		b, err := p2.Pin(PinOwnerControl, "wan", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a == b {
+			same++
+		}
+		if err := p2.Unpin(PinOwnerControl, "wan", a); err != nil {
+			t.Fatal(err)
+		}
+		if a != b && p2.link != "wan" {
+			t.Fatal("the late unpin of the earlier process removed the new pin")
+		}
+		p2.Close()
+	}
+	if same > 1 {
+		t.Errorf("%d of 20 restarts gave the same ID", same)
+	}
+}
+
 // After Close, Pin refuses: a control command that is still open at the
 // stop cannot pin again.
 func TestPinner_CloseRefusesPin(t *testing.T) {
@@ -591,12 +625,12 @@ func TestControl_PinCommands(t *testing.T) {
 		{"unpin wan lte", "error: ID must be a positive number"},
 		{"unpin wan 1 2", "error: usage: unpin [LINK [ID]]"},
 		{"unpin", "ok"},
-		{"pin wan 60", "ok 1"},
+		{"pin wan 60", fmt.Sprintf("ok %d", p.nextID+1)},
 		// The unpin of an earlier pin does nothing.
-		{"unpin wan 9", "ok"},
+		{"unpin wan 999999999999", "ok"},
 		{"pin wan 60", `error: a test of link "wan" has the traffic of the load`},
-		{"unpin wan 1", "ok"},
-		{"pin wan 60", "ok 2"},
+		{"unpin wan " + fmt.Sprint(p.nextID+1), "ok"},
+		{"pin wan 60", fmt.Sprintf("ok %d", p.nextID+2)},
 		{"unpin wan", "ok"},
 	} {
 		if got := handleControlCommand(c.cmd, h); got != c.want {
