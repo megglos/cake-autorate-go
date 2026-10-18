@@ -164,6 +164,17 @@ func main() {
 		}(lc, link.Name)
 	}
 
+	// Rules of an earlier process (after a crash) go away, also if this
+	// config has no control socket. At the stop, the rules of this process
+	// go away.
+	pinner := NewPinner(cfg.Links, logger)
+	pinner.Clear()
+	defer func() {
+		if err := pinner.Close(); err != nil {
+			logger.Errorf("the rules of table %s stay: %v (remove them with \"ip rule del lookup %s\")", pinTable, err, pinTable)
+		}
+	}()
+
 	var calib *Calibrator
 	if cfg.ControlSocket != "" {
 		// The calibration sessions write their files next to the
@@ -174,10 +185,11 @@ func main() {
 		}
 		calib = NewCalibrator(ctx, filepath.Dir(cfg.ControlSocket), targets, logger)
 		calib.probe = probeTimestamps
+		calib.pin = pinner
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := RunControlSocket(ctx, cfg.ControlSocket, &ControlHandler{Names: names, Links: controls, History: historySource(board), Calib: calib}, logger); err != nil {
+			if err := RunControlSocket(ctx, cfg.ControlSocket, &ControlHandler{Names: names, Links: controls, History: historySource(board), Calib: calib, Pin: pinner}, logger); err != nil {
 				logger.Errorf("control socket: %v", err)
 			}
 		}()

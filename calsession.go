@@ -249,6 +249,10 @@ type CalStatus struct {
 	Result     *CalOutput `json:"result,omitempty"`
 }
 
+// calPinMargin is the time of the pin of a session after its planned end.
+// The end of the session removes the pin earlier.
+const calPinMargin = time.Minute
+
 // Calibrator runs one calibration session at a time.
 type Calibrator struct {
 	ctx     context.Context
@@ -269,6 +273,12 @@ type Calibrator struct {
 	// probe, if set, runs the ICMP timestamp probe in the idle time of the
 	// first block.
 	probe probeFunc
+	// pin, if set, sends the traffic to the load hosts through the link of
+	// the session (see Pinner), until the end of the session. pinned is
+	// true while the session has its pin.
+	pin    PinControl
+	pinned bool
+	pinID  int
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -329,10 +339,11 @@ func (k *Calibrator) Start(link string, times calTimes) error {
 	done := make(chan struct{})
 	k.done = done
 	k.logger.Infof("[%s] calibration started (load %v for each block)", link, times.Load)
+	pinTime := k.end.Sub(now) + calPinMargin
 	go func() {
 		// Release the context of the session at its end.
 		defer cancel()
-		k.run(ctx, link, target, times, done)
+		k.run(ctx, link, target, times, pinTime, done)
 	}()
 	return nil
 }
@@ -391,8 +402,19 @@ func (k *Calibrator) Wait() {
 var errCalStopped = errors.New("stopped")
 
 // run runs the session and sets the final state.
-func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, times calTimes, done chan struct{}) {
+func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, times calTimes, pinTime time.Duration, done chan struct{}) {
 	defer close(done)
+	// The load of the session goes through the link. Without it, the
+	// session runs: on a router with one WAN link, the load uses the link.
+	var pinErr error
+	k.pinned = false
+	if k.pin != nil {
+		if k.pinID, pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
+			k.logger.Errorf("[%s] calibration: %v", link, pinErr)
+		} else {
+			k.pinned = true
+		}
+	}
 	// The session restores the rate control after the last block, before
 	// the analysis. After an error, restore it here.
 	restored := false
@@ -404,7 +426,7 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 		}
 		return ferr
 	}
-	out, err := k.session(ctx, link, target, times, restore)
+	out, err := k.session(ctx, link, target, times, restore, pinErr)
 	// A failed restore is always a failed session: the shaper can still
 	// have no limit.
 	if ferr := restore(); ferr != nil {
@@ -412,6 +434,14 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 			err = fmt.Errorf("restore the rate control: %v (after: %v)", ferr, err)
 		} else {
 			err = fmt.Errorf("restore the rate control: %w", ferr)
+		}
+	}
+	// Unpin before the final state: after it, a new session of the link
+	// can start and pin the link again.
+	if k.pinned {
+		k.pinned = false
+		if err := k.pin.Unpin(PinOwnerCalibration, link, k.pinID); err != nil {
+			k.logger.Errorf("[%s] calibration: %v", link, err)
 		}
 	}
 	k.mu.Lock()
@@ -451,7 +481,8 @@ func privateDir(path string) error {
 
 // session runs the blocks, restores the rate control and runs the
 // analysis.
-func (k *Calibrator) session(ctx context.Context, link string, target CalTarget, times calTimes, restore func() error) (*CalOutput, error) {
+// pinErr is the error of the pin of the link: the result gets a note.
+func (k *Calibrator) session(ctx context.Context, link string, target CalTarget, times calTimes, restore func() error, pinErr error) (*CalOutput, error) {
 	// The sessions and the results have separate directories: a link name
 	// can end with ".json". The top directory is private: then nobody can
 	// place links in it.
@@ -490,7 +521,14 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		start := k.now()
 		k.mu.Lock()
 		k.end = start.Add(time.Duration(len(calSessionBlocks)-i) * (times.Idle + times.Load + times.Tail))
+		left := k.end.Sub(start)
 		k.mu.Unlock()
+		// The pin lasts until the new end (a slow setup moves it).
+		if k.pinned {
+			if perr := k.pin.Extend(PinOwnerCalibration, link, k.pinID, left+calPinMargin); perr != nil {
+				k.logger.Errorf("[%s] calibration: %v", link, perr)
+			}
+		}
 		var loadStart, loadEnd time.Time
 		if err == nil && i == 0 && k.probe != nil {
 			probe, err = k.idleWithProbe(ctx, target.CalConfig(), start.Add(times.Idle), times.Idle)
@@ -535,6 +573,9 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		return nil, fmt.Errorf("analysis: %w", err)
 	}
 	out := newCalOutput(link, k.now(), res, cfg, probe)
+	if pinErr != nil {
+		out.Notes = append(out.Notes, fmt.Sprintf("the load was not pinned to the link: %v; on a router with more than one WAN link, the load can use another link", pinErr))
+	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return nil, err

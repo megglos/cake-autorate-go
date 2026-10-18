@@ -658,6 +658,91 @@ func TestCalibrationTruncatedRecording(t *testing.T) {
 
 // With fewer reflectors than the analysis needs (a small pinger_count),
 // the proposal keeps the ping method and the reflectors of the config.
+// fakePin records the pin calls of a session.
+type fakePin struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+	// onUnpin, if set, runs in Unpin.
+	onUnpin func()
+	// extends is the number of Extend calls.
+	extends int
+}
+
+func (f *fakePin) Pin(owner, link string, d time.Duration) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fmt.Sprintf("pin %s %s %v", owner, link, d))
+	if f.err != nil {
+		return 0, f.err
+	}
+	return 7, nil
+}
+
+func (f *fakePin) Extend(owner, link string, id int, d time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.extends++
+	return nil
+}
+
+func (f *fakePin) Unpin(owner, link string, id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fmt.Sprintf("unpin %s %s %d", owner, link, id))
+	if f.onUnpin != nil {
+		f.onUnpin()
+	}
+	return nil
+}
+
+// A session pins its link until its end: the time of the session and a
+// margin. A failed pin does not stop the session, but the result has a
+// note.
+func TestCalibrationPinsTheLink(t *testing.T) {
+	times := defaultCalTimes(30 * time.Second)
+	total := time.Duration(len(calSessionBlocks))*(times.Idle+times.Load+times.Tail) + calPinMargin
+	for _, failed := range []bool{false, true} {
+		k, _, _ := newTestCalibrator(t, times)
+		pin := &fakePin{}
+		if failed {
+			pin.err = errors.New("no IPv4 default route")
+		}
+		k.pin = pin
+		// The unpin comes before the final state: else a new session of
+		// the link could pin first, and the unpin would remove its pin.
+		var stateAtUnpin string
+		pin.onUnpin = func() { stateAtUnpin = k.Status().State }
+		if err := k.Start("wan", times); err != nil {
+			t.Fatal(err)
+		}
+		k.Wait()
+		st := k.Status()
+		if st.State != "done" {
+			t.Fatalf("failed pin %v: status %+v", failed, st)
+		}
+		want := []string{fmt.Sprintf("pin calibration wan %v", total), "unpin calibration wan 7"}
+		if failed {
+			want = want[:1]
+		}
+		if fmt.Sprint(pin.calls) != fmt.Sprint(want) {
+			t.Errorf("failed pin %v: calls %v, want %v", failed, pin.calls, want)
+		}
+		if !failed && stateAtUnpin != "running" {
+			t.Errorf("state at the unpin %q, want running", stateAtUnpin)
+		}
+		// The end of the session moves with the setup of each block: the
+		// session extends its pin each time.
+		if want := len(calSessionBlocks); !failed && pin.extends != want {
+			t.Errorf("extends %d, want %d (one for each block)", pin.extends, want)
+		}
+		note := strings.Contains(strings.Join(st.Result.Notes, "\n"), "not pinned to the link: no IPv4 default route")
+		if note != failed {
+			t.Errorf("failed pin %v: notes %v", failed, st.Result.Notes)
+		}
+	}
+}
+
 func TestCalibrationFewReflectors(t *testing.T) {
 	times := defaultCalTimes(30 * time.Second)
 	k, target, _ := newTestCalibrator(t, times)
