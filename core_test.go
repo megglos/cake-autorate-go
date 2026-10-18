@@ -945,8 +945,23 @@ func TestCore_DeterministicForSameEvents(t *testing.T) {
 func newOWDTestCore(t *testing.T) *Core {
 	t.Helper()
 	c, _ := newTestCore(t)
+	// The clock rules need the shaping on.
+	c.link.Download.Adjust, c.link.Upload.Adjust = true, true
 	c.HandleRate(RateStats{Timestamp: time.Now()})
 	return c
+}
+
+// setLoad sets the load of each direction (achieved rate / shaper rate),
+// as HandleRate does. A negative value keeps the direction.
+func setLoad(c *Core, dl, ul float64) {
+	for dir, l := range map[Direction]float64{DL: dl, UL: ul} {
+		if l < 0 {
+			continue
+		}
+		ds := c.getDirState(dir)
+		ds.achievedKbps = l * ds.shaperRateKbps
+		ds.loadPercent = l
+	}
 }
 
 // owdPing returns a ping result with one-way delays in ms.
@@ -1137,13 +1152,13 @@ func TestOWDDeltas_ClockStepWithNewQueueRecovers(t *testing.T) {
 		var dl, ul float64
 		for ts := time.Duration(0); ts <= 30*time.Second; ts += 300 * time.Millisecond {
 			ulMs, dlMs := 10.0, 10.0
-			c.dl.loadPercent = 0
+			setLoad(c, 0, -1)
 			if ts >= 10*time.Second {
 				ulMs, dlMs = 10-sign*650, 10+sign*650
 			}
 			if ts >= 10*time.Second && ts < 15*time.Second {
 				dlMs += 40
-				c.dl.loadPercent = 0.9
+				setLoad(c, 0.9, -1)
 			}
 			p := owdPing("1.1.1.1", start.Add(ts), ulMs, dlMs)
 			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
@@ -1207,7 +1222,7 @@ func TestOWDDeltas_ReflectorTime(t *testing.T) {
 // queue.
 func TestOWDDeltas_PathChangeUnderLoadKeepsQueue(t *testing.T) {
 	c := newOWDTestCore(t)
-	c.dl.loadPercent = 0.9
+	setLoad(c, 0.9, -1)
 	dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
 		ul, queue := 100.0, 0.0
 		if t >= 5*time.Second {
@@ -1231,7 +1246,7 @@ func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
 	// the queue: the program starts under load.
 	for _, q := range []float64{40, 80} {
 		c := newOWDTestCore(t)
-		c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+		setLoad(c, 0.9, 0.9)
 		dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
 			if int(t.Seconds()/30)%2 == 0 {
 				return 10 + q, 10
@@ -1273,7 +1288,7 @@ func TestOWDDeltas_ReflectorTimeReplacedByQueue(t *testing.T) {
 // grow with the gap: the download delta keeps the queue.
 func TestOWDDeltas_GapDoesNotMoveQueue(t *testing.T) {
 	c := newOWDTestCore(t)
-	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	setLoad(c, 0.9, 0.9)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 30; i++ {
@@ -1377,7 +1392,7 @@ func TestOWDDeltas_QueueMoveAfterCapacityDrop(t *testing.T) {
 
 func queueMoveAfterCapacityDrop(t *testing.T, q float64) {
 	c := newOWDTestCore(t)
-	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	setLoad(c, 0.4, 0.4)
 	start := time.Now()
 	var dl, ul float64
 	for i := 0; i < 50; i++ {
@@ -1404,8 +1419,53 @@ func queueMoveAfterCapacityDrop(t *testing.T, q float64) {
 // same RTT: it is not a clock step, and the download delta must show it.
 func TestOWDDeltas_QueueFromFirstReply(t *testing.T) {
 	c := newOWDTestCore(t)
-	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	setLoad(c, 0.4, 0.4)
 	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		if t < 6*time.Second {
+			return 210, 10
+		}
+		return 10, 210
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
+// Without rate control (adjust: false), the configured rate is not a
+// limit: a saturated link can show a low load. A queue from the first
+// reply on that moves from the upload to the download at the same RTT
+// must stay in the delta.
+func TestOWDDeltas_NoAdjustQueueStays(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.link.Download.Adjust, c.link.Upload.Adjust = false, false
+	setLoad(c, 0.05, 0.05)
+	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		// The queue exists from the first reply on: the RTT baseline
+		// has it.
+		if t < 6*time.Second {
+			return 210, 10
+		}
+		return 10, 210
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
+// After the end of unshape, the shaper rate is low again before the next
+// throughput sample: the load against the new rate is high, also if the
+// last sample gave a low load against 10 Gbit/s. A queue from the first
+// reply on moves between the directions at the same RTT.
+func TestOWDDeltas_ShaperRateChangeBeforeRateSample(t *testing.T) {
+	c := newOWDTestCore(t)
+	// The last sample: 90 Mbit/s at a shaper rate of 10 Gbit/s.
+	c.dl.shaperRateKbps, c.ul.shaperRateKbps = unshapedKbps, unshapedKbps
+	c.HandleRate(RateStats{DlRateKbps: 90000, UlRateKbps: 90000, Timestamp: time.Now()})
+	// The shaping is on again: 100 Mbit/s.
+	c.dl.shaperRateKbps, c.ul.shaperRateKbps = 100000, 100000
+	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		// The queue exists from the first reply on: the RTT baseline
+		// has it.
 		if t < 6*time.Second {
 			return 210, 10
 		}
@@ -1428,7 +1488,7 @@ func TestOWDDeltas_UnshapedQueueStays(t *testing.T) {
 		}
 		c.SetFixedRate(DL, unshapedKbps)
 		c.SetFixedRate(UL, unshapedKbps)
-		c.dl.loadPercent, c.ul.loadPercent = 0.01, 0.01
+		setLoad(c, 0.01, 0.01)
 		dl, ul := owdRun(c, 20*time.Second, func(t time.Duration) (float64, float64) {
 			switch {
 			case t < 5*time.Second:
@@ -1509,7 +1569,7 @@ func TestOWDDeltas_ShorterRouteInBothDirections(t *testing.T) {
 func TestHandlePing_RTTDelayAppliesToBothDirections(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.state = StateRunning
-	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	setLoad(c, 0.9, 0.9)
 	dlBefore := c.dl.shaperRateKbps
 
 	ts := time.Now()

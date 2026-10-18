@@ -415,11 +415,23 @@ const owdCapMarginUs = 1000
 const clockMaxLoad = 0.2
 
 // clockLowLoad reports whether the load of the two directions is known and
-// low, with the shaping on. Without shaping, the load is against
-// unshapedKbps and stays low also with a queue.
+// low, with the shaping on. Without shaping (unshape, the unshaped blocks
+// of a calibration, or adjust: false), the shaper rate is not a limit, and
+// the load stays low also with a queue. The load uses the current shaper
+// rate: a rate change (for example, the end of unshape) comes before the
+// next throughput sample.
 func (c *Core) clockLowLoad() bool {
-	return c.rateSeen && !c.unshaped && c.dl.loadPercent < clockMaxLoad && c.ul.loadPercent < clockMaxLoad &&
-		c.dl.shaperRateKbps < unshapedKbps && c.ul.shaperRateKbps < unshapedKbps
+	if !c.rateSeen || c.unshaped {
+		return false
+	}
+	for _, dir := range Directions() {
+		ds := c.getDirState(dir)
+		if !c.link.DirConfig(dir).Adjust || ds.shaperRateKbps <= 0 || ds.shaperRateKbps >= unshapedKbps ||
+			ds.achievedKbps >= clockMaxLoad*ds.shaperRateKbps {
+			return false
+		}
+	}
+	return true
 }
 
 const (
