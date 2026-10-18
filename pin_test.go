@@ -236,6 +236,10 @@ func TestPinner_FailedRuleRemovesAll(t *testing.T) {
 	if f.rules["-4"] != 0 || p.link != "" {
 		t.Errorf("rules %v, link %q after the error, want none", f.rules, p.link)
 	}
+	// Connections opened with the first rule lose its NAT.
+	if !f.has("conntrack -D -d 162.159.140.220") {
+		t.Errorf("no conntrack flush of the first address in %q", f.calls)
+	}
 }
 
 // A calibration session replaces the pin of a bufferbloat test (control
@@ -310,6 +314,12 @@ func TestPinner_FailedRollbackRetries(t *testing.T) {
 	f.failDel = false
 	p.mu.Unlock()
 	waitPinGone(t, p, f)
+	p.mu.Lock()
+	flushed := f.has("conntrack -D -d 162.159.140.220")
+	p.mu.Unlock()
+	if !flushed {
+		t.Errorf("no conntrack flush of the first address after the retry")
+	}
 }
 
 // A failed Unpin keeps the timer of the pin: at the end of the time, the

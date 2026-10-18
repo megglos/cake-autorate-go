@@ -176,6 +176,9 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	// From here, the Pinner tracks the rules: a failed removal tries
 	// again.
 	p.link, p.owner = link, owner
+	// The rollback of a failed setup also flushes the connections to the
+	// new addresses.
+	p.addrs = append(append([]string(nil), v4...), v6...)
 	p.gen++
 	gen := p.gen
 	cmds := [][]string{routeCmd("-4", dev, route4, true), routeCmd("-6", dev, pinRoute{}, false)}
@@ -205,7 +208,6 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 		}
 	}
 	p.pending = false
-	p.addrs = append(v4, v6...)
 	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
 	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(p.addrs, " "))
 	p.flushConntrack()
