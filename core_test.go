@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -939,6 +940,15 @@ func TestCore_DeterministicForSameEvents(t *testing.T) {
 	}
 }
 
+// newOWDTestCore returns a test core after a first throughput sample
+// without load: the clock rules need a known load.
+func newOWDTestCore(t *testing.T) *Core {
+	t.Helper()
+	c, _ := newTestCore(t)
+	c.HandleRate(RateStats{Timestamp: time.Now()})
+	return c
+}
+
 // owdPing returns a ping result with one-way delays in ms.
 func owdPing(reflector string, ts time.Time, ulMs, dlMs float64) PingResult {
 	ms := func(v float64) time.Duration { return time.Duration(v * float64(time.Millisecond)) }
@@ -973,6 +983,523 @@ func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
 	}
 	if c.dl.shaperRateKbps < dlBefore {
 		t.Errorf("download rate %.0f, want no decrease from %.0f", c.dl.shaperRateKbps, dlBefore)
+	}
+}
+
+// owdRun sends pings of one reflector at 300 ms for d. owd returns the
+// upload and the download delay (ms) at the time t since the start. It
+// returns the deltas of the last ping (ms).
+func owdRun(c *Core, d time.Duration, owd func(t time.Duration) (ulMs, dlMs float64)) (dlDeltaMs, ulDeltaMs float64) {
+	start := time.Now()
+	for t := time.Duration(0); t <= d; t += 300 * time.Millisecond {
+		ul, dl := owd(t)
+		p := owdPing("1.1.1.1", start.Add(t), ul, dl)
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dlDeltaMs, ulDeltaMs = dlUs/1000, ulUs/1000
+	}
+	return dlDeltaMs, ulDeltaMs
+}
+
+// A clock change of 10 ms in 30 s (NTP after the boot) moves 10 ms from the
+// upload to the download delay. Without load, the deltas must stay 0.
+func TestOWDDeltas_ClockSlewIsNotDelay(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
+			drift := sign * 10 * math.Min(t.Seconds()/30, 1)
+			return 10 - drift, 10 + drift
+		})
+		if dl > 0.5 || ul > 0.5 {
+			t.Errorf("clock change %+.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*10, dl, ul)
+		}
+	}
+}
+
+// After the boot, ntpd slews the clock faster than the kernel frequency
+// limit: here 150 ms in 30 s. Without load, the deltas must stay small.
+func TestOWDDeltas_FastClockSlewIsNotDelay(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		start := time.Now()
+		var maxDl, maxUl, dl, ul float64
+		for t := time.Duration(0); t <= 40*time.Second; t += 300 * time.Millisecond {
+			drift := sign * 150 * math.Min(t.Seconds()/30, 1)
+			p := owdPing("1.1.1.1", start.Add(t), 10-drift, 10+drift)
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
+			maxDl, maxUl = math.Max(maxDl, dl), math.Max(maxUl, ul)
+		}
+		if maxDl > 10 || maxUl > 10 || dl > 0.5 || ul > 0.5 {
+			t.Errorf("slew %+.0f ms: maximum delta dl %.1f ms, ul %.1f ms, last dl %.1f ms, ul %.1f ms", sign*150, maxDl, maxUl, dl, ul)
+		}
+	}
+}
+
+// Real ICMP timestamps give whole milliseconds. A slow and a fast slew
+// without load must not give a false delay.
+func TestOWDDeltas_QuantizedClockSlewIsNotDelay(t *testing.T) {
+	for _, total := range []float64{10, 150} {
+		for _, sign := range []float64{1, -1} {
+			c := newOWDTestCore(t)
+			dl, ul := owdRun(c, 40*time.Second, func(t time.Duration) (float64, float64) {
+				drift := sign * total * math.Min(t.Seconds()/30, 1)
+				return math.Round(10 - drift), math.Round(10 + drift)
+			})
+			if dl > 1.5 || ul > 1.5 {
+				t.Errorf("slew %+.0f ms (whole ms): delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*total, dl, ul)
+			}
+		}
+	}
+}
+
+// A clock step while a ping is in flight: the reply has the step only in
+// the download delay (the upload delay uses the send time from before the
+// step). The RTT (monotonic clock) does not change. The next reply has
+// the step in the two delays.
+func TestOWDDeltas_ClockStepDuringPing(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		start := time.Now()
+		var dl, ul float64
+		for i := 0; i <= 40; i++ {
+			ulMs, dlMs := 10.0, 10.0
+			switch {
+			case i == 20:
+				dlMs += sign * 650
+			case i > 20:
+				dlMs += sign * 650
+				ulMs -= sign * 650
+			}
+			p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+			p.RTT = 20 * time.Millisecond
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
+			if dl > 1 || ul > 1 {
+				t.Fatalf("step %+.0f ms, reply %d: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*650, i, dl, ul)
+			}
+		}
+	}
+}
+
+// A clock step of 650 ms (NTP after the boot of a router without a
+// A clock step of 650 ms (NTP at the boot of a router without a battery
+// clock) must not go into the delta.
+func TestOWDDeltas_ClockStepIsNotDelay(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+			step := 0.0
+			if t >= 10*time.Second {
+				step = sign * 650
+			}
+			return 10 - step, 10 + step
+		})
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately 0", sign*650, dl, ul)
+		}
+	}
+}
+
+// A clock step during a download queue of 40 ms at a low load (the queue
+// is in the network). The RTT shows the queue: the replies cannot show the
+// part of the clock, and the step stays in the deltas during the queue.
+// After the queue, the deltas go back to 0.
+func TestOWDDeltas_ClockStepDuringQueueRecovers(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		dl, ul := owdRun(c, 30*time.Second, func(t time.Duration) (float64, float64) {
+			step, q := 0.0, 0.0
+			if t >= 5*time.Second && t < 15*time.Second {
+				q = 40
+			}
+			if t >= 10*time.Second {
+				step = sign * 650
+			}
+			return 10 - step, 10 + q + step
+		})
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms after the queue, want approximately 0", sign*650, dl, ul)
+		}
+	}
+}
+
+// A clock step and a new download queue of 40 ms in the same reply,
+// under load: the part of each direction is not known, so the step stays
+// in the delta (as without the clock correction). When the queue and the
+// load end, the deltas go back to 0.
+func TestOWDDeltas_ClockStepWithNewQueueRecovers(t *testing.T) {
+	for _, sign := range []float64{1, -1} {
+		c := newOWDTestCore(t)
+		start := time.Now()
+		var dl, ul float64
+		for ts := time.Duration(0); ts <= 30*time.Second; ts += 300 * time.Millisecond {
+			ulMs, dlMs := 10.0, 10.0
+			c.dl.loadPercent = 0
+			if ts >= 10*time.Second {
+				ulMs, dlMs = 10-sign*650, 10+sign*650
+			}
+			if ts >= 10*time.Second && ts < 15*time.Second {
+				dlMs += 40
+				c.dl.loadPercent = 0.9
+			}
+			p := owdPing("1.1.1.1", start.Add(ts), ulMs, dlMs)
+			rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+			dlUs, ulUs := c.owdDeltas(rd, p)
+			dl, ul = dlUs/1000, ulUs/1000
+		}
+		if dl > 1 || ul > 1 {
+			t.Errorf("step %+.0f ms: delta dl %.1f ms, ul %.1f ms after the load, want approximately 0", sign*650, dl, ul)
+		}
+	}
+}
+
+// The first reply spans a clock step of -650 ms: it has the step only in
+// the download delay. It must not set the baselines.
+func TestOWDDeltas_FirstReplyDuringClockStep(t *testing.T) {
+	c := newOWDTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 20; i++ {
+		ulMs, dlMs := 660.0, -640.0
+		if i == 0 {
+			ulMs = 10
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		p.RTT = 20 * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl > 1 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 0", dl, ul)
+	}
+}
+
+// A reflector that keeps the request for 30 ms before its reply: the RTT
+// contains this time, the one-way delays do not. The replies are valid,
+// and a new download queue must show in the download delta.
+func TestOWDDeltas_ReflectorTime(t *testing.T) {
+	c := newOWDTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 40; i++ {
+		dlMs := 10.0
+		if i >= 20 {
+			dlMs = 50 // a new 40 ms download queue
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10, dlMs)
+		p.ReflectorTime = 30 * time.Millisecond
+		p.RTT += p.ReflectorTime
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
+// A shorter upload path (50 ms) during a download queue with a high load:
+// the RTT is near its baseline, but the download delta must keep the
+// queue.
+func TestOWDDeltas_PathChangeUnderLoadKeepsQueue(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent = 0.9
+	dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
+		ul, queue := 100.0, 0.0
+		if t >= 5*time.Second {
+			queue = 40
+		}
+		if t >= 20*time.Second {
+			ul = 50
+		}
+		return ul, 10 + queue
+	})
+	if dl < 35 {
+		t.Errorf("download delta %.1f ms after the path change, want approximately 38 (the queue)", dl)
+	}
+}
+
+// A queue of 40 ms that moves between the directions each 30 s, for 540 s,
+// with a high load: the delta of the active direction must stay near the
+// queue.
+func TestOWDDeltas_AlternatingQueuesStay(t *testing.T) {
+	// 40 ms, and 80 ms (more than a clock step). The baselines start with
+	// the queue: the program starts under load.
+	for _, q := range []float64{40, 80} {
+		c := newOWDTestCore(t)
+		c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+		dl, ul := owdRun(c, 540*time.Second, func(t time.Duration) (float64, float64) {
+			if int(t.Seconds()/30)%2 == 0 {
+				return 10 + q, 10
+			}
+			return 10, 10 + q
+		})
+		if active := math.Max(dl, ul); active < q-5 {
+			t.Errorf("queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately %.0f in the active direction", q, dl, ul, q)
+		}
+	}
+}
+
+// The time in the reflector (40 ms) goes away, and a download queue of
+// 40 ms comes at the same time: the RTT does not change. The load is low
+// (the queue is in the network). The download delta must keep the queue.
+func TestOWDDeltas_ReflectorTimeReplacedByQueue(t *testing.T) {
+	c := newOWDTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 40; i++ {
+		dlMs, inMs := 10.0, 40.0
+		if i >= 20 {
+			dlMs, inMs = 50, 0
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10, dlMs)
+		p.ReflectorTime = time.Duration(inMs) * time.Millisecond
+		p.RTT += p.ReflectorTime
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
+// After a gap of 120 s (Idle), the upload path is 50 ms shorter, and a
+// download queue of 40 ms comes, at a high load. The slew limit must not
+// grow with the gap: the download delta keeps the queue.
+func TestOWDDeltas_GapDoesNotMoveQueue(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 30; i++ {
+		ts := start.Add(time.Duration(i) * 300 * time.Millisecond)
+		ulMs, dlMs := 100.0, 10.0
+		if i >= 20 {
+			ts = ts.Add(120 * time.Second)
+			ulMs, dlMs = 50, 50
+		}
+		p := owdPing("1.1.1.1", ts, ulMs, dlMs)
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
+// The clock of the reflector steps by +650 ms between its receive and its
+// transmit time: the download delay and the time in the reflector change
+// by the same value, and their sum stays correct. The reply must not be
+// used. The next replies have the step in the upload delay.
+func TestOWDDeltas_ReflectorClockStep(t *testing.T) {
+	c := newOWDTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 100; i++ {
+		ulMs, dlMs, inMs := 10.0, 10.0, 0.0
+		switch {
+		case i == 20:
+			ulMs, dlMs, inMs = 10, -640, 650
+		case i > 20:
+			ulMs, dlMs = 660, -640
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		p.ReflectorTime = time.Duration(inMs) * time.Millisecond
+		p.RTT = 20 * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl > 1 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 0", dl, ul)
+	}
+}
+
+// A clock offset of half a day: the one-way delays wrap, and their sum is
+// the RTT minus one day. The replies are valid, and a download queue must
+// show.
+func TestOWDDeltas_HalfDayOffset(t *testing.T) {
+	c := newOWDTestCore(t)
+	start := time.Now()
+	var dl, ul float64
+	const offset = -43_200_000.0 // ms
+	for i := 0; i < 40; i++ {
+		dlMs := 10.0
+		if i >= 20 {
+			dlMs = 50
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), 10+offset, dlMs+offset)
+		p.RTT = time.Duration(20+dlMs-10) * time.Millisecond
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < 35 || ul > 1 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 40 and 0", dl, ul)
+	}
+}
+
+// A queue moves from the upload to the download at the same RTT, in the
+// replies before the first throughput sample: the load is not known. It is
+// not a clock step, and the download delta must show the queue.
+func TestOWDDeltas_QueueMoveBeforeFirstRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	dl, ul := owdRun(c, 9*time.Second, func(t time.Duration) (float64, float64) {
+		switch {
+		case t < 2*time.Second:
+			return 10, 10
+		case t < 8*time.Second:
+			return 210, 10 // upload queue 200 ms
+		default:
+			return 10, 210 // download queue 200 ms
+		}
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
+// After a capacity decrease, the link is saturated at a load below 50 %
+// of the shaper rate. A queue of 80 ms or 200 ms (more than a clock step)
+// moves from the upload to the download at the same RTT: the download
+// delta must show it.
+func TestOWDDeltas_QueueMoveAfterCapacityDrop(t *testing.T) {
+	for _, q := range []float64{80, 200} {
+		queueMoveAfterCapacityDrop(t, q)
+	}
+}
+
+func queueMoveAfterCapacityDrop(t *testing.T, q float64) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	start := time.Now()
+	var dl, ul float64
+	for i := 0; i < 50; i++ {
+		ulMs, dlMs := 10.0, 10.0
+		switch {
+		case i >= 40:
+			ulMs, dlMs = 10, 10+q
+		case i >= 20:
+			ulMs, dlMs = 10+q, 10
+		}
+		p := owdPing("1.1.1.1", start.Add(time.Duration(i)*300*time.Millisecond), ulMs, dlMs)
+		rd := c.updateBaseline(p.Reflector, float64(p.RTT.Microseconds()))
+		dlUs, ulUs := c.owdDeltas(rd, p)
+		dl, ul = dlUs/1000, ulUs/1000
+	}
+	if dl < q-10 || ul > 10 {
+		t.Errorf("queue %.0f ms: delta dl %.1f ms, ul %.1f ms, want approximately %.0f and 0", q, dl, ul, q)
+	}
+}
+
+// A queue of 200 ms exists from the first reply on, at a measured load of
+// 40 % (the shaper rate is far above the capacity). The RTT baseline also
+// has the queue. The queue moves from the upload to the download at the
+// same RTT: it is not a clock step, and the download delta must show it.
+func TestOWDDeltas_QueueFromFirstReply(t *testing.T) {
+	c := newOWDTestCore(t)
+	c.dl.loadPercent, c.ul.loadPercent = 0.4, 0.4
+	dl, ul := owdRun(c, 12*time.Second, func(t time.Duration) (float64, float64) {
+		if t < 6*time.Second {
+			return 210, 10
+		}
+		return 10, 210
+	})
+	if dl < 190 || ul > 10 {
+		t.Errorf("delta dl %.1f ms, ul %.1f ms, want approximately 200 and 0", dl, ul)
+	}
+}
+
+// With the shaping off, the load is against 10 Gbit/s and stays low also
+// with a queue. A queue that moves from the upload to the download at the
+// same RTT must stay in the delta: it is not a clock step. Two paths: the
+// command unshape, and the unshaped blocks of a calibration (fixed rate).
+func TestOWDDeltas_UnshapedQueueStays(t *testing.T) {
+	for _, mode := range []string{"unshape", "fixed rate"} {
+		c := newOWDTestCore(t)
+		if mode == "unshape" {
+			c.SetUnshaped(true, time.Now())
+		}
+		c.SetFixedRate(DL, unshapedKbps)
+		c.SetFixedRate(UL, unshapedKbps)
+		c.dl.loadPercent, c.ul.loadPercent = 0.01, 0.01
+		dl, ul := owdRun(c, 20*time.Second, func(t time.Duration) (float64, float64) {
+			switch {
+			case t < 5*time.Second:
+				return 10, 10
+			case t < 15*time.Second:
+				return 90, 10 // upload queue 80 ms
+			default:
+				return 10, 90 // download queue 80 ms, same RTT
+			}
+		})
+		if dl < 70 || ul > 10 {
+			t.Errorf("%s: delta dl %.1f ms, ul %.1f ms, want approximately 80 and 0", mode, dl, ul)
+		}
+	}
+}
+
+// A download queue with upload jitter is not a clock change: the download
+// delta must be the same as without the jitter. (The download baseline
+// increases slowly in the two runs.)
+func TestOWDDeltas_QueueWithJitterStays(t *testing.T) {
+	run := func(jitterMs float64) float64 {
+		c := newOWDTestCore(t)
+		dl, _ := owdRun(c, 60*time.Second, func(t time.Duration) (float64, float64) {
+			jitter := float64(int(t/(300*time.Millisecond))%5) * jitterMs
+			queue := 0.0
+			if t >= 5*time.Second {
+				queue = 40
+			}
+			return 10 + jitter, 10 + queue
+		})
+		return dl
+	}
+	if with, without := run(0.5), run(0); with < without-0.5 {
+		t.Errorf("download delta %.1f ms with upload jitter, %.1f ms without", with, without)
+	}
+}
+
+// A path change is faster than a clock slew. A shorter path (10 ms less in
+// each direction) during a download queue of 40 ms must not move the
+// upload decrease to the download baseline: the download delta decreases
+// only by the path change of the download (10 ms).
+func TestOWDDeltas_PathChangeIsNotClockChange(t *testing.T) {
+	run := func(changeMs float64) float64 {
+		c := newOWDTestCore(t)
+		dl, _ := owdRun(c, 21*time.Second, func(t time.Duration) (float64, float64) {
+			base, queue := 20.0, 0.0
+			if t >= 5*time.Second {
+				queue = 40
+			}
+			if t >= 20*time.Second {
+				base -= changeMs
+			}
+			return base, base + queue
+		})
+		return dl
+	}
+	if with, without := run(10), run(0); with < without-10.5 {
+		t.Errorf("download delta %.1f ms after the path change, %.1f ms without it", with, without)
+	}
+}
+
+// A shorter route decreases the two delays: no clock change, the two
+// baselines follow.
+func TestOWDDeltas_ShorterRouteInBothDirections(t *testing.T) {
+	c := newOWDTestCore(t)
+	rd := &reflectorDelay{}
+	ts := time.Now()
+	c.owdDeltas(rd, owdPing("1.1.1.1", ts, 20, 20))
+	c.owdDeltas(rd, owdPing("1.1.1.1", ts.Add(time.Second), 15, 15))
+	if rd.dlBaselineUs > 16000 || rd.ulBaselineUs > 16000 {
+		t.Errorf("baselines dl %.0f us, ul %.0f us, want approximately 15000", rd.dlBaselineUs, rd.ulBaselineUs)
 	}
 }
 

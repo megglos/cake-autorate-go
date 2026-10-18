@@ -85,15 +85,17 @@ func parseTimestampReply(b []byte) (timestampReply, bool) {
 }
 
 // oneWayDelays returns the upload and the download delay of a reply that
-// arrived at recvMs. It returns false if the reflector does not use
-// standard times.
-func (r timestampReply) oneWayDelays(recvMs uint32) (ul, dl time.Duration, ok bool) {
+// arrived at recvMs, and the time in the reflector (from receive to
+// transmit). It returns false if the reflector does not use standard
+// times.
+func (r timestampReply) oneWayDelays(recvMs uint32) (ul, dl, inReflector time.Duration, ok bool) {
 	if r.receive&tsNonStandard != 0 || r.transmit&tsNonStandard != 0 {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	ul = time.Duration(tsDiffMs(r.originate, r.receive)) * time.Millisecond
 	dl = time.Duration(tsDiffMs(r.transmit, recvMs)) * time.Millisecond
-	return ul, dl, true
+	inReflector = time.Duration(tsDiffMs(r.receive, r.transmit)) * time.Millisecond
+	return ul, dl, inReflector, true
 }
 
 // icmpChecksum returns the internet checksum of b.
@@ -212,8 +214,8 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 			}
 			pm.recordHealth(reflector, false)
 			res := PingResult{Reflector: reflector, RTT: recvTime.Sub(sent), Timestamp: recvTime}
-			if ul, dl, ok := reply.oneWayDelays(msSinceMidnightUTC(recvTime)); ok {
-				res.OWD, res.UlOWD, res.DlOWD = true, ul, dl
+			if ul, dl, in, ok := reply.oneWayDelays(msSinceMidnightUTC(recvTime)); ok {
+				res.OWD, res.UlOWD, res.DlOWD, res.ReflectorTime = true, ul, dl, in
 			}
 			send(res)
 		}

@@ -32,6 +32,9 @@ type PingResult struct {
 	OWD   bool
 	UlOWD time.Duration
 	DlOWD time.Duration
+	// ReflectorTime is the time in the reflector, from the receive to the
+	// transmit time. The RTT contains it, the one-way delays do not.
+	ReflectorTime time.Duration
 }
 
 // ReflectorState is the health data of a reflector. Core keeps the delay
