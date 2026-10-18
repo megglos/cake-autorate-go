@@ -631,6 +631,11 @@ const (
 	// the 5G link, the median was 13 to 15 ms; a threshold of 15 ms gave
 	// 30 to 43 % of the upload capacity, 25 ms gave 66 to 68 %.
 	calGrantMarginMs = 10.0
+	// calSharedDelayMs: a link shares the radio resources of the two
+	// directions (5G) if the median of the cross delay or of the grant
+	// delay is at least this value. On 5G, the cross delay was 20 to
+	// 35 ms and the grant delay 13 to 15 ms; on fiber, both were near 0.
+	calSharedDelayMs = 5.0
 	// calMinReflectors is the minimum number of reflectors with ICMP
 	// timestamps for ping_method icmp-timestamp.
 	calMinReflectors = 4
@@ -705,6 +710,16 @@ func (r *calResult) recordedJitter(addrs []string) []float64 {
 // calStable reports whether a direction has a stable capacity (for
 // example fiber or cable, not 5G).
 func calStable(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
+
+// shared tells if the link can share the radio resources of the two
+// directions: the upload capacity is not stable, the cross delay or the
+// grant delay is high, or the cross delay is not known (ICMP echo, no
+// autorate download block). The grant delay can be missing on a wired
+// line: the upload shaper rate was never below half the capacity.
+func (r *calResult) shared() bool {
+	high := func(d calDist) bool { return d.N > 0 && d.P50 >= calSharedDelayMs }
+	return !calStable(r.UlCapacity) || r.CrossDelayMs.N == 0 || high(r.CrossDelayMs) || high(r.GrantDelayMs)
+}
 
 // setThresholds sets the delay thresholds and learn_cross_delay of the
 // proposal. jitter is the idle jitter of the reflectors in the list of the
@@ -815,11 +830,21 @@ func (r *calResult) propose(cfg *Config) calProposal {
 		p.UlMin, p.UlBase, p.UlMax = round(c.P5/2, 500), b, round(c.P95, 500)
 		p.Why["upload rates"] = fmt.Sprintf("unshaped capacity (1 s means, %d s): p5 %s, p25 %s, p50 %s, p95 %s Mbit/s", c.N, mbit(c.P5), mbit(c.P25), mbit(c.P50), mbit(c.P95)) + why
 		// With download load, the upload capacity can be much lower. The
-		// minimum must be below it.
+		// minimum must be below it. On 5G, the two directions share the
+		// radio resources: then the base rate is not more than the p50
+		// with download load. A wired line (a stable capacity and no
+		// cross or grant delay) does not share: the decrease comes from
+		// the queue of the unshaped download (the acknowledgements of the
+		// upload wait in it). Then the base rate stays.
 		if b := r.UlCapacityBoth; b.N > 0 {
 			p.UlMin = min(p.UlMin, round(b.P5/2, 500))
-			p.UlBase = min(p.UlBase, round(b.P50, 500))
-			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), base = min(base, p50 with download load))", mbit(b.P5), mbit(b.P50))
+			rule := "base = min(base, p50 with download load)"
+			if r.shared() {
+				p.UlBase = min(p.UlBase, round(b.P50, 500))
+			} else {
+				rule = "stable capacity and no cross or grant delay: the base does not change"
+			}
+			p.Why["upload rates"] += fmt.Sprintf("; with download load: p5 %s, p50 %s Mbit/s (min = min(p5/2), %s)", mbit(b.P5), mbit(b.P50), rule)
 		}
 		p.UlBase = max(p.UlBase, p.UlMin)
 	}
