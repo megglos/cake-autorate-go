@@ -230,7 +230,7 @@ func TestBuildCakeRateMsg_Tcmsg(t *testing.T) {
 
 	parent := binary.NativeEndian.Uint32(buf[offTcmParent:])
 	if parent != tcHRoot {
-		t.Errorf("tcm_parent = 0x%x, want TC_H_ROOT(0x%x)", parent, tcHRoot)
+		t.Errorf("tcm_parent = 0x%x, want TC_H_ROOT(0x%x)", parent, uint32(tcHRoot))
 	}
 }
 
