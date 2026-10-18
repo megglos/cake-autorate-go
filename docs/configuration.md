@@ -289,8 +289,8 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [calibration.md](calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
 | `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
 | `calibrate stop [SESSION]` | Stop the session (with `SESSION`: only if that session runs). The rate control continues as before the session. |
-| `pin LINK SECONDS` | Send all traffic to the load hosts of the LuCI app (`speed.cloudflare.com`) through the link, for `SECONDS` (1 to 3600). See below. |
-| `unpin [LINK]` | End `pin` (with `LINK`: only if this link has the traffic). |
+| `pin LINK SECONDS` | Send all traffic to the load hosts of the LuCI app (`speed.cloudflare.com`) through the link, for `SECONDS` (1 to 3600). Answer: `ok ID`. See below. |
+| `unpin [LINK [ID]]` | End `pin` (with `LINK`: only if this link has the traffic; with `ID`: only the pin with this ID, the answer of `pin`). A program that pins should send its `ID`: then a late `unpin` does not end a newer pin. |
 | `history` | Answer with the samples of the last 15 minutes of each link, as one line of JSON. The program adds one sample each second, when it writes the status file. Only with `status_history: true` and a status file. |
 
 Each `pause` and `resume` sets the base rate, also when the direction is already in that state. Thus, send the command again after an error answer. A paused direction still measures delay. It does not change the shaper rate. The pause does not survive a restart. The status file shows the pause of each direction (`paused`). A recording contains the pause and resume events, thus a replay gives the same decisions.

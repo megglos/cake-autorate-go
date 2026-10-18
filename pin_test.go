@@ -96,7 +96,7 @@ func TestPinner_PinAddsRoutesAndRules(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -118,7 +118,7 @@ func TestPinner_PinAddsRoutesAndRules(t *testing.T) {
 	if f.rules["-4"] != 2 || f.rules["-6"] != 1 {
 		t.Errorf("rules %v, want 2 IPv4 and 1 IPv6", f.rules)
 	}
-	if err := p.Unpin(PinOwnerControl, ""); err != nil {
+	if err := p.Unpin(PinOwnerControl, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	if f.rules["-4"] != 0 || f.rules["-6"] != 0 || !f.has("ip -6 route flush table 7370") {
@@ -137,7 +137,7 @@ func TestPinner_NoIPv6AndNoGateway(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -158,7 +158,7 @@ func TestPinner_NoIPv4Route(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	err := p.Pin(PinOwnerControl, "wan", time.Minute)
+	_, err := p.Pin(PinOwnerControl, "wan", time.Minute)
 	if err == nil || !strings.Contains(err.Error(), "no IPv4 default route") {
 		t.Errorf("error %v, want no IPv4 default route", err)
 	}
@@ -174,27 +174,27 @@ func TestPinner_OneLinkAtATime(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Pin(PinOwnerControl, "lte", time.Minute); err == nil || !strings.Contains(err.Error(), `link "wan" has the traffic`) {
+	if _, err := p.Pin(PinOwnerControl, "lte", time.Minute); err == nil || !strings.Contains(err.Error(), `link "wan" has the traffic`) {
 		t.Errorf("pin of a second link: %v", err)
 	}
-	if err := p.Unpin(PinOwnerControl, "lte"); err == nil {
+	if err := p.Unpin(PinOwnerControl, "lte", 0); err == nil {
 		t.Error("unpin of a link without the traffic: no error")
 	}
 	// A second test of the same link (another browser tab) does not share
 	// the pin: the end of one test would remove it.
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
 		t.Error("second pin of the same link: no error")
 	}
 	if f.rules["-4"] != 1 {
 		t.Errorf("rules %v after the second pin, want 1", f.rules)
 	}
-	if err := p.Unpin(PinOwnerControl, "wan"); err != nil {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Pin(PinOwnerControl, "lte", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "lte", time.Minute); err != nil {
 		t.Errorf("pin after unpin: %v", err)
 	}
 }
@@ -205,7 +205,7 @@ func TestPinner_Expires(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", 50*time.Millisecond); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", 50*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -230,7 +230,7 @@ func TestPinner_FailedRuleRemovesAll(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	// Stop the timer while the fake is installed.
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
 		t.Fatal("no error")
 	}
 	if f.rules["-4"] != 0 || p.link != "" {
@@ -249,22 +249,22 @@ func TestPinner_Owners(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
 		t.Fatalf("session after control: %v", err)
 	}
-	if err := p.Unpin(PinOwnerControl, "wan"); err == nil || !strings.Contains(err.Error(), "a calibration") {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err == nil || !strings.Contains(err.Error(), "a calibration") {
 		t.Errorf("unpin of the control socket during the session: %v", err)
 	}
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
 		t.Error("pin of the control socket during the session: no error")
 	}
 	if f.rules["-4"] != 1 || p.owner != PinOwnerCalibration {
 		t.Errorf("rules %v, owner %q: the session must keep its pin", f.rules, p.owner)
 	}
-	if err := p.Unpin(PinOwnerCalibration, "wan"); err != nil || f.rules["-4"] != 0 {
+	if err := p.Unpin(PinOwnerCalibration, "wan", 0); err != nil || f.rules["-4"] != 0 {
 		t.Errorf("unpin of the session: %v, rules %v", err, f.rules)
 	}
 }
@@ -275,11 +275,11 @@ func TestPinner_OldTimerKeepsNewPin(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	old := p.gen
-	if err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	p.expire(old)
@@ -298,7 +298,7 @@ func TestPinner_FailedRollbackRetries(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
 	f.fail, f.failDel = "rule add to 172.66.0.218", true
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil {
 		t.Fatal("no error")
 	}
 	p.mu.Lock()
@@ -307,7 +307,7 @@ func TestPinner_FailedRollbackRetries(t *testing.T) {
 	if link != "wan" || rules != 1 {
 		t.Fatalf("after the failed rollback: link %q, rules %d; want the pin to stay", link, rules)
 	}
-	if err := p.Unpin(PinOwnerControl, "wan"); err == nil {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err == nil {
 		t.Error("unpin with a failed removal: no error")
 	}
 	p.mu.Lock()
@@ -328,14 +328,14 @@ func TestPinner_FailedUnpinKeepsTimer(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerCalibration, "wan", 100*time.Millisecond); err != nil {
+	if _, err := p.Pin(PinOwnerCalibration, "wan", 100*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	// The timer reads the fake under the lock of the Pinner.
 	p.mu.Lock()
 	f.fail = "-4 rule del"
 	p.mu.Unlock()
-	if err := p.Unpin(PinOwnerCalibration, "wan"); err == nil {
+	if err := p.Unpin(PinOwnerCalibration, "wan", 0); err == nil {
 		t.Fatal("no error")
 	}
 	p.mu.Lock()
@@ -349,16 +349,16 @@ func TestPinner_Extend(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerCalibration, "wan", 50*time.Millisecond); err != nil {
+	if _, err := p.Pin(PinOwnerCalibration, "wan", 50*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	old := p.gen
-	if err := p.Extend(PinOwnerCalibration, "wan", time.Minute); err != nil {
+	if err := p.Extend(PinOwnerCalibration, "wan", p.id, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	// The callback of the old timer started before Extend.
 	p.expire(old)
-	if err := p.Extend(PinOwnerControl, "wan", time.Minute); err == nil {
+	if err := p.Extend(PinOwnerControl, "wan", p.id, time.Minute); err == nil {
 		t.Error("extend of another owner: no error")
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -382,7 +382,7 @@ func TestPinner_FailedClearRetries(t *testing.T) {
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
 	p.Clear()
-	if err := p.Unpin(PinOwnerControl, ""); err == nil {
+	if err := p.Unpin(PinOwnerControl, "", 0); err == nil {
 		t.Error("unpin with a failed removal: no error")
 	}
 	p.mu.Lock()
@@ -402,7 +402,7 @@ func TestPinner_FailedClearRetries(t *testing.T) {
 func TestPinner_CloseFlushesConntrack(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	f.calls = nil
@@ -423,13 +423,13 @@ func TestPinner_NoIPv6Kernel(t *testing.T) {
 	if p.pending {
 		t.Error("Clear without IPv6: pending removal")
 	}
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatalf("pin without IPv6: %v", err)
 	}
 	if f.rules["-4"] != 1 {
 		t.Errorf("rules %v, want 1 IPv4 rule", f.rules)
 	}
-	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || f.rules["-4"] != 0 {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err != nil || f.rules["-4"] != 0 {
 		t.Errorf("unpin without IPv6: %v, rules %v", err, f.rules)
 	}
 }
@@ -453,12 +453,12 @@ func TestPinner_ReplaceFlushesOldAddresses(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	f.addrs = []string{"172.66.0.218"}
 	f.calls = nil
-	if err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"conntrack -D -d 162.159.140.220", "conntrack -D -d 172.66.0.218"} {
@@ -468,13 +468,45 @@ func TestPinner_ReplaceFlushesOldAddresses(t *testing.T) {
 	}
 }
 
+// Test A pins, a session replaces the pin and ends, and test B pins. The
+// late unpin of test A (with its ID) must not remove the pin of test B.
+func TestPinner_LateUnpinKeepsNewerPin(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	a, err := p.Pin(PinOwnerControl, "wan", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := p.Pin(PinOwnerCalibration, "wan", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Unpin(PinOwnerCalibration, "wan", s); err != nil {
+		t.Fatal(err)
+	}
+	b, err := p.Pin(PinOwnerControl, "wan", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Unpin(PinOwnerControl, "wan", a); err != nil {
+		t.Fatalf("late unpin of A: %v", err)
+	}
+	if p.link != "wan" || p.id != b || f.rules["-4"] != 1 {
+		t.Errorf("after the late unpin of A: link %q, id %d (B %d), rules %v; want the pin of B", p.link, p.id, b, f.rules)
+	}
+	if err := p.Unpin(PinOwnerControl, "wan", b); err != nil || f.rules["-4"] != 0 {
+		t.Errorf("unpin of B: %v, rules %v", err, f.rules)
+	}
+}
+
 // After Close, Pin refuses: a control command that is still open at the
 // stop cannot pin again.
 func TestPinner_CloseRefusesPin(t *testing.T) {
 	newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	p.Close()
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil || !strings.Contains(err.Error(), "stops") {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err == nil || !strings.Contains(err.Error(), "stops") {
 		t.Errorf("pin after Close: %v", err)
 	}
 }
@@ -506,7 +538,7 @@ func TestPinner_RouteAttributes(t *testing.T) {
 	}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
@@ -524,12 +556,12 @@ func TestPinner_FailedRemovalKeepsPin(t *testing.T) {
 	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
 	p := NewPinner(pinTestLinks(), testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	f.fail = "-4 rule del"
 	f.calls = nil
-	if err := p.Unpin(PinOwnerControl, "wan"); err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
 		t.Errorf("unpin with a failed removal: %v", err)
 	}
 	if p.link != "wan" || f.rules["-4"] != 1 {
@@ -540,7 +572,7 @@ func TestPinner_FailedRemovalKeepsPin(t *testing.T) {
 		t.Errorf("route flush after a failed rule removal: %q", f.calls)
 	}
 	f.fail = ""
-	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || p.link != "" || f.rules["-4"] != 0 {
+	if err := p.Unpin(PinOwnerControl, "wan", 0); err != nil || p.link != "" || f.rules["-4"] != 0 {
 		t.Errorf("second unpin: %v, link %q, rules %v", err, p.link, f.rules)
 	}
 }
@@ -556,9 +588,15 @@ func TestControl_PinCommands(t *testing.T) {
 		{"pin wan 3601", "error: SECONDS must be 1 to 3600"},
 		{"pin wan x", "error: SECONDS must be 1 to 3600"},
 		{"pin dsl 60", `error: unknown link "dsl"`},
-		{"unpin wan lte", "error: usage: unpin [LINK]"},
+		{"unpin wan lte", "error: ID must be a positive number"},
+		{"unpin wan 1 2", "error: usage: unpin [LINK [ID]]"},
 		{"unpin", "ok"},
-		{"pin wan 60", "ok"},
+		{"pin wan 60", "ok 1"},
+		// The unpin of an earlier pin does nothing.
+		{"unpin wan 9", "ok"},
+		{"pin wan 60", `error: a test of link "wan" has the traffic of the load`},
+		{"unpin wan 1", "ok"},
+		{"pin wan 60", "ok 2"},
 		{"unpin wan", "ok"},
 	} {
 		if got := handleControlCommand(c.cmd, h); got != c.want {
@@ -619,7 +657,7 @@ func TestPinner_Kernel(t *testing.T) {
 	}
 	p := NewPinner(links, testLogger(t))
 	t.Cleanup(p.Clear)
-	if err := p.Pin(PinOwnerControl, "b", time.Minute); err != nil {
+	if _, err := p.Pin(PinOwnerControl, "b", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if got := ip("-4", "route", "get", "192.0.2.10"); !strings.Contains(got, "dev wan2") {

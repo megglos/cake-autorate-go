@@ -669,24 +669,27 @@ type fakePin struct {
 	extends int
 }
 
-func (f *fakePin) Pin(owner, link string, d time.Duration) error {
+func (f *fakePin) Pin(owner, link string, d time.Duration) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, fmt.Sprintf("pin %s %s %v", owner, link, d))
-	return f.err
+	if f.err != nil {
+		return 0, f.err
+	}
+	return 7, nil
 }
 
-func (f *fakePin) Extend(owner, link string, d time.Duration) error {
+func (f *fakePin) Extend(owner, link string, id int, d time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.extends++
 	return nil
 }
 
-func (f *fakePin) Unpin(owner, link string) error {
+func (f *fakePin) Unpin(owner, link string, id int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, "unpin "+owner+" "+link)
+	f.calls = append(f.calls, fmt.Sprintf("unpin %s %s %d", owner, link, id))
 	if f.onUnpin != nil {
 		f.onUnpin()
 	}
@@ -718,7 +721,7 @@ func TestCalibrationPinsTheLink(t *testing.T) {
 		if st.State != "done" {
 			t.Fatalf("failed pin %v: status %+v", failed, st)
 		}
-		want := []string{fmt.Sprintf("pin calibration wan %v", total), "unpin calibration wan"}
+		want := []string{fmt.Sprintf("pin calibration wan %v", total), "unpin calibration wan 7"}
 		if failed {
 			want = want[:1]
 		}

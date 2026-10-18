@@ -41,8 +41,9 @@ import (
 //	                      of JSON (see CalStatus)
 //	calibrate stop [SESSION] stop the session (only the session SESSION)
 //	pin LINK SECONDS      send the traffic to the load hosts of the LuCI
-//	                      app through the link (1 to 3600 s, see Pinner)
-//	unpin [LINK]          end the pin (of the link)
+//	                      app through the link (1 to 3600 s, see Pinner).
+//	                      Answer: "ok ID"
+//	unpin [LINK [ID]]     end the pin (of the link; with ID only that pin)
 //
 // A pause sets the shaper to the base rate and stops the rate changes. A
 // resume starts the control again from the base rate.
@@ -74,9 +75,9 @@ type LinkControl interface {
 // PinControl is the part of the Pinner that the control socket and the
 // Calibrator use. owner is PinOwnerControl or PinOwnerCalibration.
 type PinControl interface {
-	Pin(owner, link string, d time.Duration) error
-	Unpin(owner, link string) error
-	Extend(owner, link string, d time.Duration) error
+	Pin(owner, link string, d time.Duration) (int, error)
+	Unpin(owner, link string, id int) error
+	Extend(owner, link string, id int, d time.Duration) error
 }
 
 // CalControl is the part of the Calibrator that the control socket uses.
@@ -190,16 +191,27 @@ func handlePinCommand(f []string, h *ControlHandler) string {
 		if convErr != nil || s < 1 || s > maxPinSeconds {
 			return fmt.Sprintf("error: SECONDS must be 1 to %d", maxPinSeconds)
 		}
-		err = h.Pin.Pin(PinOwnerControl, f[1], time.Duration(s)*time.Second)
-	} else {
-		if len(f) > 2 {
-			return "error: usage: unpin [LINK]"
+		id, err := h.Pin.Pin(PinOwnerControl, f[1], time.Duration(s)*time.Second)
+		if err != nil {
+			return "error: " + oneLine.Replace(err.Error())
 		}
-		link := ""
-		if len(f) == 2 {
+		return fmt.Sprintf("ok %d", id)
+	} else {
+		if len(f) > 3 {
+			return "error: usage: unpin [LINK [ID]]"
+		}
+		link, id := "", 0
+		if len(f) >= 2 {
 			link = f[1]
 		}
-		err = h.Pin.Unpin(PinOwnerControl, link)
+		if len(f) == 3 {
+			n, convErr := strconv.Atoi(f[2])
+			if convErr != nil || n < 1 {
+				return "error: ID must be a positive number"
+			}
+			id = n
+		}
+		err = h.Pin.Unpin(PinOwnerControl, link, id)
 	}
 	if err != nil {
 		return "error: " + oneLine.Replace(err.Error())

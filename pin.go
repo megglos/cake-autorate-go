@@ -84,6 +84,9 @@ type Pinner struct {
 	// gen identifies the pin: a timer of an earlier pin can fire while a
 	// new pin waits for the lock. Then it must not remove the new pin.
 	gen int
+	// id identifies the pin for its owner (Unpin, Extend): a late unpin of
+	// an earlier test must not remove a newer pin of the same link.
+	id, nextID int
 	// closed is true after Close: Pin refuses.
 	closed bool
 	// pending is true after a failed removal without a pin (Clear): a
@@ -113,29 +116,30 @@ type pinRoute struct {
 	onlink  bool
 }
 
-// Pin sends the traffic to pinHosts through the link for the time d. A
-// calibration session replaces a pin of the control socket. Else Pin
-// refuses while a pin exists: two tests (for example in two browser tabs)
-// must not share a pin, because the end of one test removes it.
-func (p *Pinner) Pin(owner, link string, d time.Duration) error {
+// Pin sends the traffic to pinHosts through the link for the time d. It
+// returns the ID of the pin: Unpin and Extend need it. A calibration
+// session replaces a pin of the control socket. Else Pin refuses while a
+// pin exists: two tests (for example in two browser tabs) must not share a
+// pin, because the end of one test removes it.
+func (p *Pinner) Pin(owner, link string, d time.Duration) (int, error) {
 	dev, ok := p.devices[link]
 	if !ok {
-		return fmt.Errorf("unknown link %q", link)
+		return 0, fmt.Errorf("unknown link %q", link)
 	}
 	if dev == "" {
-		return fmt.Errorf("link %q has no upload interface", link)
+		return 0, fmt.Errorf("link %q has no upload interface", link)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return errors.New("the service stops")
+		return 0, errors.New("the service stops")
 	}
 	replace := owner == PinOwnerCalibration && p.owner == PinOwnerControl
 	if p.link != "" && !replace {
 		if p.owner == PinOwnerCalibration {
-			return fmt.Errorf("a calibration of link %q has the traffic of the load", p.link)
+			return 0, fmt.Errorf("a calibration of link %q has the traffic of the load", p.link)
 		}
-		return fmt.Errorf("a test of link %q has the traffic of the load", p.link)
+		return 0, fmt.Errorf("a test of link %q has the traffic of the load", p.link)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pinLookupTimeout)
 	defer cancel()
@@ -143,7 +147,7 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	for _, host := range pinHosts {
 		ips, err := lookupPinHost(ctx, host)
 		if err != nil {
-			return fmt.Errorf("lookup %s: %w", host, err)
+			return 0, fmt.Errorf("lookup %s: %w", host, err)
 		}
 		for _, ip := range ips {
 			if ip.To4() != nil {
@@ -154,20 +158,20 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 		}
 	}
 	if len(v4) == 0 {
-		return fmt.Errorf("no IPv4 address for %s", strings.Join(pinHosts, ", "))
+		return 0, fmt.Errorf("no IPv4 address for %s", strings.Join(pinHosts, ", "))
 	}
 	route4, ok4, err := defaultRoute("-4", dev)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !ok4 {
-		return fmt.Errorf("device %s of link %q has no IPv4 default route", dev, link)
+		return 0, fmt.Errorf("device %s of link %q has no IPv4 default route", dev, link)
 	}
 
 	// Remove the rules of a replaced pin (or of an earlier process). If
 	// that fails, the replaced pin stays with its timer.
 	if err := clearPin(); err != nil {
-		return err
+		return 0, err
 	}
 	// The connections to the addresses of the replaced pin lose their NAT
 	// of the pinned link (the new addresses can be different).
@@ -176,6 +180,8 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	// From here, the Pinner tracks the rules: a failed removal tries
 	// again.
 	p.link, p.owner = link, owner
+	p.nextID++
+	p.id = p.nextID
 	// The rollback of a failed setup also flushes the connections to the
 	// new addresses.
 	p.addrs = append(append([]string(nil), v4...), v6...)
@@ -204,22 +210,22 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 			if uerr := p.unpinLocked(); uerr != nil {
 				p.logger.Errorf("[%s] %v (next try in %v)", link, uerr, pinRetry)
 			}
-			return err
+			return 0, err
 		}
 	}
 	p.pending = false
 	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
 	p.logger.Infof("[%s] traffic to %s goes through %s for %v (%s)", link, strings.Join(pinHosts, ", "), dev, d, strings.Join(p.addrs, " "))
 	p.flushConntrack()
-	return nil
+	return p.id, nil
 }
 
 // Extend sets the time of the pin of the owner and the link to d from now.
 // A calibration session uses it when its end moves.
-func (p *Pinner) Extend(owner, link string, d time.Duration) error {
+func (p *Pinner) Extend(owner, link string, id int, d time.Duration) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.link != link || p.owner != owner {
+	if p.link != link || p.owner != owner || p.id != id {
 		return fmt.Errorf("link %q has no pin of the %s", link, owner)
 	}
 	// A new generation: the callback of the old timer can have started
@@ -251,8 +257,9 @@ func (p *Pinner) flushConntrack() {
 
 // Unpin removes the rules of the link. With link "", it removes the rules
 // of any link. It is not an error if no link has the traffic. Only the
-// owner of the pin can remove it.
-func (p *Pinner) Unpin(owner, link string) error {
+// owner of the pin can remove it. With an id other than 0, Unpin removes
+// only that pin: the unpin of an earlier pin does nothing.
+func (p *Pinner) Unpin(owner, link string, id int) error {
 	if link != "" {
 		if _, ok := p.devices[link]; !ok {
 			return fmt.Errorf("unknown link %q", link)
@@ -271,6 +278,9 @@ func (p *Pinner) Unpin(owner, link string) error {
 	}
 	if link != "" && link != p.link {
 		return fmt.Errorf("link %q does not have the traffic of the load (link %q has it)", link, p.link)
+	}
+	if id != 0 && id != p.id {
+		return nil
 	}
 	if owner != p.owner {
 		// The control socket does not remove the pin of a session. A
@@ -370,7 +380,7 @@ func (p *Pinner) unpinLocked() error {
 	p.stopTimer()
 	p.logger.Infof("[%s] traffic to %s uses the routing of the router again", p.link, strings.Join(pinHosts, ", "))
 	p.flushConntrack()
-	p.link, p.owner, p.addrs = "", "", nil
+	p.link, p.owner, p.addrs, p.id = "", "", nil, 0
 	return nil
 }
 

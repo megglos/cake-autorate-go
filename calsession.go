@@ -278,6 +278,7 @@ type Calibrator struct {
 	// true while the session has its pin.
 	pin    PinControl
 	pinned bool
+	pinID  int
 
 	mu       sync.Mutex
 	status   CalStatus
@@ -408,7 +409,7 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	var pinErr error
 	k.pinned = false
 	if k.pin != nil {
-		if pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
+		if k.pinID, pinErr = k.pin.Pin(PinOwnerCalibration, link, pinTime); pinErr != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, pinErr)
 		} else {
 			k.pinned = true
@@ -439,7 +440,7 @@ func (k *Calibrator) run(ctx context.Context, link string, target CalTarget, tim
 	// can start and pin the link again.
 	if k.pinned {
 		k.pinned = false
-		if err := k.pin.Unpin(PinOwnerCalibration, link); err != nil {
+		if err := k.pin.Unpin(PinOwnerCalibration, link, k.pinID); err != nil {
 			k.logger.Errorf("[%s] calibration: %v", link, err)
 		}
 	}
@@ -524,7 +525,7 @@ func (k *Calibrator) session(ctx context.Context, link string, target CalTarget,
 		k.mu.Unlock()
 		// The pin lasts until the new end (a slow setup moves it).
 		if k.pinned {
-			if perr := k.pin.Extend(PinOwnerCalibration, link, left+calPinMargin); perr != nil {
+			if perr := k.pin.Extend(PinOwnerCalibration, link, k.pinID, left+calPinMargin); perr != nil {
 				k.logger.Errorf("[%s] calibration: %v", link, perr)
 			}
 		}
