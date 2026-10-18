@@ -67,7 +67,7 @@ const callPin = rpc.declare({
 const callUnpin = rpc.declare({
 	object: 'cake-autorate',
 	method: 'unpin',
-	params: [ 'link' ]
+	params: [ 'link', 'id' ]
 });
 
 // Returns a text node. The values come from the program, and E() reads a
@@ -202,7 +202,7 @@ return baseclass.extend({
 		window.addEventListener('beforeunload', this.onUnload);
 
 		const runs = [];
-		let error = null, shapeError = null, pinError = null, pinned = false;
+		let error = null, shapeError = null, pinError = null, pinID = null;
 		const total = compare ? 2 : 1;
 		return (async () => {
 			try {
@@ -210,8 +210,10 @@ return baseclass.extend({
 				// more than one WAN link. Without the pin, the test runs: on
 				// a router with one WAN link, the load uses this link.
 				try {
-					checkAnswer(await callPin(link, this.testSeconds(total) + 60));
-					pinned = true;
+					const res = await callPin(link, this.testSeconds(total) + 60);
+					checkAnswer(res);
+					// The ID: the unpin removes only this pin, not a newer one.
+					pinID = res.id;
 				}
 				catch (e) {
 					pinError = e.message || String(e);
@@ -248,8 +250,8 @@ return baseclass.extend({
 					}
 				}
 				// The service also removes the pin at the end of its time.
-				if (pinned)
-					await L.resolveDefault(callUnpin(link), null);
+				if (pinID)
+					await L.resolveDefault(callUnpin(link, pinID), null);
 				this.running = false;
 				window.removeEventListener('beforeunload', this.onUnload);
 			}

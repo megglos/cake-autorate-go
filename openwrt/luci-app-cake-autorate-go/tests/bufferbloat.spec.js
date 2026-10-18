@@ -65,7 +65,8 @@ async function routeUbus(page, mutate, failShape, statusDelay, pinError) {
 			// The page sends pin and unpin alone (not in a batch).
 			const answers = requests.map((q) => {
 				pinCalls.push([ q.params[2], q.params[3] ]);
-				const result = (pinError && q.params[2] == 'pin') ? { error: pinError } : { result: 'ok' };
+				const result = (pinError && q.params[2] == 'pin') ? { error: pinError } :
+					q.params[2] == 'pin' ? { result: 'ok', id: 42 } : { result: 'ok' };
 				return { jsonrpc: '2.0', id: q.id, result: [ 0, result ] };
 			});
 			return route.fulfill({ json: Array.isArray(request) ? answers : answers[0] });
@@ -731,7 +732,7 @@ test('the test pins the link for its time and unpins it at the end', async ({ pa
 	await modal.getByRole('button', { name: 'Start' }).click();
 	await expect(modal.locator('table.cake-autorate-bufferbloat-result')).toHaveCount(1, { timeout: 20000 });
 	// The time: the run (8 s) and 60 s.
-	expect(pinCalls).toEqual([ [ 'pin', { link: 'wan', seconds: 68 } ], [ 'unpin', { link: 'wan' } ] ]);
+	expect(pinCalls).toEqual([ [ 'pin', { link: 'wan', seconds: 68 } ], [ 'unpin', { link: 'wan', id: 42 } ] ]);
 	await expect(modal.locator('[data-pin-error]')).toHaveCount(0);
 });
 
