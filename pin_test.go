@@ -23,6 +23,8 @@ type fakeIP struct {
 	fail   string         // a call with this text fails
 	// failDel: "ip rule del" fails while rules exist (a failed removal).
 	failDel bool
+	// noIPv6: each "ip -6" call fails (a kernel without IPv6).
+	noIPv6 bool
 }
 
 func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP {
@@ -33,6 +35,9 @@ func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP 
 	execCommand = func(name string, args ...string) ([]byte, error) {
 		call := strings.Join(append([]string{name}, args...), " ")
 		f.calls = append(f.calls, call)
+		if f.noIPv6 && args[0] == "-6" {
+			return []byte("RTNETLINK answers: Address family not supported by protocol"), &exec.ExitError{}
+		}
 		if f.fail != "" && strings.Contains(call, f.fail) {
 			return []byte("RTNETLINK answers: Operation not permitted"), &exec.ExitError{}
 		}
@@ -385,6 +390,28 @@ func TestPinner_CloseFlushesConntrack(t *testing.T) {
 	p.Close()
 	if !f.has("conntrack -D -d 162.159.140.220") || f.rules["-4"] != 0 {
 		t.Errorf("after Close: calls %q, rules %v", f.calls, f.rules)
+	}
+}
+
+// A kernel without IPv6: the pin and its removal use only IPv4, without
+// an error.
+func TestPinner_NoIPv6Kernel(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n"}, "162.159.140.220", "2606:4700:7::da")
+	f.noIPv6 = true
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	p.Clear()
+	if p.pending {
+		t.Error("Clear without IPv6: pending removal")
+	}
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+		t.Fatalf("pin without IPv6: %v", err)
+	}
+	if f.rules["-4"] != 1 {
+		t.Errorf("rules %v, want 1 IPv4 rule", f.rules)
+	}
+	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || f.rules["-4"] != 0 {
+		t.Errorf("unpin without IPv6: %v, rules %v", err, f.rules)
 	}
 }
 

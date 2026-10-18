@@ -181,8 +181,18 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	for _, a := range v6 {
 		cmds = append(cmds, []string{"-6", "rule", "add", "to", a, "lookup", pinTable, "priority", pinPriority})
 	}
+	noIPv6 := false
 	for _, c := range cmds {
+		if noIPv6 && c[0] == "-6" {
+			continue
+		}
 		if out, err := execCommand("ip", c...); err != nil {
+			// A kernel without IPv6 (ipv6.disable=1): the browser can only
+			// use IPv4.
+			if c[0] == "-6" && pinNoFamily(out) {
+				noIPv6 = true
+				continue
+			}
 			err = fmt.Errorf("ip %s: %v: %s", strings.Join(c, " "), err, strings.TrimSpace(string(out)))
 			if uerr := p.unpinLocked(); uerr != nil {
 				p.logger.Errorf("[%s] %v (next try in %v)", link, uerr, pinRetry)
@@ -367,7 +377,7 @@ func clearPin() error {
 		for i := 0; ; i++ {
 			out, err := execCommand("ip", fam, "rule", "del", "lookup", pinTable)
 			if err != nil {
-				if !pinAbsent(out) {
+				if !pinAbsent(out) && !pinNoFamily(out) {
 					errs = append(errs, fmt.Errorf("ip %s rule del: %v: %s", fam, err, strings.TrimSpace(string(out))))
 				}
 				break
@@ -377,11 +387,18 @@ func clearPin() error {
 				break
 			}
 		}
-		if out, err := execCommand("ip", fam, "route", "flush", "table", pinTable); err != nil && !pinAbsent(out) {
+		if out, err := execCommand("ip", fam, "route", "flush", "table", pinTable); err != nil && !pinAbsent(out) && !pinNoFamily(out) {
 			errs = append(errs, fmt.Errorf("ip %s route flush: %v: %s", fam, err, strings.TrimSpace(string(out))))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// pinNoFamily reports whether the output of "ip" tells that the kernel
+// does not support the address family (for example IPv6 with
+// ipv6.disable=1).
+func pinNoFamily(out []byte) bool {
+	return strings.Contains(string(out), "Address family not supported")
 }
 
 // pinAbsent reports whether the output of "ip" tells that the rule or the
