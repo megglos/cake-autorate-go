@@ -387,18 +387,26 @@ func (p *Pinner) stopTimer() {
 func clearPin() error {
 	var errs []error
 	for _, fam := range []string{"-4", "-6"} {
+		ruleErr := false
 		for i := 0; ; i++ {
 			out, err := execCommand("ip", fam, "rule", "del", "lookup", pinTable)
 			if err != nil {
 				if !pinAbsent(out) && !pinNoFamily(out) {
 					errs = append(errs, fmt.Errorf("ip %s rule del: %v: %s", fam, err, strings.TrimSpace(string(out))))
+					ruleErr = true
 				}
 				break
 			}
 			if i >= pinMaxRules {
 				errs = append(errs, fmt.Errorf("ip %s rule del: more than %d rules of table %s", fam, pinMaxRules, pinTable))
+				ruleErr = true
 				break
 			}
+		}
+		// Rules that stay need the routes of the table: else their traffic
+		// uses the normal routing, but the pin stays.
+		if ruleErr {
+			continue
 		}
 		if out, err := execCommand("ip", fam, "route", "flush", "table", pinTable); err != nil && !pinAbsent(out) && !pinNoFamily(out) {
 			errs = append(errs, fmt.Errorf("ip %s route flush: %v: %s", fam, err, strings.TrimSpace(string(out))))

@@ -528,11 +528,16 @@ func TestPinner_FailedRemovalKeepsPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.fail = "-4 rule del"
+	f.calls = nil
 	if err := p.Unpin(PinOwnerControl, "wan"); err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
 		t.Errorf("unpin with a failed removal: %v", err)
 	}
 	if p.link != "wan" || f.rules["-4"] != 1 {
 		t.Errorf("link %q, rules %v; want the pin to stay", p.link, f.rules)
+	}
+	// The rules that stay keep the route of the table.
+	if f.has("ip -4 route flush table 7370") {
+		t.Errorf("route flush after a failed rule removal: %q", f.calls)
 	}
 	f.fail = ""
 	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || p.link != "" || f.rules["-4"] != 0 {
