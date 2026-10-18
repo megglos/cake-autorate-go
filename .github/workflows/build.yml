@@ -23,6 +23,11 @@ jobs:
       - name: Run tests
         run: go test -v -race -count=1 ./...
 
+      # OpenWrt also runs on 32-bit targets: the code and the tests must
+      # build there.
+      - name: Vet for 32 bit
+        run: GOARCH=386 go vet ./...
+
       # Show the baseline comparison, the simulator scorecard and the known
       # issues in the job summary. This step also runs when the tests fail.
       - name: Simulator scorecard
