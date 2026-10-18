@@ -67,6 +67,11 @@ const LINK_SHARE = 0.5;
 // against the load.
 const LINK_CHECK_MIN_KBPS = 1000;
 
+// The check of LINK_SHARE needs this number of statuses of a block in a
+// direction. One status can be wrong: an upload counts the data in the
+// send buffer of the browser before the data goes through the link.
+const LINK_CHECK_MIN_SAMPLES = 5;
+
 // The maximum time of the read of the status file (ms). The next status
 // request comes after it: the service stops a session after 15 s without
 // status requests.
@@ -521,7 +526,7 @@ return baseclass.extend({
 		for (const block of Object.keys(this.linkRates).sort((a, b) => a - b))
 			for (const d of [ 'dl', 'ul' ]) {
 				const r = this.linkRates[block][d];
-				if (r && r.n > 0 && r.browser / r.n >= LINK_CHECK_MIN_KBPS && r.link < LINK_SHARE * r.browser)
+				if (r && r.n >= LINK_CHECK_MIN_SAMPLES && r.browser / r.n >= LINK_CHECK_MIN_KBPS && r.link < LINK_SHARE * r.browser)
 					off.push({ block: block, dir: d });
 			}
 		if (!off.length)

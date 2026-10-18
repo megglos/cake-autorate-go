@@ -651,6 +651,38 @@ for (const onLink of [ false, true ]) {
 	});
 }
 
+// The first statuses after LINK_LAG_MS show a low link rate, the next
+// ones show the load on the link. One or two low statuses do not show a
+// warning, also not for a short time.
+test('the first low link rates of a load phase do not show a warning', async ({ page }) => {
+	const steps = [];
+	const add = (n, st) => { for (let i = 0; i < n; i++) steps.push(st); };
+	add(2, running(1, 'dl', 'unshaped', 'idle', ''));
+	add(60, running(1, 'dl', 'unshaped', 'load', 'dl'));
+	const session = fakeSession(steps);
+	await routeSession(page, session);
+	await routeFastLoad(page);
+	let loadSeen = null;
+	await routeLinkRate(page, () => (loadSeen != null && Date.now() - loadSeen > 4500 ? 10000000 : 0));
+	await page.goto(PAGE);
+	// Records each warning in the dialog, also if it goes away again.
+	await page.evaluate(() => {
+		window.offLinkSeen = false;
+		new MutationObserver(() => {
+			if (document.querySelector('.modal [data-off-link]'))
+				window.offLinkSeen = true;
+		}).observe(document.body, { childList: true, subtree: true });
+	});
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Phase: load', { timeout: 15000 });
+	loadSeen = Date.now();
+	// Some statuses of the load phase.
+	await page.waitForTimeout(10000);
+	expect(await page.evaluate(() => window.offLinkSeen)).toBe(false);
+	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+});
+
 // Block 1 does not go through the link, block 2 does. The warning for
 // block 1 stays: the sums of block 2 must not hide it.
 test('a good block does not hide the warning of a bad block', async ({ page }) => {
