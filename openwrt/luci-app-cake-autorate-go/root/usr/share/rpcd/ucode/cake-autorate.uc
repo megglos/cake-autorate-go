@@ -115,6 +115,29 @@ function shaping(verb, args) {
 	return command(verb + ' ' + link + ((verb == 'unshape' && seconds != null) ? ' ' + seconds : ''));
 }
 
+// Sends "pin LINK SECONDS" (answer: the ID of the pin in "id") or
+// "unpin LINK ID". The program sends the traffic to the load hosts through
+// the link (the program checks the range of the time).
+function pinning(verb, args) {
+	const link = args?.link, seconds = args?.seconds, id = args?.id;
+	if (type(link) != 'string' || !match(link, LINK_NAME_RE))
+		return { error: 'Invalid link name' };
+	if (verb == 'unpin') {
+		if (type(id) != 'int' || id < 1)
+			return { error: 'Invalid pin ID' };
+		return command('unpin ' + link + ' ' + id);
+	}
+	if (type(seconds) != 'int' || seconds < 1 || seconds > 3600)
+		return { error: 'Invalid time' };
+	const res = exchange('pin ' + link + ' ' + seconds);
+	if (res.error)
+		return res;
+	const m = match(res.answer, /^ok ([0-9]+)$/);
+	if (m)
+		return { result: 'ok', id: +m[1] };
+	return { error: replace(res.answer, /^error: /, '') };
+}
+
 // Returns the history of the program as a JSON text in "data". The page
 // parses it: a JSON text is smaller in a ubus message than a table.
 function history() {
@@ -181,6 +204,18 @@ return {
 			args: { link: 'link' },
 			call: function(req) {
 				return shaping('shape', req.args);
+			}
+		},
+		pin: {
+			args: { link: 'link', seconds: 0 },
+			call: function(req) {
+				return pinning('pin', req.args);
+			}
+		},
+		unpin: {
+			args: { link: 'link', id: 0 },
+			call: function(req) {
+				return pinning('unpin', req.args);
 			}
 		},
 		calibrate_start: {

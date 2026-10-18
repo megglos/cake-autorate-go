@@ -8,6 +8,7 @@
 
 'use strict';
 'require baseclass';
+'require fs';
 'require rpc';
 'require uci';
 'require ui';
@@ -53,6 +54,29 @@ const LINK_ON = [ '', '1', 'true', 'yes', 'on' ];
 // and the data that the load used. Thus, a reload of the page continues
 // the load without a question and keeps the data volume.
 const SESSION_KEY = 'cake-autorate-calibration-session';
+
+// The status file of the program: it has the rates of the link.
+const STATUS_FILE = '/var/run/cake-autorate/status.json';
+
+// The rate of the link (from the program) must be at least this share of
+// the rate of the browser: else the browser traffic uses another link.
+const LINK_SHARE = 0.5;
+
+// Below this mean rate of the browser in a direction (kbit/s), the check
+// of LINK_SHARE does not apply: other traffic of the link is too large
+// against the load.
+const LINK_CHECK_MIN_KBPS = 1000;
+
+// The maximum time of the read of the status file (ms). The next status
+// request comes after it: the service stops a session after 15 s without
+// status requests.
+const LINK_READ_MS = 2000;
+
+// The time from the start of a load phase until the check of the load path
+// uses the rates (ms). The program publishes the rates each second, and it
+// writes the status file each second: the file can show the rates of up
+// to 2 s before.
+const LINK_LAG_MS = 3000;
 
 // The load times that the user can select (s).
 const LOAD_TIMES = [ 20, 40, 80 ];
@@ -241,6 +265,7 @@ return baseclass.extend({
 		this.node = null;
 		this.lastBytes = null;
 		this.rates = { dl: 0, ul: 0 };
+		this.resetLinkRates();
 		this.onUnload = (ev) => {
 			ev.preventDefault();
 			ev.returnValue = '';
@@ -272,7 +297,7 @@ return baseclass.extend({
 		select.addEventListener('change', update);
 		update();
 		ui.showModal(_('Calibrate the link %s').format(ls.name), [
-			E('p', {}, text(_('The calibration measures the capacity and the delay of the link and proposes values for its configuration. The service runs 5 blocks. In some blocks, the shaper of the link has no limit, and the delay can be high. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com).'))),
+			E('p', {}, text(_('The calibration measures the capacity and the delay of the link and proposes values for its configuration. The service runs 5 blocks. In some blocks, the shaper of the link has no limit, and the delay can be high. This browser makes the load: it downloads from and uploads to the speed test of Cloudflare (speed.cloudflare.com). During the calibration, the service sends this traffic through this link, also on a router with more than one WAN link.'))),
 			E('ul', {}, [
 				E('li', {}, text(_('Keep this page open until the end.'))),
 				E('li', {}, text(_('Do not use the network during the calibration: other traffic makes the result less accurate.'))),
@@ -317,6 +342,9 @@ return baseclass.extend({
 		this.session = session;
 		this.lastBytes = null;
 		this.runningView = null;
+		// A late answer of an earlier attach must not change this one.
+		this.attachGen = (this.attachGen || 0) + 1;
+		this.resetLinkRates();
 		// A new load for each session. After a reload, the load continues
 		// with the used data of the same session (not of an older session
 		// of the link).
@@ -324,8 +352,12 @@ return baseclass.extend({
 		this.load.stop();
 		this.load = new Load();
 		const same = saved && saved.link == link && (own || (saved.session && saved.session == session));
-		if (same)
+		if (same) {
 			this.load.bytes = { dl: saved.dl, ul: saved.ul };
+			// The rates of the check of the load path of the same session.
+			if (saved.linkRates)
+				this.linkRates = saved.linkRates;
+		}
 		this.stopping = false;
 		this.node = E('div', { 'id': 'cake-autorate-calibration' }, E('p', {}, E('em', { 'class': 'spinning' }, _('Starting…'))));
 		ui.showModal(_('Calibrate the link %s').format(link), [ this.node ]);
@@ -401,11 +433,15 @@ return baseclass.extend({
 				if (!this.stopping)
 					this.load.set(st.load);
 				this.measure();
-				this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul });
-				this.renderRunning(st);
-				if (!this.stopping)
-					this.timer = setTimeout(() => this.poll(), POLL_MS);
-				return;
+				const gen = this.attachGen;
+				return this.checkLink(st).then(() => {
+					if (!this.active || gen != this.attachGen)
+						return;
+					this.saveSession({ link: this.link, session: this.session, dl: this.load.bytes.dl, ul: this.load.bytes.ul, linkRates: this.linkRates });
+					this.renderRunning(st);
+					if (!this.stopping)
+						this.timer = setTimeout(() => this.poll(), POLL_MS);
+				});
 			}
 			// A failed status request does not end the session: keep the
 			// session for a reload of the page.
@@ -429,6 +465,73 @@ return baseclass.extend({
 		this.lastBytes = { t: now, dl: b.dl, ul: b.ul };
 	},
 
+	resetLinkRates: function() {
+		// The sums of each block: the analysis uses each block separately,
+		// and a good block must not hide a bad one.
+		this.linkRates = {};
+		this.phaseKey = null;
+		this.phaseStart = 0;
+	},
+
+	// Adds the rates of a status in a load phase: the rate of this browser
+	// and the rate of the link (from the status file) in each direction of
+	// the load. The statuses of the first LINK_LAG_MS of a load phase are
+	// not used: the status file can show the rates before the load.
+	checkLink: function(st) {
+		const key = st.block + ' ' + st.phase;
+		if (key != this.phaseKey) {
+			this.phaseKey = key;
+			this.phaseStart = performance.now();
+		}
+		if (st.phase != 'load' || !st.load || performance.now() - this.phaseStart < LINK_LAG_MS)
+			return Promise.resolve();
+		const timeout = new Promise((resolve) => setTimeout(() => resolve(null), LINK_READ_MS));
+		const gen = this.attachGen, rates = { dl: this.rates.dl, ul: this.rates.ul };
+		return Promise.race([ L.resolveDefault(fs.read(STATUS_FILE), null), timeout ]).then((data) => {
+			// Another attach (a new session) during the read.
+			if (gen != this.attachGen)
+				return;
+			let ls = null;
+			try {
+				ls = (JSON.parse(data).links || []).find((l) => l.name == this.link);
+			}
+			catch (e) {
+				return;
+			}
+			if (!ls)
+				return;
+			for (const dir of [ 'dl', 'ul' ]) {
+				if (st.load != dir && st.load != 'both')
+					continue;
+				const r = (dir == 'dl' ? ls.download : ls.upload) || {};
+				const block = this.linkRates[st.block] = this.linkRates[st.block] || {};
+				const sum = block[dir] = block[dir] || { link: 0, browser: 0, n: 0 };
+				sum.link += +r.achieved_kbps || 0;
+				sum.browser += rates[dir];
+				sum.n++;
+			}
+		});
+	},
+
+	// Returns a warning if the link carried less than LINK_SHARE of the
+	// load of this browser in a direction of a block, else null.
+	offLinkWarning: function() {
+		const names = { dl: _('download'), ul: _('upload') };
+		const off = [];
+		for (const block of Object.keys(this.linkRates).sort((a, b) => a - b))
+			for (const d of [ 'dl', 'ul' ]) {
+				const r = this.linkRates[block][d];
+				if (r && r.n > 0 && r.browser / r.n >= LINK_CHECK_MIN_KBPS && r.link < LINK_SHARE * r.browser)
+					off.push({ block: block, dir: d });
+			}
+		if (!off.length)
+			return null;
+		const dirs = [ 'dl', 'ul' ].filter((d) => off.some((o) => o.dir == d));
+		return E('p', { 'class': 'alert-message warning', 'data-off-link': dirs.join(' '), 'data-off-blocks': off.map((o) => o.block + ':' + o.dir).join(' ') },
+			text(_('The load of this browser did not go through this link (%s): the rate of the link was below half the rate of this browser. The measured capacity can be too low. Check the routing of this browser.')
+				.format(off.map((o) => _('block %s %s').format(o.block, names[o.dir])).join(', '))));
+	},
+
 	// Ends the load and the status requests. keepSession keeps the session
 	// in the session storage.
 	finish: function(keepSession) {
@@ -447,8 +550,16 @@ return baseclass.extend({
 	readSession: function() {
 		try {
 			const v = JSON.parse(sessionStorage.getItem(SESSION_KEY));
-			return (v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
-				v.dl >= 0 && v.ul >= 0) ? v : null;
+			if (!(v && typeof v.link == 'string' && (v.session == null || typeof v.session == 'string') &&
+				v.dl >= 0 && v.ul >= 0))
+				return null;
+			// Invalid rates of the check of the load path: start again.
+			const valid = (r) => r == null || (typeof r == 'object' && [ r.link, r.browser, r.n ].every((x) => typeof x == 'number' && x >= 0));
+			if (v.linkRates != null && !(typeof v.linkRates == 'object' && !Array.isArray(v.linkRates) &&
+				Object.keys(v.linkRates).every((k) => /^[0-9]+$/.test(k) && v.linkRates[k] && typeof v.linkRates[k] == 'object' &&
+					valid(v.linkRates[k].dl) && valid(v.linkRates[k].ul))))
+				delete v.linkRates;
+			return v;
 		}
 		catch (e) {
 			return null;
@@ -512,6 +623,9 @@ return baseclass.extend({
 				: _('No load in this phase.'))),
 			E('p', { 'class': 'cake-autorate-used' }, text(_('Data: %s.').format(volume(this.load.used()))))
 		];
+		const off = this.offLinkWarning();
+		if (off)
+			nodes.push(off);
 		if (this.load.errors > 0)
 			nodes.push(E('p', { 'class': 'alert-message warning' },
 				text(_('The load had %d errors (last: %s). The result can be too low.').format(this.load.errors, this.load.lastError))));
@@ -630,6 +744,7 @@ return baseclass.extend({
 			}, _('Apply the selected values'));
 			this.node.replaceChildren(
 				E('p', {}, text(_('The calibration is done. The proposal comes from the measured data. Check the values before you apply them.'))),
+				this.offLinkWarning() || '',
 				table,
 				notes.length ? E('div', { 'class': 'alert-message notice' }, [ E('strong', {}, _('Notes')), E('ul', {}, notes) ]) : '',
 				sid ? '' : E('p', { 'class': 'alert-message warning' }, text(_('The configuration has no link "%s".').format(r.link))),

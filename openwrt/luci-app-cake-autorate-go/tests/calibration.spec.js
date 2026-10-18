@@ -561,3 +561,154 @@ test('a session of the program starts and stops from the dialog', async ({ page 
 		vm('echo "calibrate stop" | ucode -e \'import * as s from "socket"; let c = s.connect("/var/run/cake-autorate/control.sock"); c.send("calibrate stop\\n"); c.recv(256);\' 2>/dev/null; true');
 	}
 });
+
+// Answers the speed test endpoints locally with large answers: the rate of
+// the browser is some Mbit/s.
+async function routeFastLoad(page) {
+	await page.route('https://speed.cloudflare.com/**', async (route) => {
+		const req = route.request();
+		if (req.method() == 'OPTIONS')
+			return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type' } });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		try {
+			await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: 'x'.repeat(1000000) });
+		}
+		catch (e) {
+			// The page aborted the request.
+		}
+	});
+}
+
+// Sets the achieved rates of the link "wan" in the status file that the
+// page reads (only a request that reads only the status file). kbps is a
+// rate, or a function of the time since the first read (ms).
+async function routeLinkRate(page, kbps) {
+	let first = null;
+	await page.route('**/ubus/**', async (route) => {
+		const body = route.request().postDataJSON();
+		const requests = Array.isArray(body) ? body : [ body ];
+		const isStatus = (q) => q && q.params && q.params[1] == 'file' && q.params[3] && q.params[3].path == '/var/run/cake-autorate/status.json';
+		if (!requests.every(isStatus))
+			return route.fallback();
+		try {
+			const response = await route.fetch();
+			const answer = await response.json();
+			for (const res of Array.isArray(answer) ? answer : [ answer ]) {
+				const data = res.result && res.result[1] && res.result[1].data;
+				if (!data)
+					continue;
+				const status = JSON.parse(data);
+				first = first ?? Date.now();
+				const rate = typeof kbps == 'function' ? kbps(Date.now() - first) : kbps;
+				for (const ls of status.links || [])
+					if (ls.name == 'wan') {
+						ls.download = Object.assign({}, ls.download, { achieved_kbps: rate });
+						ls.upload = Object.assign({}, ls.upload, { achieved_kbps: rate });
+					}
+				res.result[1].data = JSON.stringify(status);
+			}
+			await route.fulfill({ response, json: answer });
+		}
+		catch (e) {
+			// The page closed.
+		}
+	});
+}
+
+// The load of the browser does not go through the link: the rate of the
+// link stays below half the rate of the browser. The dialog shows a
+// warning for the direction of the load. With the load on the link, it
+// shows no warning, also if the status file shows the load 2 s late.
+for (const onLink of [ false, true ]) {
+	test(`the dialog shows if the load does not go through the link (load on the link: ${onLink})`, async ({ page }) => {
+		const steps = [];
+		const add = (n, st) => { for (let i = 0; i < n; i++) steps.push(st); };
+		add(2, running(1, 'dl', 'unshaped', 'idle', ''));
+		add(60, running(1, 'dl', 'unshaped', 'load', 'dl'));
+		const session = fakeSession(steps);
+		await routeSession(page, session);
+		await routeFastLoad(page);
+		// The first reads come before the load phase: the late rate starts
+		// approximately 2 s after the load.
+		let loadSeen = null;
+		await routeLinkRate(page, onLink ? () => (loadSeen != null && Date.now() - loadSeen > 2000 ? 10000000 : 0) : 0);
+		await page.goto(PAGE);
+		await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+		await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+		await expect(page.locator('.modal .cake-autorate-block')).toContainText('Phase: load', { timeout: 15000 });
+		loadSeen = Date.now();
+		const warning = page.locator('.modal [data-off-link]');
+		if (onLink) {
+			// Some statuses of the load phase.
+			await page.waitForTimeout(5000);
+			await expect(warning).toHaveCount(0);
+		}
+		else {
+			await expect(warning).toHaveAttribute('data-off-link', 'dl', { timeout: 10000 });
+			await expect(warning).toContainText('did not go through this link (block 1 download)');
+		}
+		await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+	});
+}
+
+// Block 1 does not go through the link, block 2 does. The warning for
+// block 1 stays: the sums of block 2 must not hide it.
+test('a good block does not hide the warning of a bad block', async ({ page }) => {
+	const steps = [];
+	const add = (n, st) => { for (let i = 0; i < n; i++) steps.push(st); };
+	add(2, running(1, 'dl', 'unshaped', 'idle', ''));
+	add(10, running(1, 'dl', 'unshaped', 'load', 'dl'));
+	add(60, running(2, 'dl', 'autorate', 'load', 'dl'));
+	const session = fakeSession(steps);
+	await routeSession(page, session);
+	await routeFastLoad(page);
+	let block2 = null;
+	await routeLinkRate(page, () => (block2 != null && Date.now() - block2 > 2000 ? 10000000 : 0));
+	await page.goto(PAGE);
+	await page.locator('.cbi-section[data-link="wan"] .cake-autorate-calibrate').click();
+	await page.locator('.modal').getByRole('button', { name: 'Start' }).click();
+	const warning = page.locator('.modal [data-off-link]');
+	await expect(warning).toHaveAttribute('data-off-blocks', '1:dl', { timeout: 20000 });
+	await expect(page.locator('.modal .cake-autorate-block')).toContainText('Block 2 of 5', { timeout: 20000 });
+	block2 = Date.now();
+	// Some statuses of block 2 with the load on the link.
+	await page.waitForTimeout(8000);
+	await expect(warning).toHaveAttribute('data-off-blocks', '1:dl');
+	await page.locator('.modal').getByRole('button', { name: 'Stop' }).click();
+});
+
+// A read of the status file that ends after a new attach (a stop and a
+// new session) must not add its rates to the new session.
+test('a late read of the status file does not change a new session', async ({ page }) => {
+	await page.goto(PAGE);
+	await page.route('**/ubus/**', async (route) => {
+		const body = route.request().postDataJSON();
+		const requests = Array.isArray(body) ? body : [ body ];
+		if (!requests.every((q) => q && q.params && q.params[1] == 'file'))
+			return route.fallback();
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+		try {
+			await route.continue();
+		}
+		catch (e) {
+			// The page closed.
+		}
+	});
+	const sums = await page.evaluate(() => L.require('cake-autorate.calibration').then(async (c) => {
+		c.link = 'wan';
+		c.attachGen = 1;
+		c.resetLinkRates();
+		c.rates = { dl: 50000, ul: 0 };
+		const st = { block: 1, phase: 'load', load: 'dl' };
+		c.phaseKey = '1 load';
+		c.phaseStart = performance.now() - 10000;
+		const read = c.checkLink(st);
+		// A new attach during the read.
+		c.attachGen++;
+		c.resetLinkRates();
+		await read;
+		return JSON.stringify(c.linkRates);
+	}));
+	expect(sums).toBe('{}');
+});
+
