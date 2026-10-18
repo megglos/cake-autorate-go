@@ -711,12 +711,14 @@ func (r *calResult) recordedJitter(addrs []string) []float64 {
 // example fiber or cable, not 5G).
 func calStable(c calDist) bool { return c.N > 0 && c.P25 >= calStableRatio*c.P75 }
 
-// shared tells if the link shares the radio resources of the two
-// directions: the upload capacity is not stable, or the cross delay or the
-// grant delay is high.
+// shared tells if the link can share the radio resources of the two
+// directions: the upload capacity is not stable, the cross delay or the
+// grant delay is high, or the cross delay is not known (ICMP echo, no
+// autorate download block). The grant delay can be missing on a wired
+// line: the upload shaper rate was never below half the capacity.
 func (r *calResult) shared() bool {
 	high := func(d calDist) bool { return d.N > 0 && d.P50 >= calSharedDelayMs }
-	return !calStable(r.UlCapacity) || high(r.CrossDelayMs) || high(r.GrantDelayMs)
+	return !calStable(r.UlCapacity) || r.CrossDelayMs.N == 0 || high(r.CrossDelayMs) || high(r.GrantDelayMs)
 }
 
 // setThresholds sets the delay thresholds and learn_cross_delay of the

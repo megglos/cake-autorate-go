@@ -308,6 +308,25 @@ func TestCalibrateSession_StableLinkUploadWithDownloadLoad(t *testing.T) {
 	}
 }
 
+// A link with a stable upload capacity, ICMP echo only: the cross delay
+// is not known. The link can share the radio resources: the upload base
+// rate is not more than the p50 with download load.
+func TestCalibrateSession_EchoUploadWithDownloadLoad(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 200000, ulCapKbps: 40000, ulCapBothKbps: 10000, idleJitterMs: 4, echo: true,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CrossDelayMs.N != 0 {
+		t.Fatalf("cross delay n %d, want 0 (ICMP echo)", res.CrossDelayMs.N)
+	}
+	if p := res.propose(cfg); p.UlBase != 10000 {
+		t.Errorf("upload base %d, want 10000 (p50 with download load)", p.UlBase)
+	}
+}
+
 // A stable link with a short upload delay from download activity (below
 // the limit of learn_cross_delay): the upload threshold must be above it.
 // Else the download pushes the upload rate down to the minimum.
