@@ -282,6 +282,32 @@ func TestCalibrateSession_StableLink(t *testing.T) {
 	}
 }
 
+// A fiber line (cav1, 2026-10-18): in the unshaped block with load in the
+// two directions, the upload gets only 45 % of its capacity. The upload
+// waits for its acknowledgements in the queue of the download. With
+// shaping, the upload gets 300 of 330 Mbit/s. Thus, the base rate must
+// stay at 95 % of the stable capacity. The minimum must be below the
+// rate with download load.
+func TestCalibrateSession_StableLinkUploadWithDownloadLoad(t *testing.T) {
+	dir := writeCalSession(t, calTestLink{
+		dlCapKbps: 650000, ulCapKbps: 330000, ulCapBothKbps: 148000, idleJitterMs: 2,
+	})
+	res, cfg, err := calibrateSession(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := res.propose(cfg)
+	if p.UlBase != 313500 || p.UlMax != 330000 {
+		t.Errorf("upload base %d max %d, want 313500/330000", p.UlBase, p.UlMax)
+	}
+	if p.UlMin > 74000 {
+		t.Errorf("upload min %d, want 74000 or less (p5 / 2 with download load)", p.UlMin)
+	}
+	if w := p.Why["upload rates"]; !strings.Contains(w, "no cross or grant delay: the base does not change") {
+		t.Errorf("upload rates comment %q, want the stable rule", w)
+	}
+}
+
 // A stable link with a short upload delay from download activity (below
 // the limit of learn_cross_delay): the upload threshold must be above it.
 // Else the download pushes the upload rate down to the minimum.

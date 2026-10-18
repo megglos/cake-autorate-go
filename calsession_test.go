@@ -117,7 +117,8 @@ func (f *fakeCalTarget) CalBlock(rec *Recorder, unshaped bool) error {
 			case b.mode == "dl":
 				dl, ul = 48000+v*1000, 1000
 			case b.mode == "ul":
-				dl, ul = 500, 19000+v*500
+				// A variable capacity, as on 5G.
+				dl, ul = 500, 16000+v*1250
 			case b.mode == "both":
 				dl, ul = 40000, 8000+v*500
 			}
