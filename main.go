@@ -169,7 +169,11 @@ func main() {
 	// go away.
 	pinner := NewPinner(cfg.Links, logger)
 	pinner.Clear()
-	defer pinner.Close()
+	defer func() {
+		if err := pinner.Close(); err != nil {
+			logger.Errorf("the rules of table %s stay: %v (remove them with \"ip rule del lookup %s\")", pinTable, err, pinTable)
+		}
+	}()
 
 	var calib *Calibrator
 	if cfg.ControlSocket != "" {

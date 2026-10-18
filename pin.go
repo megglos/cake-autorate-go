@@ -48,6 +48,12 @@ const maxPinSeconds = 3600
 // of a pin. Tests change it.
 var pinRetry = 10 * time.Second
 
+// pinCloseTries is the number of removals of Close, pinCloseWait the time
+// between two tries. Tests change pinCloseWait.
+const pinCloseTries = 3
+
+var pinCloseWait = 500 * time.Millisecond
+
 // pinLookupTimeout is the maximum time of the DNS lookup of pinHosts.
 const pinLookupTimeout = 5 * time.Second
 
@@ -348,12 +354,29 @@ func (p *Pinner) retryClear() {
 
 // Close removes all rules and routes, and Pin refuses after it. The
 // program calls it at the stop: a control command that is still open
-// cannot pin again after the removal.
-func (p *Pinner) Close() {
+// cannot pin again after the removal. The program stops after Close: a
+// timer cannot try again. Thus, Close tries pinCloseTries times, and it
+// returns the error of the last try.
+func (p *Pinner) Close() error {
 	p.mu.Lock()
 	p.closed = true
 	p.mu.Unlock()
 	p.Clear()
+	var err error
+	for i := 1; i < pinCloseTries; i++ {
+		p.mu.Lock()
+		if !p.pending {
+			p.mu.Unlock()
+			return nil
+		}
+		p.stopTimer()
+		time.Sleep(pinCloseWait)
+		if err = clearPin(); err == nil {
+			p.clearDone()
+		}
+		p.mu.Unlock()
+	}
+	return err
 }
 
 // expire removes the rules at the end of the time of the pin gen.

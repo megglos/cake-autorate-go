@@ -534,6 +534,38 @@ func TestPinner_IDsDifferAfterRestart(t *testing.T) {
 	}
 }
 
+// Close tries the removal again before the stop: a timer cannot run
+// after it. A removal that fails each time gives an error.
+func TestPinner_CloseRetries(t *testing.T) {
+	old := pinCloseWait
+	pinCloseWait = time.Millisecond
+	t.Cleanup(func() { pinCloseWait = old })
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	if _, err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	f.failDel = true
+	if err := p.Close(); err == nil {
+		t.Error("Close with a failed removal: no error")
+	}
+	// The second removal works.
+	p2 := NewPinner(pinTestLinks(), testLogger(t))
+	tries := 0
+	execOld := execCommand
+	execCommand = func(name string, args ...string) ([]byte, error) {
+		if len(args) > 2 && args[1] == "rule" && args[2] == "del" && args[0] == "-4" && f.rules["-4"] > 0 {
+			tries++
+			f.failDel = tries < 2
+		}
+		return execOld(name, args...)
+	}
+	t.Cleanup(func() { execCommand = execOld })
+	if err := p2.Close(); err != nil || f.rules["-4"] != 0 {
+		t.Errorf("Close with a removal that works the second time: %v, rules %v", err, f.rules)
+	}
+}
+
 // After Close, Pin refuses: a control command that is still open at the
 // stop cannot pin again.
 func TestPinner_CloseRefusesPin(t *testing.T) {
