@@ -373,6 +373,21 @@ func TestPinner_FailedClearRetries(t *testing.T) {
 	}
 }
 
+// Close during a pin also removes the conntrack entries of the addresses:
+// after the stop, the routing can select another link.
+func TestPinner_CloseFlushesConntrack(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	f.calls = nil
+	p.Close()
+	if !f.has("conntrack -D -d 162.159.140.220") || f.rules["-4"] != 0 {
+		t.Errorf("after Close: calls %q, rules %v", f.calls, f.rules)
+	}
+}
+
 // After Close, Pin refuses: a control command that is still open at the
 // stop cannot pin again.
 func TestPinner_CloseRefusesPin(t *testing.T) {

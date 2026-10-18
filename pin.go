@@ -249,7 +249,7 @@ func (p *Pinner) Unpin(owner, link string) error {
 			if err := clearPin(); err != nil {
 				return err
 			}
-			p.pending = false
+			p.clearDone()
 		}
 		return nil
 	}
@@ -281,7 +281,16 @@ func (p *Pinner) Clear() {
 		p.timer = time.AfterFunc(pinRetry, p.retryClear)
 		return
 	}
+	p.clearDone()
+}
+
+// clearDone ends a removal without a pin: the connections to the
+// addresses of the last pin (if any) lose their NAT of the pinned link.
+// While the removal fails, the addresses stay for the next try.
+func (p *Pinner) clearDone() {
 	p.pending = false
+	p.flushConntrack()
+	p.addrs = nil
 }
 
 // retryClear tries again a failed removal of Clear.
@@ -297,7 +306,7 @@ func (p *Pinner) retryClear() {
 		p.timer = time.AfterFunc(pinRetry, p.retryClear)
 		return
 	}
-	p.pending = false
+	p.clearDone()
 }
 
 // Close removes all rules and routes, and Pin refuses after it. The
