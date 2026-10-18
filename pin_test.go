@@ -25,11 +25,15 @@ type fakeIP struct {
 	failDel bool
 	// noIPv6: each "ip -6" call fails (a kernel without IPv6).
 	noIPv6 bool
+	// ruleShow has the output of "ip -4|-6 rule show" for each family.
+	ruleShow map[string]string
+	// addrs are the addresses of the DNS lookup.
+	addrs []string
 }
 
 func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP {
 	t.Helper()
-	f := &fakeIP{routes: routes, rules: map[string]int{}}
+	f := &fakeIP{routes: routes, rules: map[string]int{}, ruleShow: map[string]string{}, addrs: addrs}
 	oldExec, oldLookup := execCommand, lookupPinHost
 	t.Cleanup(func() { execCommand, lookupPinHost = oldExec, oldLookup })
 	execCommand = func(name string, args ...string) ([]byte, error) {
@@ -42,6 +46,8 @@ func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP 
 			return []byte("RTNETLINK answers: Operation not permitted"), &exec.ExitError{}
 		}
 		switch {
+		case args[1] == "rule" && args[2] == "show":
+			return []byte(f.ruleShow[args[0]]), nil
 		case slices.Contains(args, "show"):
 			return []byte(f.routes[args[0]]), nil
 		case args[1] == "rule" && args[2] == "add":
@@ -59,7 +65,7 @@ func newFakeIP(t *testing.T, routes map[string]string, addrs ...string) *fakeIP 
 	}
 	lookupPinHost = func(ctx context.Context, host string) ([]net.IP, error) {
 		var ips []net.IP
-		for _, a := range addrs {
+		for _, a := range f.addrs {
 			ips = append(ips, net.ParseIP(a))
 		}
 		return ips, nil
@@ -315,7 +321,10 @@ func TestPinner_FailedUnpinKeepsTimer(t *testing.T) {
 	if err := p.Pin(PinOwnerCalibration, "wan", 100*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
+	// The timer reads the fake under the lock of the Pinner.
+	p.mu.Lock()
 	f.fail = "-4 rule del"
+	p.mu.Unlock()
 	if err := p.Unpin(PinOwnerCalibration, "wan"); err == nil {
 		t.Fatal("no error")
 	}
@@ -412,6 +421,40 @@ func TestPinner_NoIPv6Kernel(t *testing.T) {
 	}
 	if err := p.Unpin(PinOwnerControl, "wan"); err != nil || f.rules["-4"] != 0 {
 		t.Errorf("unpin without IPv6: %v, rules %v", err, f.rules)
+	}
+}
+
+// At the start, the rules of a crashed process tell its addresses: their
+// conntrack entries go away after the removal of the rules.
+func TestPinner_ClearFlushesAddressesOfOldRules(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "", "-6": ""})
+	f.rules["-4"] = 1
+	f.ruleShow["-4"] = "0:\tfrom all lookup local\n900:\tfrom all to 162.159.140.220 lookup 7370\n32766:\tfrom all lookup main\n"
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	p.Clear()
+	if f.rules["-4"] != 0 || !f.has("conntrack -D -d 162.159.140.220") {
+		t.Errorf("after Clear: rules %v, calls %q", f.rules, f.calls)
+	}
+}
+
+// A session replaces a pin, and the DNS lookup gives a new address: the
+// conntrack entries of the old address also go away.
+func TestPinner_ReplaceFlushesOldAddresses(t *testing.T) {
+	f := newFakeIP(t, map[string]string{"-4": "default via 10.0.0.1 proto static\n", "-6": ""}, "162.159.140.220")
+	p := NewPinner(pinTestLinks(), testLogger(t))
+	t.Cleanup(p.Clear)
+	if err := p.Pin(PinOwnerControl, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	f.addrs = []string{"172.66.0.218"}
+	f.calls = nil
+	if err := p.Pin(PinOwnerCalibration, "wan", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"conntrack -D -d 162.159.140.220", "conntrack -D -d 172.66.0.218"} {
+		if !f.has(want) {
+			t.Errorf("no call %q in %q", want, f.calls)
+		}
 	}
 }
 

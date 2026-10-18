@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -168,6 +169,9 @@ func (p *Pinner) Pin(owner, link string, d time.Duration) error {
 	if err := clearPin(); err != nil {
 		return err
 	}
+	// The connections to the addresses of the replaced pin lose their NAT
+	// of the pinned link (the new addresses can be different).
+	p.flushConntrack()
 	p.stopTimer()
 	// From here, the Pinner tracks the rules: a failed removal tries
 	// again.
@@ -284,6 +288,13 @@ func (p *Pinner) Clear() {
 	defer p.mu.Unlock()
 	p.stopTimer()
 	p.link, p.owner = "", ""
+	// The rules of a crashed process tell its addresses: the conntrack
+	// entries of these addresses go away after the removal.
+	for _, a := range pinRuleAddrs() {
+		if !slices.Contains(p.addrs, a) {
+			p.addrs = append(p.addrs, a)
+		}
+	}
 	if err := clearPin(); err != nil {
 		// Rules can stay: try again later (also at the next Unpin).
 		p.logger.Errorf("%v (next try in %v)", err, pinRetry)
@@ -392,6 +403,28 @@ func clearPin() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// pinRuleAddrs returns the destination addresses of the rules of
+// pinTable ("to ADDR lookup 7370").
+func pinRuleAddrs() []string {
+	var addrs []string
+	for _, fam := range []string{"-4", "-6"} {
+		out, err := execCommand("ip", fam, "rule", "show")
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			f := strings.Fields(line)
+			if !slices.Contains(f, pinTable) {
+				continue
+			}
+			if i := slices.Index(f, "to"); i >= 0 && i+1 < len(f) {
+				addrs = append(addrs, f[i+1])
+			}
+		}
+	}
+	return addrs
 }
 
 // pinNoFamily reports whether the output of "ip" tells that the kernel
