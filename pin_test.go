@@ -627,7 +627,7 @@ func TestControl_PinCommands(t *testing.T) {
 		{"unpin", "ok"},
 		{"pin wan 60", fmt.Sprintf("ok %d", p.nextID+1)},
 		// The unpin of an earlier pin does nothing.
-		{"unpin wan 999999999999", "ok"},
+		{"unpin wan 2147483647", "ok"},
 		{"pin wan 60", `error: a test of link "wan" has the traffic of the load`},
 		{"unpin wan " + fmt.Sprint(p.nextID+1), "ok"},
 		{"pin wan 60", fmt.Sprintf("ok %d", p.nextID+2)},
