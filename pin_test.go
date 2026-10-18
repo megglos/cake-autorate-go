@@ -328,9 +328,12 @@ func TestPinner_Extend(t *testing.T) {
 	if err := p.Pin(PinOwnerCalibration, "wan", 50*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
+	old := p.gen
 	if err := p.Extend(PinOwnerCalibration, "wan", time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	// The callback of the old timer started before Extend.
+	p.expire(old)
 	if err := p.Extend(PinOwnerControl, "wan", time.Minute); err == nil {
 		t.Error("extend of another owner: no error")
 	}

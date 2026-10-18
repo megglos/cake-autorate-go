@@ -206,7 +206,10 @@ func (p *Pinner) Extend(owner, link string, d time.Duration) error {
 	if p.link != link || p.owner != owner {
 		return fmt.Errorf("link %q has no pin of the %s", link, owner)
 	}
+	// A new generation: the callback of the old timer can have started
+	// already, and Stop cannot cancel it.
 	p.stopTimer()
+	p.gen++
 	gen := p.gen
 	p.timer = time.AfterFunc(d, func() { p.expire(gen) })
 	return nil
