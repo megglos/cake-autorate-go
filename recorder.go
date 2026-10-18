@@ -77,6 +77,9 @@ type recPingEvent struct {
 	// One-way delays (ICMP timestamps only). They contain the clock offset.
 	DlOWDUs *int64 `json:"dl_owd_us,omitempty"`
 	UlOWDUs *int64 `json:"ul_owd_us,omitempty"`
+	// The time in the reflector (ICMP timestamps only). The RTT contains
+	// it, the one-way delays do not.
+	ReflectorUs int64 `json:"reflector_us,omitempty"`
 }
 
 type recRateEvent struct {
@@ -349,6 +352,7 @@ func (r *Recorder) Ping(link string, p PingResult) {
 	if p.OWD {
 		dl, ul := p.DlOWD.Microseconds(), p.UlOWD.Microseconds()
 		ev.DlOWDUs, ev.UlOWDUs = &dl, &ul
+		ev.ReflectorUs = p.ReflectorTime.Microseconds()
 	}
 	r.write(ev)
 }

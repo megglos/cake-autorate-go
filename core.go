@@ -79,6 +79,9 @@ type reflectorDelay struct {
 	owdInit      bool
 	dlBaselineUs float64
 	ulBaselineUs float64
+	// pathBaselineUs is the baseline of the RTT without the time in the
+	// reflector.
+	pathBaselineUs float64
 }
 
 // Core is the cake-autorate control algorithm for one WAN link.
@@ -112,6 +115,9 @@ type Core struct {
 	// unshaped is true while a user turned the shaping off. Then Core does
 	// not go to IDLE: the delay measurement continues.
 	unshaped bool
+	// rateSeen is true after the first throughput sample (HandleRate).
+	// Before it, the load is not known.
+	rateSeen bool
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -253,6 +259,7 @@ func (c *Core) ResetReflector(reflector string) {
 
 // HandleRate processes a sample of the measured throughput.
 func (c *Core) HandleRate(stats RateStats) {
+	c.rateSeen = true
 	c.dl.achievedKbps = stats.DlRateKbps
 	c.ul.achievedKbps = stats.UlRateKbps
 
@@ -357,17 +364,74 @@ func (c *Core) HandlePing(result PingResult) {
 // owdDeltas updates the one-way delay baselines of a reflector. It returns
 // the download and the upload delta. Each baseline contains the clock
 // offset between the hosts. Thus, the delta does not contain it.
+//
+// A change of a clock (for example, NTP after the boot) moves delay from
+// one direction to the other, but the RTT (a monotonic clock of this host)
+// does not change. A queue always increases the RTT. Thus, at a low load,
+// a delta is not more than the RTT increase (without the time in the
+// reflector) + owdCapMarginUs: the part above the RTT increase is a clock
+// change, and the baseline moves by it. Under load, a shorter path in one
+// direction and a queue in the other can look the same: then the deltas
+// stay, and the limit removes a clock change after the load.
 func (c *Core) owdDeltas(rd *reflectorDelay, result PingResult) (dlDeltaUs, ulDeltaUs float64) {
 	dlUs := float64(result.DlOWD.Microseconds())
 	ulUs := float64(result.UlOWD.Microseconds())
+	// The one-way delays do not contain the time in the reflector. A value
+	// outside 0 to RTT is not correct (for example, a clock step of the
+	// reflector between its receive and transmit time): then use the RTT.
+	rttUs := float64(result.RTT.Microseconds())
+	pathUs := rttUs
+	if in := float64(result.ReflectorTime.Microseconds()); in >= 0 && in <= rttUs {
+		pathUs -= in
+	}
 	if !rd.owdInit {
 		rd.owdInit = true
 		rd.dlBaselineUs, rd.ulBaselineUs = dlUs, ulUs
+		rd.pathBaselineUs = pathUs
 		return 0, 0
 	}
+	rd.pathBaselineUs = c.ewmaBaseline(rd.pathBaselineUs, pathUs)
 	rd.dlBaselineUs = c.ewmaBaseline(rd.dlBaselineUs, dlUs)
 	rd.ulBaselineUs = c.ewmaBaseline(rd.ulBaselineUs, ulUs)
+	if c.clockLowLoad() {
+		limitUs := math.Max(pathUs-rd.pathBaselineUs, 0)
+		if d := dlUs - rd.dlBaselineUs; d > limitUs+owdCapMarginUs {
+			rd.dlBaselineUs += d - limitUs
+		}
+		if d := ulUs - rd.ulBaselineUs; d > limitUs+owdCapMarginUs {
+			rd.ulBaselineUs += d - limitUs
+		}
+	}
 	return math.Max(dlUs-rd.dlBaselineUs, 0), math.Max(ulUs-rd.ulBaselineUs, 0)
+}
+
+// owdCapMarginUs is the margin of the limit of a one-way delta above the
+// RTT increase: the one-way delays have whole milliseconds.
+const owdCapMarginUs = 1000
+
+// clockMaxLoad is the maximum load (achieved rate / shaper rate) of each
+// direction for the limit of the one-way deltas (see owdDeltas). Below it,
+// the shaper has no queue.
+const clockMaxLoad = 0.2
+
+// clockLowLoad reports whether the load of the two directions is known and
+// low, with the shaping on. Without shaping (unshape, the unshaped blocks
+// of a calibration, or adjust: false), the shaper rate is not a limit, and
+// the load stays low also with a queue. The load uses the current shaper
+// rate: a rate change (for example, the end of unshape) comes before the
+// next throughput sample.
+func (c *Core) clockLowLoad() bool {
+	if !c.rateSeen || c.unshaped {
+		return false
+	}
+	for _, dir := range Directions() {
+		ds := c.getDirState(dir)
+		if !c.link.DirConfig(dir).Adjust || ds.shaperRateKbps <= 0 || ds.shaperRateKbps >= unshapedKbps ||
+			ds.achievedKbps >= clockMaxLoad*ds.shaperRateKbps {
+			return false
+		}
+	}
+	return true
 }
 
 const (

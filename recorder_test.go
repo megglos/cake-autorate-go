@@ -196,21 +196,22 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 
 	for sc.Scan() {
 		var ev struct {
-			T         int64     `json:"t"`
-			Type      string    `json:"type"`
-			Link      string    `json:"link"`
-			Reflector string    `json:"reflector"`
-			RTTUs     int64     `json:"rtt_us"`
-			Timeout   bool      `json:"timeout"`
-			DlOWDUs   *int64    `json:"dl_owd_us"`
-			UlOWDUs   *int64    `json:"ul_owd_us"`
-			DlKbps    float64   `json:"dl_kbps"`
-			UlKbps    float64   `json:"ul_kbps"`
-			Dir       Direction `json:"dir"`
-			RateKbps  int       `json:"rate_kbps"`
-			State     string    `json:"state"`
-			Paused    bool      `json:"paused"`
-			On        bool      `json:"on"`
+			T           int64     `json:"t"`
+			Type        string    `json:"type"`
+			Link        string    `json:"link"`
+			Reflector   string    `json:"reflector"`
+			RTTUs       int64     `json:"rtt_us"`
+			Timeout     bool      `json:"timeout"`
+			DlOWDUs     *int64    `json:"dl_owd_us"`
+			UlOWDUs     *int64    `json:"ul_owd_us"`
+			ReflectorUs int64     `json:"reflector_us"`
+			DlKbps      float64   `json:"dl_kbps"`
+			UlKbps      float64   `json:"ul_kbps"`
+			Dir         Direction `json:"dir"`
+			RateKbps    int       `json:"rate_kbps"`
+			State       string    `json:"state"`
+			Paused      bool      `json:"paused"`
+			On          bool      `json:"on"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			t.Fatal(err)
@@ -236,6 +237,7 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 				p.OWD = true
 				p.DlOWD = time.Duration(*ev.DlOWDUs) * time.Microsecond
 				p.UlOWD = time.Duration(*ev.UlOWDUs) * time.Microsecond
+				p.ReflectorTime = time.Duration(ev.ReflectorUs) * time.Microsecond
 			}
 			core.HandlePing(p)
 		case recRate:
@@ -273,16 +275,22 @@ func TestRecording_ReplayGivesSameDecisions(t *testing.T) {
 	for _, run := range []struct {
 		name   string
 		policy simPolicy
+		// reflectorTimeMs: the time in the reflector (0: none).
+		reflectorTimeMs float64
 	}{
-		{"5g-variable", policyAutorate},
-		{"starlink-like", policyAutorate},
-		{"capacity-drop", policyAutorate},
-		{"5g-variable", policyAutorateOWD},
-		{"bidir-saturated", policyAutorateOWD},
+		{"5g-variable", policyAutorate, 0},
+		{"starlink-like", policyAutorate, 0},
+		{"capacity-drop", policyAutorate, 0},
+		{"5g-variable", policyAutorateOWD, 0},
+		{"bidir-saturated", policyAutorateOWD, 0},
+		// The replay must get the time in the reflector: else the check of
+		// the one-way delays against the RTT refuses the replies.
+		{"bidir-saturated", policyAutorateOWD, 30},
 	} {
-		t.Run(run.name+"/"+string(run.policy), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%s/reflector-%.0fms", run.name, run.policy, run.reflectorTimeMs), func(t *testing.T) {
 			sc := scenarioByName(t, run.name)
 			sc.duration = 60 * time.Second
+			sc.reflectorTimeMs = run.reflectorTimeMs
 			sc.recordPath = filepath.Join(t.TempDir(), "rec.jsonl")
 			runSim(sc, run.policy)
 
