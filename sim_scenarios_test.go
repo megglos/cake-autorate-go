@@ -786,3 +786,24 @@ func TestSimCalibration_5GRecorded(t *testing.T) {
 		t.Errorf("upload only: UL utilization %.0f%%, want 45 to 75%% (link: 56 to 63%%)", 100*ulOnly.ulUtil)
 	}
 }
+
+// TestSimOWD_IncreaseToDelayThr_DownloadDelay: on the 5G link of
+// 2026-10-21, the download delay under load was 14 to 17 ms, also without a
+// queue. With the default scale, the increase is zero at a delay of
+// avg_owd_delta_max_adjust_up_thr_ms (10 ms), and the rate increases only
+// slowly. increase_to_delay_thr increases up to the delay threshold. The
+// scenario is 5g-stalls with a download delay of 12 ms (mean) under load.
+func TestSimOWD_IncreaseToDelayThr_DownloadDelay(t *testing.T) {
+	run := func(on bool) simResult {
+		sc := scenarioByName(t, "5g-stalls")
+		sc.dlGrantMs = 12
+		sc.tune = func(cfg *Config) { cfg.IncreaseToDelayThr = on }
+		return runSim(sc, policyAutorateOWD)
+	}
+	off, on := run(false), run(true)
+	t.Logf("default: DL %.0f %%, p95 %.1f ms; increase_to_delay_thr: DL %.0f %%, p95 %.1f ms",
+		100*off.dlUtil, off.latP95, 100*on.dlUtil, on.latP95)
+	if on.dlUtil < off.dlUtil+0.05 {
+		t.Errorf("DL utilization %.0f%%, want at least 5 points more than the default (%.0f%%)", 100*on.dlUtil, 100*off.dlUtil)
+	}
+}

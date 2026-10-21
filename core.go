@@ -678,10 +678,21 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 
 	// The factor shows the remaining headroom below the delay threshold
 	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
-	if maxUpThrUs <= 0 {
-		maxUpThrUs = 1
+	var factor float64
+	if c.cfg.IncreaseToDelayThr {
+		// As in the original: the factor is 1 up to maxUpThrUs and 0 at
+		// the delay threshold.
+		if thresholdUs <= maxUpThrUs {
+			factor = 1
+		} else {
+			factor = (thresholdUs - deltaUs) / (thresholdUs - maxUpThrUs)
+		}
+	} else {
+		if maxUpThrUs <= 0 {
+			maxUpThrUs = 1
+		}
+		factor = 1.0 - (deltaUs / maxUpThrUs)
 	}
-	factor := 1.0 - (deltaUs / maxUpThrUs)
 	factor = clamp(factor, 0, 1)
 
 	minAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh

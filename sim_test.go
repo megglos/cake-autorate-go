@@ -188,6 +188,10 @@ type simScenario struct {
 	// increases to the full value at 5 % upload use and then stays
 	// constant.
 	ulGrantMs, ulGrantJitterMs float64
+	// dlGrantMs is the mean download delay that the radio adds when the
+	// download is active (exponential distribution, for each ping). The
+	// download shaper cannot remove it.
+	dlGrantMs float64
 
 	// reflectorTimeMs is the time in the reflector (ICMP timestamps only):
 	// the RTT contains it, the one-way delays do not.
@@ -397,14 +401,17 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				// are different for each ping. Their means are in couplingMs.
 				// Draw a random number only if the scenario has the delay.
 				// Then the other scenarios keep the same random sequence.
-				var ulNoise float64
+				var ulNoise, dlNoise float64
+				if sc.dlGrantMs > 0 {
+					dlNoise = sc.dlGrantMs * rng.ExpFloat64() * math.Min(dlUse/0.2, 1)
+				}
 				if sc.ulCouplingJitterMs > 0 {
 					ulNoise = sc.ulCouplingJitterMs * (rng.ExpFloat64() - 1) * couplingActive
 				}
 				if sc.ulGrantJitterMs > 0 {
 					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
-				rtt := base + queueMs + jitter + ulNoise
+				rtt := base + queueMs + jitter + ulNoise + dlNoise
 				if owd {
 					rtt += sc.reflectorTimeMs
 				}
@@ -418,7 +425,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					// timestamps have a resolution of 1 ms.
 					offset := 13.7*float64(i) - 40
 					ul := base/2 + ulQueueMs + jitter/2 + ulNoise + offset
-					dl := base/2 + dlQueueMs + jitter/2 - offset
+					dl := base/2 + dlQueueMs + jitter/2 + dlNoise - offset
 					result.OWD = true
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
 					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond

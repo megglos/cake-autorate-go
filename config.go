@@ -133,6 +133,16 @@ type Config struct {
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
 	LearnCrossDelay bool `yaml:"learn_cross_delay"`
+	// IncreaseToDelayThr changes the increase at high load (as in the
+	// original): the increase is at its maximum while the delay is at or
+	// below avg_owd_delta_max_adjust_up_thr_ms, and decreases linearly to
+	// zero at the delay threshold (owd_delta_delay_thr_ms). If false, the
+	// increase decreases from its maximum at a delay of 0 to zero at
+	// avg_owd_delta_max_adjust_up_thr_ms. Use it on a link that adds a
+	// delay under load that the shaper cannot remove (for example, the
+	// scheduler of a 5G cell). Then the rate can increase also with this
+	// delay.
+	IncreaseToDelayThr bool `yaml:"increase_to_delay_thr"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`
