@@ -56,6 +56,10 @@
 #               ../cake-autorate).
 #   -w WORKERS  load workers for each direction (default: from the saturation check)
 #   -C DL,UL    capacity in kbit/s (default: from the saturation check)
+#   -L MB       data limit: do not start a block if the data on IFACE
+#               (received and sent, from the start of the session) plus the
+#               data of the largest block so far is more than MB. Use it
+#               on a link with a data volume (default: no limit)
 #   -s          do not do the saturation check (then -w is necessary, and
 #               -C is necessary with -F)
 #   -h          show this help
@@ -97,6 +101,7 @@ FIXED_PCT=0
 WORKERS=""
 CAPACITY=""
 SKIP_CHECK=0
+DATA_LIMIT_MB=0
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_DIR=$(dirname "$SCRIPT_DIR")
@@ -112,7 +117,7 @@ usage() {
 VARIANTS=()
 UPSTREAMS=()
 
-while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:U:sh" opt; do
+while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:U:L:sh" opt; do
     case $opt in
         i) IFACE="$OPTARG" ;;
         c) CONFIG="$OPTARG" ;;
@@ -128,6 +133,7 @@ while getopts "i:c:x:o:m:b:I:r:W:F:w:C:A:U:sh" opt; do
         U) UPSTREAMS+=("$OPTARG") ;;
         w) WORKERS="$OPTARG" ;;
         C) CAPACITY="$OPTARG" ;;
+        L) DATA_LIMIT_MB="$OPTARG" ;;
         s) SKIP_CHECK=1 ;;
         h) usage 0 ;;
         *) usage 1 ;;
@@ -142,6 +148,7 @@ log() { echo "[session] [$(date '+%H:%M:%S')] $*"; }
 [ -d "/sys/class/net/$IFACE" ] || die "interface $IFACE does not exist"
 [ -f "$CONFIG" ] || die "config $CONFIG does not exist"
 [[ "$WARMUP_S" =~ ^[0-9]+$ ]] || die "-W must be a number of seconds"
+[[ "$DATA_LIMIT_MB" =~ ^[0-9]+$ ]] || die "-L must be a number of MB"
 WARMUP_S=$((10#$WARMUP_S))
 [ -x "$BINARY" ] || die "binary $BINARY does not exist (build it with: go build .)"
 [ -x "$LOADGEN" ] || die "load generator $LOADGEN does not exist"
@@ -243,6 +250,15 @@ read_bytes() {
     echo "$(cat "/sys/class/net/$IFACE/statistics/rx_bytes") $(cat "/sys/class/net/$IFACE/statistics/tx_bytes")"
 }
 
+# data_mb prints the data on IFACE (received and sent) in MB since the
+# read_bytes result $1.
+data_mb() {
+    # shellcheck disable=SC2086
+    set -- $1 $(read_bytes)
+    awk -v rx0="$1" -v tx0="$2" -v rx1="$3" -v tx1="$4" \
+        'BEGIN { printf "%d", (rx1-rx0+tx1-tx0)/1000000 }'
+}
+
 # rate_kbps prints the download and the upload rate in kbit/s between two
 # read_bytes results.
 rate_kbps() {
@@ -282,6 +298,7 @@ measure_load() {
 # --- Session ---------------------------------------------------------------
 
 log "Output directory: $OUTDIR"
+DATA0=$(read_bytes)
 "$CAKE_PC" up "$IFACE" >/dev/null
 cp "$CONFIG" "$OUTDIR/config.yaml"
 for vname in "${!VARIANT_CONFIG[@]}"; do
@@ -362,9 +379,21 @@ grep -qw both <<< "$MODES" && n_both=$((ROUNDS * n_policies))
 log "Start of $total blocks, approximately $(( (total * (IDLE_S + BLOCK_S + 10) + n_both * WARMUP_S) / 60 )) minutes"
 
 block=0
+max_block_mb=0
+limit_hit=0
 for round in $(seq 1 "$ROUNDS"); do
     for mode in $MODES; do
         for policy in $POLICIES; do
+            if [ "$DATA_LIMIT_MB" -gt 0 ]; then
+                used=$(data_mb "$DATA0")
+                if [ $((used + max_block_mb)) -gt "$DATA_LIMIT_MB" ]; then
+                    log "Data limit: $used MB used, the next block can use $max_block_mb MB, the limit is $DATA_LIMIT_MB MB. Stop."
+                    echo "data_limit: stopped after $block blocks, $used MB" >> "$SESSION"
+                    limit_hit=1
+                    break 3
+                fi
+            fi
+            block_data0=$(read_bytes)
             block=$((block + 1))
             name=$(printf '%02d-%s-%s' "$block" "$mode" "$policy")
             rec="$OUTDIR/$name.jsonl.gz"
@@ -447,6 +476,9 @@ for round in $(seq 1 "$ROUNDS"); do
                 # the rate that it needs.
             fi
             end=$(date +%s)
+            block_mb=$(data_mb "$block_data0")
+            [ "$block_mb" -gt "$max_block_mb" ] && max_block_mb=$block_mb
+            log "    data: $block_mb MB in the block, $(data_mb "$DATA0") MB in the session"
 
             printf '%d\t%d\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n' \
                 "$block" "$round" "$mode" "$policy" "$start" "$load_start" "$load_end" "$end" \
@@ -458,7 +490,12 @@ for round in $(seq 1 "$ROUNDS"); do
     done
 done
 
-log "All $total blocks are complete."
+if [ "$limit_hit" -eq 0 ]; then
+    log "All $total blocks are complete."
+else
+    log "$block of $total blocks are complete (data limit)."
+fi
+echo "data_mb: $(data_mb "$DATA0")" >> "$SESSION"
 if command -v jq >/dev/null; then
     echo
     "$SCRIPT_DIR/summarize-session.sh" "$OUTDIR" || true
