@@ -166,6 +166,17 @@ Fix: PR #106, option `stall_recovery_ms` (default off): if the delay is low agai
 
 Next: live A/B on 5G (bufferbloat test, `stall_recovery_ms` 0/500, DL threshold 36/22), then decide the default and whether the calibration proposes it. #106 waits for this test (no merge before).
 
+## Upload on 5G (2026-10-21)
+
+Live (6 bufferbloat tests, RESULTS.md): shaped UL 42-91 vs unshaped 99 Mbit/s. Two causes: (1) in the DL phase the cross delay cuts the idle UL (94.5 -> 20), learn_cross_delay was off in the cav1 config; (2) slow UL ramp: the increase factor is 0 when the UL delta >= avg_owd_delta_max_adjust_up_thr_ms (10), and the 5G UL delta under load is 15-20 ms (grant delay).
+
+Sim sweep (8 seeds, OWD, new scratch scenarios 5g-live*: 5g-stalls + coupling 10/12 + grant 14/6, thr 36):
+- learn_cross_delay: UL with DL load 7-19 % -> 70-92 % (5g-coupled, 5g-recorded-a/b, 5g-live), p95 +3 to +11 ms; starlink-like p95 +9, DL -4; no effect without coupling.
+- UL up threshold 20: UL-only 82 -> 96 % (5g-live-ul), p95 23 -> 40 ms; no effect with DL load. 30: about the same as 20.
+- Decision: no code change now. The calibration already proposes learn_cross_delay (cross p50 > 10 ms). Live check on the day pass: variants lcd and lcd + UL up 20. Then decide: default on with OWD (like stall_recovery_ms) and/or calibration proposes the UL up threshold from the grant delay.
+
+Tooling for the day pass: PR #107 (scripts/openwrt-vm-session.sh: record-session.sh in the VM, no sudo; -L MB data limit).
+
 ## Lessons from steps 1 and 2
 
 1. **The latency under load is high because of the default thresholds.** With steady load, autorate keeps 40 to 65 ms of excess RTT. The threshold is 30 ms OWD, but the OWD is RTT/2. Thus, the RTT can increase by 60 ms before a cut. To get a low latency, we must fix F4 and then tune the thresholds.
