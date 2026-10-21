@@ -70,7 +70,7 @@ type dirState struct {
 	paused            bool      // true: Core does not change the shaper rate
 
 	// Stall recovery (StallRecoveryMs)
-	achievedHist []achievedSample // achieved rates of the last StallRecoveryMs
+	achievedHist []achievedSample // achieved rates of the last 2 × StallRecoveryMs
 	stallStart   time.Time        // first decrease of the bufferbloat episode, or zero
 	stallRefKbps float64          // rate before the episode
 	recoveredAt  time.Time        // time of the last recovery
@@ -582,13 +582,14 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 			return
 		}
 		if c.cfg.StallRecoveryMs > 0 && !ds.bbDetected && ds.stallStart.IsZero() {
-			ref := ds.shaperRateKbps
+			// A recovery needs a measured rate before the episode. Below
+			// the minimum rate, the achieved rate is not a measurement of
+			// the capacity.
 			window := time.Duration(c.cfg.StallRecoveryMs) * time.Millisecond
-			if peak := ds.peakAchieved(now, window); peak > float64(dc.MinRateKbps) && peak < ref {
-				ref = peak
+			if peak := ds.peakAchieved(now, window); peak > float64(dc.MinRateKbps) {
+				ds.stallStart = now
+				ds.stallRefKbps = math.Min(peak, ds.shaperRateKbps)
 			}
-			ds.stallStart = now
-			ds.stallRefKbps = ref
 		}
 		ds.bbDetected = true
 		ds.lastBBTime = now
@@ -765,7 +766,8 @@ func clamp(v, min, max float64) float64 {
 	return v
 }
 
-// addAchieved keeps the achieved rates of the last period. It ignores a
+// addAchieved keeps the achieved rates of the last two periods: a ping
+// that comes after a newer sample can need the older samples. It ignores a
 // sample from before the last recovery: the rate and ping channels can
 // deliver it late, and it shows the capacity before the recovery.
 func (ds *dirState) addAchieved(at time.Time, kbps float64, period time.Duration) {
@@ -774,7 +776,7 @@ func (ds *dirState) addAchieved(at time.Time, kbps float64, period time.Duration
 	}
 	ds.achievedHist = append(ds.achievedHist, achievedSample{at, kbps})
 	n := 0
-	for n < len(ds.achievedHist) && at.Sub(ds.achievedHist[n].at) > period {
+	for n < len(ds.achievedHist) && at.Sub(ds.achievedHist[n].at) > 2*period {
 		n++
 	}
 	ds.achievedHist = ds.achievedHist[n:]

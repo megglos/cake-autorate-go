@@ -2052,3 +2052,63 @@ func TestProcessDelay_StallRecoveryIgnoresNewerSample(t *testing.T) {
 		t.Errorf("rate before the episode %.0f, want the achieved rate before it (approximately %.0f): the newer sample must not count", c.dl.stallRefKbps, 0.3*rate)
 	}
 }
+
+// A second episode before the first throughput sample after a recovery has
+// no measured rate: no recovery. Also no recovery when the achieved rate
+// is below the minimum rate.
+func TestProcessDelay_StallRecoveryNeedsMeasuredRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	ping := func(i int, dlMs float64) {
+		c.HandlePing(owdPing("1.1.1.1", start.Add(time.Duration(i)*50*time.Millisecond), 10, dlMs))
+	}
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.95 })
+	for i := 20; i < 24; i++ {
+		ping(i, 110)
+	}
+	for i := 24; i < 30; i++ {
+		ping(i, 10)
+	}
+	if c.dl.recoveredAt.IsZero() {
+		t.Fatal("no recovery after the first stall")
+	}
+	// No throughput sample after the recovery.
+	for i := 30; i < 34; i++ {
+		ping(i, 110)
+	}
+	if !c.dl.stallStart.IsZero() {
+		t.Errorf("episode without a throughput sample after the recovery, want no recovery")
+	}
+
+	// The achieved rate is below the minimum rate (1000 kbps).
+	c, _ = newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.02 })
+	for i := 20; i < 24; i++ {
+		ping(i, 110)
+	}
+	if !c.dl.stallStart.IsZero() {
+		t.Errorf("episode with an achieved rate below the minimum, want no recovery")
+	}
+}
+
+// A ping that comes after a newer throughput sample must see the peak near
+// the old end of its window.
+func TestProcessDelay_StallRecoveryKeepsOlderSamples(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	start := time.Now()
+	ms := func(v int) time.Time { return start.Add(time.Duration(v) * time.Millisecond) }
+	c.HandleRate(RateStats{DlRateKbps: 40000, Timestamp: ms(600)})
+	c.HandleRate(RateStats{DlRateKbps: 12000, Timestamp: ms(800)})
+	c.HandleRate(RateStats{DlRateKbps: 12000, Timestamp: ms(1000)})
+	c.HandleRate(RateStats{DlRateKbps: 12000, Timestamp: ms(1200)})
+	if peak := c.dl.peakAchieved(ms(1090), 500*time.Millisecond); peak != 40000 {
+		t.Errorf("peak %.0f for a ping at 1090 ms, want 40000 (the sample at 600 ms)", peak)
+	}
+}
