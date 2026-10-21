@@ -289,3 +289,24 @@ First run (`recordings/20261012-0834-emu-upstream`, 2 rounds, GRO still on: see 
 | both, DL / UL | 15–17 / 56–57 / 380–448 ms, 67–68 / 78 % | 21–22 / 63 / 475–505 ms, 69–70 / 81–82 % | 21–23 / 85–89 / 251–425 ms, 75–78 / 75–78 % |
 
 Simulator for F1/F2 with the option (issues #30/#31): latency-spike minimum DL rate 42 → 58 % (`icmp`), 8 → 73 % (`icmp-timestamp`); capacity-drop no change (25 %).
+
+## 5G live test of stall_recovery_ms (2026-10-21, PR #106)
+
+Setup: cav1 on the 5G modem (Telekom mobile, 80.187.87.150), host on Wi-Fi. Build of PR #106 (d48b040), calibration of 2026-10-18 (DL 34/130/245, UL 19/94.5/110, thresholds 36 ms, icmp-timestamp). LuCI bufferbloat test (shaped), runs in the order A1 B1 C1 A2 B2 C2. A: stall_recovery_ms 0, DL thr 36. B: 500, 36. C: 500, 22. Unshaped (A1): DL 206 (p95 107, B), UL 99 (p95 95, C), both 188/77.
+
+| Run | DL | UL | both | DL p95 (DL phase) | deep DL episodes | recoveries |
+|---|---|---|---|---|---|---|
+| A1 | 165 | 42 | 101/63 | 50.6 | 0 | - |
+| B1 | 105 | 91 | 99/49 | 17.6 | 2 | 7 |
+| C1 | 123 | 60 | 116/56 | 13.7 | 2 | 6 |
+| A2 | 162 | 51 | 158/49 | 14.7 | 0 | - |
+| B2 | 142 | 54 | 131/58 | 32.5 | 3 | 3 |
+| C2 | 142 | 59 | 135/71 | 18.7 | 1 | 3 |
+
+All runs grade A. Recordings: session scratchpad `5grun/rec-*.jsonl.gz` (not kept).
+
+- The cell changes more than the option: the A runs had no deep episode (no stall) today, so the throughput per run does not show the effect.
+- Time from a deep episode (< 35 % of the rate) back to 60 % of the rate before it: with the option 0.2-0.5 s (one 2.9 s, 8 episodes); without it on 2026-10-18: 3.3-16.2 s (median ~5 s, 8 episodes).
+- 19 recoveries: 15 kept the rate for 1.5 s or more, 4 got a new decrease in 1.5 s (21 %).
+- Delay: no increase seen (DL p95 in the DL phase 13.7-32.5 ms with the option, 14.7-50.6 ms without).
+- Upload (separate problem): in the DL phase, the cross delay cuts the UL rate (A1: 94.5 -> 20 Mbit/s with UL idle), and the UL increase is slow because the UL delta under load (15-20 ms, grant delay) is above avg_owd_delta_max_adjust_up_thr_ms (10): the increase factor is then 1.0. Shaped UL 42-91 vs unshaped 99.
