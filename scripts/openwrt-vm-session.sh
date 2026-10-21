@@ -25,7 +25,7 @@
 #   scripts/openwrt-vm-session.sh stop NAME
 #       stop the session (record-session.sh removes its CAKE setup)
 #
-# Only one session can run in the VM at a time (a lock in the VM).
+# Only one session can run in the VM at a time (a lock in /tmp of the VM).
 #   scripts/openwrt-vm-session.sh fetch NAME
 #       copy the output of the session to recordings/vm-NAME
 #
@@ -44,6 +44,8 @@ REPO_DIR=$(dirname "$SCRIPT_DIR")
 VM="$SCRIPT_DIR/openwrt-vm.sh"
 UPSTREAM_DIR="${UPSTREAM_DIR:-$REPO_DIR/../cake-autorate}"
 VM_DIR=/root/cav
+# The lock is in /tmp (RAM): a reboot of the VM removes it.
+LOCK=/tmp/cav-session.lock
 IFACE=eth1
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -82,11 +84,13 @@ cmd_start() {
 	vm "test ! -e $VM_DIR/out/$name" || die "session $name exists in the VM"
 	# Only one session at a time: all sessions use the CAKE setup of eth1.
 	# The lock (mkdir is atomic) stays until the services run again.
-	vm "mkdir $VM_DIR/lock 2>/dev/null && echo $name > $VM_DIR/lock/name" ||
-		die "a session runs in the VM ($(vm "cat $VM_DIR/lock/name 2>/dev/null"))"
-	trap 'vm "rm -rf $VM_DIR/lock" || true' EXIT
+	vm "mkdir $LOCK 2>/dev/null && echo $name > $LOCK/name" ||
+		die "a session runs in the VM ($(vm "cat $LOCK/name 2>/dev/null"))"
+	trap 'vm "rm -rf $LOCK" || true' EXIT
 	# Copy the config files of -c, -A and -U, and change the paths. Each
-	# file gets its own number: two files can have the same name.
+	# file gets a name from the session name and a number: two files can
+	# have the same name, and the remote shell gets no file names from the
+	# user.
 	while [ $# -gt 0 ]; do
 		opt=$1
 		case $opt in
@@ -94,7 +98,7 @@ cmd_start() {
 			-c)
 				val=${2:?-c needs a file}
 				n=$((n + 1))
-				dest="$VM_DIR/conf/$name-$n-$(basename "$val")"
+				dest="$VM_DIR/conf/$name-$n.conf"
 				put "$val" "$dest"
 				args+=(-c "$dest")
 				shift 2 ;;
@@ -102,7 +106,7 @@ cmd_start() {
 				val=${2:?$opt needs NAME=FILE}
 				[[ $val != *,* ]] || die "$opt: a different binary is not supported in the VM"
 				n=$((n + 1))
-				dest="$VM_DIR/conf/$name-$n-$(basename "${val#*=}")"
+				dest="$VM_DIR/conf/$name-$n.conf"
 				put "${val#*=}" "$dest"
 				args+=("$opt" "${val%%=*}=$dest")
 				shift 2 ;;
@@ -111,17 +115,18 @@ cmd_start() {
 				shift ;;
 		esac
 	done
-	local q
-	q=$(printf '%q ' "${args[@]}")
+	# The session runs a script file in the VM. Thus the arguments go
+	# through one shell only (printf %q for bash), not through ssh.
 	# The services must not change the CAKE setup of the session. The
-	# session starts them again at the end, also after an error.
+	# script starts them again at the end, also after an error.
+	printf '%s\n' "cd $VM_DIR" \
+		"UPSTREAM_DIR=$VM_DIR/upstream scripts/record-session.sh -i $IFACE -x /usr/sbin/cake-autorate-go -o out/$name $(printf '%q ' "${args[@]}")" \
+		"service sqm start; service cake-autorate start; rm -rf $LOCK" |
+		vm "cat > $VM_DIR/out/$name.sh"
 	vm "cd $VM_DIR && service cake-autorate stop; service sqm stop; \
-		setsid bash -c 'UPSTREAM_DIR=$VM_DIR/upstream scripts/record-session.sh \
-		-i $IFACE -x /usr/sbin/cake-autorate-go -o out/$name $q; \
-		service sqm start; service cake-autorate start; rm -rf $VM_DIR/lock' \
-		> out/$name.log 2>&1 < /dev/null & \
+		setsid bash out/$name.sh > out/$name.log 2>&1 < /dev/null & \
 		echo \$! > out/$name.pid" || {
-		vm "rm -rf $VM_DIR/lock; service sqm start; service cake-autorate start" || true
+		vm "rm -rf $LOCK; service sqm start; service cake-autorate start" || true
 		die "the start of the session failed"
 	}
 	# The session shell removes the lock at its end.
