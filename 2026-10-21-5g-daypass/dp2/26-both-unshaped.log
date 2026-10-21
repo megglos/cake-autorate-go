@@ -1,0 +1,27 @@
+2026/10/21 13:07:50.927502 [INFO] cake-autorate-go 1.0.0-alpha.1-386-g4e997cb starting (1 link(s))
+2026/10/21 13:07:50.927763 [INFO] recording events to out/dp2/26-both-unshaped.jsonl.gz
+2026/10/21 13:07:50.927956 [INFO] [wan] controller started in RUNNING state
+2026/10/21 13:07:50.927962 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 13:07:50.927972 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 13:08:54.928586 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/21 13:08:54.928601 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 5/60)
+2026/10/21 13:08:54.928602 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/21 13:08:54.928604 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/21 13:08:54.928605 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 4/60)
+2026/10/21 13:08:54.928606 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/21 13:08:54.928875 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 13:09:00.928416 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/21 13:09:00.928435 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 4/60)
+2026/10/21 13:09:00.928437 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/21 13:09:00.928438 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 4/60)
+2026/10/21 13:09:00.928439 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/21 13:09:00.928440 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/21 13:09:00.928600 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 13:09:11.071191 [INFO] received signal interrupt, shutting down
+2026/10/21 13:09:11.071297 [INFO] [wan] controller stopped
+2026/10/21 13:09:11.071317 [INFO] cake-autorate-go stopped
+               curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+[load-gen] Done.

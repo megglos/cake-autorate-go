@@ -1,0 +1,25 @@
+[session] [12:25:17] Output directory: out/dp1
+[session] [12:25:17] Saturation check (CAKE unlimited, approximately 2 minutes)
+[session] [12:25:37]   dl, 4 workers: 169 Mbit/s
+[session] [12:25:57]   dl, 8 workers: 234 Mbit/s
+[session] [12:26:17]   dl, 16 workers: 248 Mbit/s
+[session] [12:26:37]   ul, 4 workers: 96 Mbit/s
+[session] [12:26:57]   ul, 8 workers: 94 Mbit/s
+[session] [12:27:18]   ul, 16 workers: 94 Mbit/s
+[session] [12:27:18] Workers: 8, capacity (dl,ul kbit/s): 248067,96781
+[session] [12:27:18] Start of 30 blocks, approximately 42 minutes
+[session] [12:27:18] Block 1/30: round 1, dl, unshaped
+    [load-gen] [12:28:33] 60/60s elapsed, 8 workers active, eth1: dl 235.0 Mbit/s, ul 1.5 Mbit/s
+[session] [12:28:38]     data: 1840 MB in the block, 4111 MB in the session
+[session] [12:28:38] Block 2/30: round 1, dl, autorate
+    [load-gen] [12:29:53] 60/60s elapsed, 8 workers active, eth1: dl 156.2 Mbit/s, ul 3.4 Mbit/s
+[session] [12:29:58]     data: 991 MB in the block, 5103 MB in the session
+[session] [12:29:58] Block 3/30: round 1, dl, autorate-lcd
+    [load-gen] [12:31:13] 60/60s elapsed, 8 workers active, eth1: dl 81.9 Mbit/s, ul 2.0 Mbit/s
+[session] [12:31:18]     data: 885 MB in the block, 5988 MB in the session
+[session] [12:31:18] Block 4/30: round 1, dl, autorate-lcdup20
+    [load-gen] [12:32:33] 60/60s elapsed, 8 workers active, eth1: dl 115.9 Mbit/s, ul 2.7 Mbit/s
+[session] [12:32:38]     data: 1047 MB in the block, 7036 MB in the session
+[session] [12:32:38] Block 5/30: round 1, dl, upstream-fts
+error: cake-autorate stopped. See out/dp1/05-dl-upstream-fts.upstream/
+[session] [12:32:53] CAKE is removed. Output: out/dp1

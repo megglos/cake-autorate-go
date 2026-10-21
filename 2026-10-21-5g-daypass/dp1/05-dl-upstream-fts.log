@@ -1,0 +1,8 @@
+2026/10/21 12:32:38.745123 [INFO] cake-autorate-go 1.0.0-alpha.1-386-g4e997cb starting (1 link(s))
+2026/10/21 12:32:38.745339 [INFO] recording events to out/dp1/05-dl-upstream-fts.jsonl.gz
+2026/10/21 12:32:38.745790 [INFO] [wan] controller started in RUNNING state
+2026/10/21 12:32:38.745796 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 12:32:38.745806 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 12:32:53.745141 [INFO] received signal interrupt, shutting down
+2026/10/21 12:32:53.745207 [INFO] [wan] controller stopped
+2026/10/21 12:32:53.745210 [INFO] cake-autorate-go stopped

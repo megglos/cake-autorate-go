@@ -1,0 +1,5 @@
+block	round	mode	policy	start	load_start	load_end	end	cake_dl_kbps	cake_ul_kbps	recording
+1	1	dl	unshaped	1792585638	1792585653	1792585713	1792585718	unlimited	unlimited	01-dl-unshaped.jsonl.gz
+2	1	dl	autorate	1792585718	1792585733	1792585793	1792585798	autorate	autorate	02-dl-autorate.jsonl.gz
+3	1	dl	autorate-lcd	1792585798	1792585813	1792585873	1792585878	autorate	autorate	03-dl-autorate-lcd.jsonl.gz
+4	1	dl	autorate-lcdup20	1792585878	1792585893	1792585953	1792585958	autorate	autorate	04-dl-autorate-lcdup20.jsonl.gz

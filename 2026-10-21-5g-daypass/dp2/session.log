@@ -1,0 +1,95 @@
+[session] [12:34:20] Output directory: out/dp2
+[session] [12:34:20] Workers: 8, capacity (dl,ul kbit/s): unknown
+[session] [12:34:20] Start of 30 blocks, approximately 42 minutes
+[session] [12:34:20] Block 1/30: round 1, dl, unshaped
+    [load-gen] [12:35:35] 60/60s elapsed, 8 workers active, eth1: dl 219.2 Mbit/s, ul 1.5 Mbit/s
+[session] [12:35:40]     data: 1719 MB in the block, 1719 MB in the session
+[session] [12:35:40] Block 2/30: round 1, dl, autorate
+    [load-gen] [12:36:55] 60/60s elapsed, 8 workers active, eth1: dl 57.9 Mbit/s, ul 1.6 Mbit/s
+[session] [12:37:01]     data: 741 MB in the block, 2461 MB in the session
+[session] [12:37:01] Block 3/30: round 1, dl, autorate-lcd
+    [load-gen] [12:38:16] 60/60s elapsed, 8 workers active, eth1: dl 79.8 Mbit/s, ul 2.0 Mbit/s
+[session] [12:38:21]     data: 757 MB in the block, 3218 MB in the session
+[session] [12:38:21] Block 4/30: round 1, dl, autorate-lcdup20
+    [load-gen] [12:39:36] 60/60s elapsed, 8 workers active, eth1: dl 63.7 Mbit/s, ul 1.8 Mbit/s
+[session] [12:39:41]     data: 614 MB in the block, 3832 MB in the session
+[session] [12:39:41] Block 5/30: round 1, dl, upstream-fts
+    [load-gen] [12:40:56] 60/60s elapsed, 8 workers active, eth1: dl 68.1 Mbit/s, ul 1.9 Mbit/s
+[session] [12:41:02]     data: 850 MB in the block, 4683 MB in the session
+[session] [12:41:02] Block 6/30: round 1, ul, unshaped
+    [load-gen] [12:42:17] 60/60s elapsed, 8 workers active, eth1: dl 1.6 Mbit/s, ul 86.8 Mbit/s
+[session] [12:42:22]     data: 689 MB in the block, 5373 MB in the session
+[session] [12:42:22] Block 7/30: round 1, ul, autorate
+    [load-gen] [12:43:37] 60/60s elapsed, 8 workers active, eth1: dl 2.1 Mbit/s, ul 94.4 Mbit/s
+[session] [12:43:42]     data: 658 MB in the block, 6031 MB in the session
+[session] [12:43:42] Block 8/30: round 1, ul, autorate-lcd
+    [load-gen] [12:44:58] 60/60s elapsed, 8 workers active, eth1: dl 1.7 Mbit/s, ul 78.1 Mbit/s
+[session] [12:45:03]     data: 574 MB in the block, 6606 MB in the session
+[session] [12:45:03] Block 9/30: round 1, ul, autorate-lcdup20
+    [load-gen] [12:46:18] 60/60s elapsed, 8 workers active, eth1: dl 1.9 Mbit/s, ul 88.8 Mbit/s
+[session] [12:46:23]     data: 665 MB in the block, 7272 MB in the session
+[session] [12:46:23] Block 10/30: round 1, ul, upstream-fts
+    [load-gen] [12:47:38] 60/60s elapsed, 8 workers active, eth1: dl 1.8 Mbit/s, ul 83.3 Mbit/s
+[session] [12:47:44]     data: 638 MB in the block, 7911 MB in the session
+[session] [12:47:44] Block 11/30: round 1, both, unshaped
+    [load-gen] [12:48:59] 60/60s elapsed, 16 workers active, eth1: dl 104.5 Mbit/s, ul 20.0 Mbit/s
+[session] [12:49:04]     data: 1634 MB in the block, 9545 MB in the session
+[session] [12:49:04] Block 12/30: round 1, both, autorate
+    [load-gen] [12:50:20] 60/60s elapsed, 16 workers active, eth1: dl 105.3 Mbit/s, ul 69.2 Mbit/s
+[session] [12:50:25]     data: 1325 MB in the block, 10870 MB in the session
+[session] [12:50:25] Block 13/30: round 1, both, autorate-lcd
+    [load-gen] [12:51:40] 60/60s elapsed, 16 workers active, eth1: dl 116.8 Mbit/s, ul 72.0 Mbit/s
+[session] [12:51:45]     data: 1447 MB in the block, 12318 MB in the session
+[session] [12:51:45] Block 14/30: round 1, both, autorate-lcdup20
+    [load-gen] [12:53:00] 60/60s elapsed, 16 workers active, eth1: dl 89.6 Mbit/s, ul 87.3 Mbit/s
+[session] [12:53:05]     data: 1443 MB in the block, 13761 MB in the session
+[session] [12:53:05] Block 15/30: round 1, both, upstream-fts
+    [load-gen] [12:54:20] 60/60s elapsed, 16 workers active, eth1: dl 187.6 Mbit/s, ul 87.0 Mbit/s
+[session] [12:54:27]     data: 1867 MB in the block, 15628 MB in the session
+[session] [12:54:27] Block 16/30: round 2, dl, unshaped
+    [load-gen] [12:55:42] 60/60s elapsed, 8 workers active, eth1: dl 188.5 Mbit/s, ul 1.2 Mbit/s
+[session] [12:55:47]     data: 1416 MB in the block, 17045 MB in the session
+[session] [12:55:47] Block 17/30: round 2, dl, autorate
+    [load-gen] [12:57:02] 60/60s elapsed, 8 workers active, eth1: dl 176.0 Mbit/s, ul 3.8 Mbit/s
+[session] [12:57:07]     data: 1002 MB in the block, 18047 MB in the session
+[session] [12:57:07] Block 18/30: round 2, dl, autorate-lcd
+    [load-gen] [12:58:22] 60/60s elapsed, 8 workers active, eth1: dl 118.0 Mbit/s, ul 2.8 Mbit/s
+[session] [12:58:27]     data: 932 MB in the block, 18979 MB in the session
+[session] [12:58:27] Block 19/30: round 2, dl, autorate-lcdup20
+    [load-gen] [12:59:42] 60/60s elapsed, 8 workers active, eth1: dl 106.6 Mbit/s, ul 2.4 Mbit/s
+[session] [12:59:47]     data: 822 MB in the block, 19802 MB in the session
+[session] [12:59:47] Block 20/30: round 2, dl, upstream-fts
+    [load-gen] [13:01:02] 60/60s elapsed, 8 workers active, eth1: dl 118.9 Mbit/s, ul 2.6 Mbit/s
+[session] [13:01:08]     data: 1066 MB in the block, 20868 MB in the session
+[session] [13:01:08] Block 21/30: round 2, ul, unshaped
+    [load-gen] [13:02:23] 60/60s elapsed, 8 workers active, eth1: dl 1.7 Mbit/s, ul 92.0 Mbit/s
+[session] [13:02:28]     data: 701 MB in the block, 21570 MB in the session
+[session] [13:02:28] Block 22/30: round 2, ul, autorate
+    [load-gen] [13:03:44] 60/60s elapsed, 8 workers active, eth1: dl 1.9 Mbit/s, ul 90.1 Mbit/s
+[session] [13:03:49]     data: 667 MB in the block, 22238 MB in the session
+[session] [13:03:49] Block 23/30: round 2, ul, autorate-lcd
+    [load-gen] [13:05:04] 60/60s elapsed, 8 workers active, eth1: dl 1.6 Mbit/s, ul 72.3 Mbit/s
+[session] [13:05:09]     data: 644 MB in the block, 22883 MB in the session
+[session] [13:05:09] Block 24/30: round 2, ul, autorate-lcdup20
+    [load-gen] [13:06:24] 60/60s elapsed, 8 workers active, eth1: dl 1.8 Mbit/s, ul 82.1 Mbit/s
+[session] [13:06:29]     data: 580 MB in the block, 23463 MB in the session
+[session] [13:06:29] Block 25/30: round 2, ul, upstream-fts
+    [load-gen] [13:07:44] 60/60s elapsed, 8 workers active, eth1: dl 1.8 Mbit/s, ul 83.3 Mbit/s
+[session] [13:07:50]     data: 650 MB in the block, 24113 MB in the session
+[session] [13:07:50] Block 26/30: round 2, both, unshaped
+    [load-gen] [13:09:06] 60/60s elapsed, 16 workers active, eth1: dl 164.0 Mbit/s, ul 40.0 Mbit/s
+[session] [13:09:11]     data: 1498 MB in the block, 25612 MB in the session
+[session] [13:09:11] Block 27/30: round 2, both, autorate
+    [load-gen] [13:10:26] 60/60s elapsed, 16 workers active, eth1: dl 101.2 Mbit/s, ul 47.9 Mbit/s
+[session] [13:10:31]     data: 1193 MB in the block, 26806 MB in the session
+[session] [13:10:31] Block 28/30: round 2, both, autorate-lcd
+    [load-gen] [13:11:46] 60/60s elapsed, 16 workers active, eth1: dl 113.8 Mbit/s, ul 78.7 Mbit/s
+[session] [13:11:51]     data: 1487 MB in the block, 28293 MB in the session
+[session] [13:11:51] Block 29/30: round 2, both, autorate-lcdup20
+    [load-gen] [13:13:06] 60/60s elapsed, 16 workers active, eth1: dl 112.8 Mbit/s, ul 71.8 Mbit/s
+[session] [13:13:11]     data: 1392 MB in the block, 29685 MB in the session
+[session] [13:13:11] Block 30/30: round 2, both, upstream-fts
+    [load-gen] [13:14:26] 60/60s elapsed, 16 workers active, eth1: dl 92.1 Mbit/s, ul 79.0 Mbit/s
+[session] [13:14:33]     data: 1313 MB in the block, 30999 MB in the session
+[session] [13:14:33] All 30 blocks are complete.
+[session] [13:14:33] CAKE is removed. Output: out/dp2

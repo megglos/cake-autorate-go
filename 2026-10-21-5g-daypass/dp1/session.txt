@@ -1,0 +1,24 @@
+date: 2026-10-21T12:25:17+00:00
+interface: eth1
+ifb: ifb4eth1
+config: /root/cav/conf/dp1-1.conf
+binary: cake-autorate-go 1.0.0-alpha.1-386-g4e997cb
+git: unknown
+kernel: 6.12.94
+link: -1 Mbit/s, mtu 1500
+route: 1.1.1.1 via 10.77.0.1 dev eth1 src 10.77.0.2 uid 0 
+modes: dl ul both
+policies: unshaped autorate autorate-lcd autorate-lcdup20 upstream-fts
+variant lcdup20: config /root/cav/conf/dp1-3.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go 1.0.0-alpha.1-386-g4e997cb)
+variant lcd: config /root/cav/conf/dp1-2.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go 1.0.0-alpha.1-386-g4e997cb)
+rounds: 2
+block: idle 15s, load 60s, download warm-up in the mode both 0s
+saturation check (kbit/s, last 10 s of 20 s):
+  dl workers=4 rate=169384
+  dl workers=8 rate=234698
+  dl workers=16 rate=248067
+  ul workers=4 rate=96781
+  ul workers=8 rate=94079
+  ul workers=16 rate=94611
+workers: 8
+capacity_kbps: 248067,96781
