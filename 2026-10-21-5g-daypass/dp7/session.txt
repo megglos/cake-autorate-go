@@ -1,0 +1,19 @@
+date: 2026-10-21T20:40:31+00:00
+interface: eth1
+ifb: ifb4eth1
+config: /root/cav/conf/dp7-1.conf
+binary: cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc
+git: unknown
+kernel: 6.12.94
+link: -1 Mbit/s, mtu 1500
+route: 1.1.1.1 via 10.77.0.1 dev eth1 src 10.77.0.2 uid 0 
+modes: both
+policies: unshaped autorate autorate-rod autorate-incrod autorate-rodlcd upstream-fts
+variant rod: config /root/cav/conf/dp7-2.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc)
+variant rodlcd: config /root/cav/conf/dp7-4.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc)
+variant incrod: config /root/cav/conf/dp7-3.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc)
+rounds: 12
+block: idle 15s, load 120s, download warm-up in the mode both 0s
+workers: 8
+capacity_kbps: unknown
+data_mb: 335493

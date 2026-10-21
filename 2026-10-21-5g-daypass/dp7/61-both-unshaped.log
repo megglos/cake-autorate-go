@@ -1,0 +1,45 @@
+2026/10/21 23:00:56.752485 [INFO] cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc starting (1 link(s))
+2026/10/21 23:00:56.752737 [INFO] recording events to out/dp7/61-both-unshaped.jsonl.gz
+2026/10/21 23:00:56.752977 [INFO] [wan] controller started in RUNNING state
+2026/10/21 23:00:56.752984 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 23:00:56.752998 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 23:03:16.899813 [INFO] received signal interrupt, shutting down
+2026/10/21 23:03:16.899876 [INFO] [wan] controller stopped
+2026/10/21 23:03:16.899881 [INFO] cake-autorate-go stopped
+1:11]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [23:01:11]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [23:01:11]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [23:01:11]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:01:11]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:01:11]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:01:11] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [23:01:11] Starting 8 download workers...
+[load-gen] [23:01:11] Starting 8 upload workers (25 MB for each upload)...
+[load-gen] [23:01:11] Load generation running for 120s...
+[load-gen] [23:01:11] Press Ctrl+C to stop early.
+
+[load-gen] [23:01:21] 10/120s elapsed, 16 workers active, eth1: dl 342.4 Mbit/s, ul 115.5 Mbit/s
+[load-gen] [23:01:31] 20/120s elapsed, 16 workers active, eth1: dl 362.3 Mbit/s, ul 52.8 Mbit/s
+[load-gen] [23:01:41] 30/120s elapsed, 16 workers active, eth1: dl 304.2 Mbit/s, ul 77.1 Mbit/s
+[load-gen] [23:01:51] 40/120s elapsed, 16 workers active, eth1: dl 337.1 Mbit/s, ul 63.2 Mbit/s
+[load-gen] [23:02:01] 50/120s elapsed, 16 workers active, eth1: dl 358.3 Mbit/s, ul 81.2 Mbit/s
+[load-gen] [23:02:11] 60/120s elapsed, 16 workers active, eth1: dl 366.2 Mbit/s, ul 72.1 Mbit/s
+[load-gen] [23:02:21] 70/120s elapsed, 16 workers active, eth1: dl 346.0 Mbit/s, ul 83.3 Mbit/s
+[load-gen] [23:02:31] 80/120s elapsed, 16 workers active, eth1: dl 363.8 Mbit/s, ul 62.3 Mbit/s
+[load-gen] [23:02:41] 90/120s elapsed, 16 workers active, eth1: dl 335.9 Mbit/s, ul 46.7 Mbit/s
+[load-gen] [23:02:51] 100/120s elapsed, 16 workers active, eth1: dl 350.7 Mbit/s, ul 48.4 Mbit/s
+[load-gen] [23:03:01] 110/120s elapsed, 16 workers active, eth1: dl 324.1 Mbit/s, ul 83.8 Mbit/s
+[load-gen] [23:03:11] 120/120s elapsed, 16 workers active, eth1: dl 370.4 Mbit/s, ul 50.4 Mbit/s
+[load-gen] [23:03:11] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+[load-gen] Done.

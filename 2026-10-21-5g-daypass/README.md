@@ -32,9 +32,13 @@ Policy names:
 - `rdr`: `repeat_decrease_on_rise: true`.
 - `rodlcd`: `rod` and `lcd`.
 - `inc`: `increase_to_delay_thr: true` (branch `feat/increase-to-threshold`,
-  build 1.0.0-alpha.1-395-g6e8dbca-inc; dp6 and dp7 use this build for all
-  policies).
+  build 1.0.0-alpha.1-395-g6e8dbca-inc; dp6 and the sessions after it use
+  this build for all policies).
 - `incrod`: `inc` and `rod`.
+- `srm0`: `stall_recovery_ms: 0` (no stall recovery).
+- `rodsrm0`: `rod` and `srm0`.
+- `pi200`: `ping_interval_ms: 200`.
+- `base180`: download base rate 180000 kbit/s.
 - `upstream-fts`: the original cake-autorate.
 
 Saturation check (dp1): dl 169/234/248 Mbit/s with 4/8/16 workers, ul

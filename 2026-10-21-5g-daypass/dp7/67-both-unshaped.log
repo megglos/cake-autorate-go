@@ -1,0 +1,48 @@
+2026/10/21 23:14:59.348195 [INFO] cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc starting (1 link(s))
+2026/10/21 23:14:59.348445 [INFO] recording events to out/dp7/67-both-unshaped.jsonl.gz
+2026/10/21 23:14:59.348845 [INFO] [wan] controller started in RUNNING state
+2026/10/21 23:14:59.348850 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 23:14:59.348878 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 23:17:19.525875 [INFO] received signal interrupt, shutting down
+2026/10/21 23:17:19.525975 [INFO] [wan] controller stopped
+2026/10/21 23:17:19.525981 [INFO] cake-autorate-go stopped
+5:14]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [23:15:14]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [23:15:14]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [23:15:14]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:15:14]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:15:14]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [23:15:14] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [23:15:14] Starting 8 download workers...
+[load-gen] [23:15:14] Starting 8 upload workers (25 MB for each upload)...
+[load-gen] [23:15:14] Load generation running for 120s...
+[load-gen] [23:15:14] Press Ctrl+C to stop early.
+
+[load-gen] [23:15:24] 10/120s elapsed, 16 workers active, eth1: dl 346.0 Mbit/s, ul 106.2 Mbit/s
+[load-gen] [23:15:34] 20/120s elapsed, 16 workers active, eth1: dl 360.3 Mbit/s, ul 92.1 Mbit/s
+[load-gen] [23:15:44] 30/120s elapsed, 16 workers active, eth1: dl 372.9 Mbit/s, ul 73.6 Mbit/s
+[load-gen] [23:15:54] 40/120s elapsed, 16 workers active, eth1: dl 351.8 Mbit/s, ul 100.1 Mbit/s
+[load-gen] [23:16:04] 50/120s elapsed, 16 workers active, eth1: dl 322.7 Mbit/s, ul 58.8 Mbit/s
+[load-gen] [23:16:14] 60/120s elapsed, 16 workers active, eth1: dl 303.2 Mbit/s, ul 57.6 Mbit/s
+[load-gen] [23:16:24] 70/120s elapsed, 16 workers active, eth1: dl 286.9 Mbit/s, ul 77.9 Mbit/s
+[load-gen] [23:16:34] 80/120s elapsed, 16 workers active, eth1: dl 258.6 Mbit/s, ul 57.3 Mbit/s
+[load-gen] [23:16:44] 90/120s elapsed, 16 workers active, eth1: dl 255.9 Mbit/s, ul 57.8 Mbit/s
+[load-gen] [23:16:54] 100/120s elapsed, 16 workers active, eth1: dl 242.5 Mbit/s, ul 41.5 Mbit/s
+[load-gen] [23:17:04] 110/120s elapsed, 16 workers active, eth1: dl 241.4 Mbit/s, ul 73.7 Mbit/s
+[load-gen] [23:17:14] 120/120s elapsed, 16 workers active, eth1: dl 240.3 Mbit/s, ul 51.5 Mbit/s
+[load-gen] [23:17:14] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+[load-gen] Done.
