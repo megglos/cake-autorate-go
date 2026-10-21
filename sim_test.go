@@ -188,6 +188,11 @@ type simScenario struct {
 	// increases to the full value at 5 % upload use and then stays
 	// constant.
 	ulGrantMs, ulGrantJitterMs float64
+	// dlGrantMs is the mean download delay that the radio adds when the
+	// download is active. The download shaper cannot remove it. The TCP
+	// flows and the latency score get the mean, each ping also gets a
+	// random part (exponential distribution around the mean).
+	dlGrantMs float64
 
 	// reflectorTimeMs is the time in the reflector (ICMP timestamps only):
 	// the RTT contains it, the one-way delays do not.
@@ -362,8 +367,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		grantActive := math.Min(ulUse/0.05, 1)
 		couplingMs := (sc.ulCouplingMs+sc.ulCouplingJitterMs)*couplingActive +
 			(sc.ulGrantMs+sc.ulGrantJitterMs)*grantActive
-		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)
-		dl.step(t, simStepMs, base0, dlRev)
+		dlGrantMs := sc.dlGrantMs * math.Min(dlUse/0.2, 1)
+		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)+dlGrantMs
+		dl.step(t, simStepMs, base0+dlGrantMs, dlRev)
 		// The upload TCP flows also see the coupling delay on their
 		// forward path.
 		ul.step(t, simStepMs, base0+couplingMs, ulRev)
@@ -378,7 +384,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 			ulCap += ul.capacity(t) * simStepMs
 		}
 
-		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t), ul.bottleneckDelayMs(t)+couplingMs
+		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t)+dlGrantMs, ul.bottleneckDelayMs(t)+couplingMs
 		queueMs := dlQueueMs + ulQueueMs
 
 		if core != nil {
@@ -397,14 +403,17 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				// are different for each ping. Their means are in couplingMs.
 				// Draw a random number only if the scenario has the delay.
 				// Then the other scenarios keep the same random sequence.
-				var ulNoise float64
+				var ulNoise, dlNoise float64
+				if sc.dlGrantMs > 0 {
+					dlNoise = dlGrantMs * (rng.ExpFloat64() - 1)
+				}
 				if sc.ulCouplingJitterMs > 0 {
 					ulNoise = sc.ulCouplingJitterMs * (rng.ExpFloat64() - 1) * couplingActive
 				}
 				if sc.ulGrantJitterMs > 0 {
 					ulNoise += sc.ulGrantJitterMs * (rng.ExpFloat64() - 1) * grantActive
 				}
-				rtt := base + queueMs + jitter + ulNoise
+				rtt := base + queueMs + jitter + ulNoise + dlNoise
 				if owd {
 					rtt += sc.reflectorTimeMs
 				}
@@ -418,7 +427,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 					// timestamps have a resolution of 1 ms.
 					offset := 13.7*float64(i) - 40
 					ul := base/2 + ulQueueMs + jitter/2 + ulNoise + offset
-					dl := base/2 + dlQueueMs + jitter/2 - offset
+					dl := base/2 + dlQueueMs + jitter/2 + dlNoise - offset
 					result.OWD = true
 					result.UlOWD = time.Duration(math.Round(ul)) * time.Millisecond
 					result.DlOWD = time.Duration(math.Round(dl)) * time.Millisecond

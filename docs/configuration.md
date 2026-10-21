@@ -198,7 +198,18 @@ shaper_rate_adjust_down_load_low: 0.99          # Decrease to the base rate (whe
 shaper_rate_adjust_up_load_low: 1.01            # Increase to the base rate (when the rate is below the base rate)
 
 high_load_thr: 0.75    # Part of the current rate that is "high load" (0.0 to 1.0)
+
+# true: the increase is at its maximum up to avg_owd_delta_max_adjust_up_thr_ms
+# and decreases to zero at owd_delta_delay_thr_ms (as the original)
+increase_to_delay_thr: false
 ```
+
+At high load, the increase for each step is between the minimum and the maximum. The delay of the last ping sets it:
+
+- `increase_to_delay_thr: false` (default): the maximum at a delay of 0, zero at `avg_owd_delta_max_adjust_up_thr_ms` and above.
+- `increase_to_delay_thr: true`: the maximum up to `avg_owd_delta_max_adjust_up_thr_ms`, then less, and zero at the delay threshold (`owd_delta_delay_thr_ms`). The original cake-autorate uses this scale.
+
+On a link that adds a delay under load that the shaper cannot remove (for example, a 5G cell), the delay is often above `avg_owd_delta_max_adjust_up_thr_ms`. With the default, the rate then increases only slowly. See [5G links](#5g-links).
 
 ## EWMA parameters
 
@@ -335,7 +346,8 @@ learn_cross_delay: true
 - A lower upload threshold (20 ms) with `learn_cross_delay` gave the same upload throughput as 30 ms, with approximately 7 ms less upload delay (p95). Do not set the upload threshold below the grant delay: then the upload rate collapses.
 - The results change much from one test to the next (the 5G capacity changes). Make a test on your link before you change the defaults.
 - `stall_recovery_ms` (default 500, only with `icmp-timestamp`) is for short capacity stalls of the 5G link. In a stall, the achieved rate decreases, and with one-way delays each ping in the stall decreases the rate again from the achieved rate. On a 5G link (2026-10-18), most download episodes set the rate to the minimum, and the delay was low again after 200 to 300 ms. Then the rate needed 3 to 16 s to increase again. With the option (2026-10-21, same link): 0.2 to 0.5 s. 15 of 19 recoveries kept the rate, 4 got a new decrease in 1.5 s, and the bufferbloat test showed no higher delay. In the simulator, the download utilization on the 5G scenarios increased by 4 to 13 points, and the delay (p95) by 3 to 27 ms. Set 0 to disable it.
-- `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity. Without it: 87 to 88 %. The cost was approximately 2 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays. It has no effect when `refractory_on_decrease` is `true`. The tests on the 5G link used `refractory_on_decrease` and not this option. A test of `repeat_decrease_on_rise` on the 5G link is not done yet.
+- `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity. Without it: 87 to 88 %. The cost was approximately 2 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays. It has no effect when `refractory_on_decrease` is `true`. The tests on the 5G link used `refractory_on_decrease` and not this option. On the 5G link of 2026-10-21 (10 pairs of blocks in each mode), it gave no gain.
+- `increase_to_delay_thr` (see [Rate adjustment](#rate-adjustment)): on the 5G link of 2026-10-21, the download delay under load was 14 to 17 ms, also without a queue. With the default scale, the increase is zero at this delay. Live test (download load, 12 pairs of 120 s blocks, against the default): alone, +16 Mbit/s download (not significant), +1.7 ms delay (p50), and approximately 2 times more decreases. With `refractory_on_decrease`: +22 Mbit/s (approximately +19 %), +3.9 ms (p50). The original cake-autorate: +28 Mbit/s, +7 ms. Use it with `refractory_on_decrease`.
 
 ## Configuration reference
 
@@ -364,6 +376,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `alpha_baseline_decrease` | `0.9` | EWMA alpha when the baseline decreases |
 | `alpha_delta_ewma` | `0.095` | Not used. The original uses it to compare reflectors. Kept for config compatibility |
 | `high_load_thr` | `0.75` | High-load threshold (0.0 to 1.0) |
+| `increase_to_delay_thr` | `false` | At high load, increase at the maximum up to `avg_owd_delta_max_adjust_up_thr_ms`, and less up to the delay threshold (as the original). If `false`, the increase is zero at `avg_owd_delta_max_adjust_up_thr_ms`. See [Rate adjustment](#rate-adjustment) |
 | `monitor_interval_ms` | `200` | Time between two throughput samples (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Time after a bufferbloat decrease without a rate increase (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |

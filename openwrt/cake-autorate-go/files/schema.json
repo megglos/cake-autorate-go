@@ -13,6 +13,7 @@
 		"enable_sleep_function": "bool",
 		"global_ping_response_timeout_s": "float",
 		"high_load_thr": "float",
+		"increase_to_delay_thr": "bool",
 		"learn_cross_delay": "bool",
 		"log_file_max_size_kb": "int",
 		"log_file_path": "string",

@@ -426,6 +426,64 @@ func TestAdjustRateHighLoad_IncreasesRate(t *testing.T) {
 	}
 }
 
+// TestAdjustRateHighLoad_IncreaseToDelayThr checks the increase factor of
+// the two scales: the default (maximum at 0, zero at the up threshold) and
+// increase_to_delay_thr (maximum up to the up threshold, zero at the delay
+// threshold). The up threshold is 10 ms, the delay threshold 30 ms.
+func TestAdjustRateHighLoad_IncreaseToDelayThr(t *testing.T) {
+	cases := []struct {
+		on      bool
+		deltaMs float64
+		factor  float64
+	}{
+		{false, 0, 1},
+		{false, 5, 0.5},
+		{false, 10, 0},
+		{false, 20, 0},
+		{true, 0, 1},
+		{true, 10, 1},
+		{true, 20, 0.5},
+		{true, 30, 0},
+		{true, 40, 0},
+	}
+	for _, tc := range cases {
+		c, _ := newTestCore(t)
+		c.cfg.IncreaseToDelayThr = tc.on
+		c.dl.shaperRateKbps = 20000
+		c.adjustRateHighLoad(DL, tc.deltaMs*1000, 30000)
+		minAdj, maxAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh, c.cfg.ShaperRateMaxAdjustUpLoadHigh
+		want := 20000 * (minAdj + tc.factor*(maxAdj-minAdj))
+		if math.Abs(c.dl.shaperRateKbps-want) > 0.01 {
+			t.Errorf("on=%v delta=%.0f ms: rate %.2f, want %.2f (factor %.1f)", tc.on, tc.deltaMs, c.dl.shaperRateKbps, want, tc.factor)
+		}
+	}
+}
+
+// TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr checks
+// increase_to_delay_thr when the up threshold (10 ms) is not below the
+// delay threshold: the maximum increase below the delay threshold (no
+// division by zero), no increase at and above it.
+func TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr(t *testing.T) {
+	cases := []struct {
+		thrMs, deltaMs float64
+		factor         float64
+	}{
+		{10, 5, 1}, {10, 10, 0}, {10, 15, 0},
+		{8, 5, 1}, {8, 8, 0}, {8, 12, 0},
+	}
+	for _, tc := range cases {
+		c, _ := newTestCore(t)
+		c.cfg.IncreaseToDelayThr = true
+		c.dl.shaperRateKbps = 20000
+		c.adjustRateHighLoad(DL, tc.deltaMs*1000, tc.thrMs*1000)
+		minAdj, maxAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh, c.cfg.ShaperRateMaxAdjustUpLoadHigh
+		want := 20000 * (minAdj + tc.factor*(maxAdj-minAdj))
+		if math.Abs(c.dl.shaperRateKbps-want) > 0.01 {
+			t.Errorf("thr=%.0f delta=%.0f ms: rate %.2f, want %.2f", tc.thrMs, tc.deltaMs, c.dl.shaperRateKbps, want)
+		}
+	}
+}
+
 func TestAdjustRateHighLoad_ClampsToMax(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)

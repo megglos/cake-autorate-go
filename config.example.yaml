@@ -128,6 +128,7 @@ bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases 
 refractory_on_decrease: false             # true: also only one rate decrease in each refractory period
 repeat_decrease_on_rise: false            # true: a second decrease in the refractory period only when the delay increases
 learn_cross_delay: false                  # true: ignore the upload delay from download activity (icmp-timestamp only)
+increase_to_delay_thr: false              # true: increase at high load until the delay threshold (as the original)
 decay_refractory_period_ms: 1000          # Minimum time between decay adjustments
 stall_recovery_ms: 500                    # icmp-timestamp only: set the rate back if the delay is low again in this time after the first decrease (0 = off)
 
