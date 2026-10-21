@@ -352,14 +352,13 @@ Each phase is a PR, with the Copilot review cycles.
 | Calibration rules | 2026-10-17/18: #88 lower base rate and threshold for a stable link (fiber), #90 reflectors from the good reflectors only (Closes #89), #102 keep the upload base rate on a wired line (cut to the p50 with download load only on a shared link: unstable capacity, cross or grant delay). Live results: memory files fiber-live-reference and 5g-live-reference. |
 | Multi-WAN | Done (2026-10-18): core #94 (`pin LINK SECONDS` / `unpin`: routes the load hosts through the link) and LuCI #95 (Closes #93): the calibration and the bufferbloat test pin the link; the calibration warns if the link rate is below half the browser rate. #103: the warning needs 5 statuses (a false warning on 5G). |
 | Live test setup | Done (2026-10-17): #86. The VM WAN on a host tap device (`VM_WAN_TAP`, NAT on the host, ICMP timestamps go through) and a client network namespace behind the VM (`VM_LAN_TAP`, `scripts/openwrt-vm-client.sh`, Firefox through the VM). 5G: the host routes only the VM subnet through the modem (policy routing), see memory local-5g-test-setup. |
-| CI | 2026-10-17: #81 release SDK images, six browser shards (now 8). #83, #91 flaky tests. #105 (open): the job vm on ubuntu-24.04 (Playwright 1.56 has no Chromium for Ubuntu 26.04, ubuntu-latest). |
-| Package | #104 (open): `conntrack` as a dependency of the LuCI package (the pin then also moves the existing connections; CI checks the tool after the install). |
+| CI | 2026-10-17: #81 release SDK images, six browser shards (now 8). #83, #91 flaky tests. #105 (merged 2026-10-21): the job vm on ubuntu-24.04 (Playwright 1.56 has no Chromium for Ubuntu 26.04, ubuntu-latest). |
+| Package | #104 (merged 2026-10-21): `conntrack` as a dependency of the LuCI package (the pin then also moves the existing connections; CI checks the tool after the install). |
 
 ### Open (2026-10-21)
 
 | Item | Status |
 |---|---|
-| #104 conntrack dependency, #105 CI runner pin | PRs open, Copilot 🟢. |
 | #98 LuCI: switch the link mode on the status page | After the link modes (#96 exploration, #97 core). Data of 2026-10-18 on #96: on 5G, a threshold factor for each direction with a lower limit for the upload (grant delay); higher thresholds give no throughput. No merge of the mode PRs without the user's test. |
 | Line type in the calibration | Idea: the user selects fiber/cable/DSL, 5G/LTE or Starlink; the rules use it in addition to the measurement. After the link modes. |
 | `openwrt-build.sh` | Idea: warn about a stale `prebuilt/` binary. Developer only. |
