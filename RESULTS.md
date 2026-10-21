@@ -324,7 +324,7 @@ Raw data: branch `recordings`, directory `2026-10-21-5g-daypass` (README with al
 | dp4 | default, rod, rdr, rod+lcd, original | dl both | 120 s | 2 |
 | dp5 | default, rod, rdr | dl both | 120 s | 8 |
 | dp6 | default, rod, inc, inc+rod, original (build with `increase_to_delay_thr`) | dl | 120 s | 12 |
-| dp7 | default, rod, inc+rod, rod+lcd, original | both | 120 s | 12 (overnight) |
+| dp7 | default, rod, inc+rod, rod+lcd, original | both | 120 s | 12 |
 
 rod = `refractory_on_decrease`, rdr = `repeat_decrease_on_rise`, lcd = `learn_cross_delay`, inc = `increase_to_delay_thr` (new option, branch `feat/increase-to-threshold`). All sessions have an unshaped block in each round.
 
@@ -367,6 +367,22 @@ The default is better than the original in delay (p50 -7.6 ms *, p99 -24 ms *) a
 | original | 6 | +25 ± 23 * | +16 ± 3 * | +36 ± 49 |
 
 Means: default DL 61 % and UL 74 Mbit/s (unshaped: 44 Mbit/s UL, the DL load starves it), 30/81/153 ms (n=14); original 80 %, 73 Mbit/s, 47/121/179 ms (n=6). lcd gave +8 Mbit/s UL in dp2/dp3 (2 blocks, not significant).
+
+dp7 (both directions, 12 rounds, 2026-10-21 22:40 to 2026-10-22 01:30):
+
+| Variant - default | n | DL Mbit/s | p50 ms | p99 ms |
+|---|---|---|---|---|
+| inc + rod | 12 | +16 ± 7 * | +2.3 ± 2.0 * | +6 ± 23 |
+| rod + lcd | 12 | +10 ± 6 * | +1.0 ± 1.7 | -12 ± 16 |
+| rod | 12 | +1 ± 8 | +0.5 ± 0.9 | +6 ± 17 |
+| original | 12 | +20 ± 14 * | +2.3 ± 2.7 | +12 ± 21 |
+
+Means (p50/p95/p99 ms, DL % of unshaped, UL Mbit/s): default 26/55/88, 63 %, 106; rod 27/56/94, 63 %, 105; inc+rod 29/59/94, 69 %, 107; rod+lcd 27/54/77, 67 %, 107; original 29/65/100, 71 %, 106; unshaped 462/679/787, 100 %, 61.
+
+- With load in the two directions, rod alone gives no download gain. inc+rod gets most of the gain of the original with the same p50 and a lower p99.
+- rod+lcd has the lowest p99 and p95 of all policies, and +10 Mbit/s DL.
+- All shaped policies get about 106 Mbit/s UL, 1.75 times the unshaped UL (the unshaped DL queue delays the UL ACKs).
+- In dp7 (night), the delay cost of the original is much lower than in dp2-dp5 (+2 ms p50 against +16 ms).
 
 ### Conclusions
 
