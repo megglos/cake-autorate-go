@@ -125,7 +125,7 @@ cmd_start() {
 	# script starts them again at the end, also after an error.
 	printf '%s\n' "cd $VM_DIR" \
 		"UPSTREAM_DIR=$VM_DIR/upstream scripts/record-session.sh -i $IFACE -x /usr/sbin/cake-autorate-go -o out/$name $(printf '%q ' "${args[@]}")" \
-		"service sqm start; service cake-autorate start; rm -rf $LOCK" |
+		"service sqm start; service cake-autorate start; rm -f out/$name.pid; rm -rf $LOCK" |
 		vm "cat > $VM_DIR/out/$name.sh"
 	vm "cd $VM_DIR && service cake-autorate stop; service sqm stop; \
 		setsid bash out/$name.sh > out/$name.log 2>&1 < /dev/null & \
@@ -140,7 +140,7 @@ cmd_start() {
 
 cmd_status() {
 	check_name "${1:-}"
-	vm "tail -n 20 $VM_DIR/out/$1.log; kill -0 \$(cat $VM_DIR/out/$1.pid) 2>/dev/null && echo '(running)' || echo '(not running)'"
+	vm "tail -n 20 $VM_DIR/out/$1.log; test \"\$(cat $LOCK/name 2>/dev/null)\" = $1 && echo '(running)' || echo '(not running)'"
 }
 
 cmd_stop() {
@@ -148,7 +148,13 @@ cmd_stop() {
 	# record-session.sh is the child of the session shell: its TERM trap
 	# removes the CAKE setup, then the shell starts the services again.
 	# SIGINT does not work: a background process ignores it.
-	vm "kill -TERM \$(pgrep -P \$(cat $VM_DIR/out/$1.pid)) 2>/dev/null || true"
+	# Only the running session: the lock must have its name, and the saved
+	# PID must still be its session shell (a PID can be used again).
+	vm "test \"\$(cat $LOCK/name 2>/dev/null)\" = $1 &&
+		pid=\$(cat $VM_DIR/out/$1.pid) &&
+		grep -q 'out/$1.sh' /proc/\$pid/cmdline 2>/dev/null &&
+		kill -TERM \$(pgrep -P \$pid)" ||
+		die "session $1 does not run"
 }
 
 cmd_fetch() {
