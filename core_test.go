@@ -1994,3 +1994,33 @@ func TestProcessDelay_StallRecoveryUsesNewRates(t *testing.T) {
 		t.Errorf("rate %.0f after the second stall, want 0.75 times the new achieved rate (approximately %.0f), not the old rate", c.dl.shaperRateKbps, 0.75*0.3*first)
 	}
 }
+
+// A throughput sample from before a recovery can arrive after it (the rate
+// and ping channels are separate). The next episode must not use it.
+func TestProcessDelay_StallRecoveryIgnoresLateSample(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	low := func(int) float64 { return 10 }
+	high := func(int) float64 { return 110 }
+
+	stallRun(c, start, 0, 20, low, func(int) float64 { return 0.95 })
+	stallRun(c, start, 20, 24, high, func(int) float64 { return 0.2 })
+	// After the recovery, the capacity is 30 % of the rate.
+	stallRun(c, start, 24, 30, low, func(int) float64 { return 0.3 })
+	first := c.dl.shaperRateKbps
+	if c.dl.recoveredAt.IsZero() {
+		t.Fatal("no recovery after the first stall")
+	}
+
+	// A late sample of the time before the recovery, with the old rate.
+	// Then a second stall comes in stall_recovery_ms after the recovery.
+	c.HandleRate(RateStats{DlRateKbps: first, Timestamp: c.dl.recoveredAt.Add(-time.Millisecond)})
+	stallRun(c, start, 30, 34, high, func(int) float64 { return 0.3 })
+	stallRun(c, start, 34, 40, low, func(int) float64 { return 0.95 })
+	if c.dl.shaperRateKbps > 0.5*first {
+		t.Errorf("rate %.0f after the second stall, want 0.75 times the new achieved rate (approximately %.0f): the late sample must not count", c.dl.shaperRateKbps, 0.75*0.3*first)
+	}
+}

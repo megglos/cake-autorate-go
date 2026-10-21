@@ -73,6 +73,7 @@ type dirState struct {
 	achievedHist []achievedSample // achieved rates of the last StallRecoveryMs
 	stallStart   time.Time        // first decrease of the bufferbloat episode, or zero
 	stallRefKbps float64          // rate before the episode
+	recoveredAt  time.Time        // time of the last recovery
 }
 
 // achievedSample is an achieved rate at a time.
@@ -764,8 +765,13 @@ func clamp(v, min, max float64) float64 {
 	return v
 }
 
-// addAchieved keeps the achieved rates of the last period.
+// addAchieved keeps the achieved rates of the last period. It ignores a
+// sample from before the last recovery: the rate and ping channels can
+// deliver it late, and it shows the capacity before the recovery.
 func (ds *dirState) addAchieved(at time.Time, kbps float64, period time.Duration) {
+	if !at.After(ds.recoveredAt) {
+		return
+	}
 	ds.achievedHist = append(ds.achievedHist, achievedSample{at, kbps})
 	n := 0
 	for n < len(ds.achievedHist) && at.Sub(ds.achievedHist[n].at) > period {
@@ -810,6 +816,7 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 	c.logger.Debugf("[%s] [%s] stall recovery: rate %.0f -> %.0f kbps", c.name, dir, ds.shaperRateKbps, newRate)
 	ds.shaperRateKbps = newRate
 	ds.achievedHist = ds.achievedHist[:0]
+	ds.recoveredAt = now
 	ds.bbDetected = false
 	c.applyRate(dir)
 	return true
