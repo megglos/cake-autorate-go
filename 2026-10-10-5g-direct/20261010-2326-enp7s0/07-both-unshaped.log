@@ -1,0 +1,191 @@
+2026/10/10 23:45:34.348690 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/10 23:45:34.348929 [INFO] recording events to recordings/20261010-2326-enp7s0/07-both-unshaped.jsonl.gz
+2026/10/10 23:45:34.349011 [INFO] [5g] controller started in RUNNING state
+2026/10/10 23:45:34.349015 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/10 23:45:34.349026 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:07.349307 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:07.349330 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:07.349430 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:09.349525 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:09.349549 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:09.349554 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:09.349557 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 5/60)
+2026/10/10 23:46:09.349651 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:11.349055 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:11.349089 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:11.349093 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:11.349116 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:11.349177 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:13.349365 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:13.349380 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:13.349383 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:13.349386 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:13.349413 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:15.349320 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:15.349333 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:15.349335 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:15.349337 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:15.349374 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:16.700332 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:46:16.749545 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:46:16.749593 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:17.349179 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:17.349205 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:17.349355 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:19.349467 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:19.349492 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:19.349580 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:21.350012 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/10 23:46:21.350038 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/10 23:46:21.350043 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 5/60)
+2026/10/10 23:46:21.350046 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:21.350129 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:23.350035 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:46:23.350060 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:23.350068 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:23.350071 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:23.350358 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:25.349596 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:25.349620 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/10 23:46:25.349623 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:25.349625 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:25.349777 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:27.349683 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:27.349706 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:27.349710 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:27.349714 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:27.349768 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:29.349952 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:29.349967 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/10 23:46:29.349969 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:29.349971 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:29.350114 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:31.349624 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:31.349647 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:31.349652 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:31.349656 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:31.349790 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:33.349452 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:33.349464 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:33.349467 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:33.349469 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:33.349581 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:35.349937 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:35.349953 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:35.349956 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:35.349958 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:35.350029 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:36.349847 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:36.349953 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:37.550928 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:46:37.749234 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:46:37.749264 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:38.349082 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:38.349191 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:40.349194 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:40.349217 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:40.349301 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:42.349805 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 5/60)
+2026/10/10 23:46:42.349819 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:42.349822 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:42.349824 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/10 23:46:42.349968 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:44.349244 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:44.349269 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:44.349274 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:44.349277 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:44.349379 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:46.349021 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 5/60)
+2026/10/10 23:46:46.349064 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:46:46.349079 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:46.349084 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:46.349134 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:48.349260 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:48.349284 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/10 23:46:48.349289 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:48.349292 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:48.349381 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:49.350047 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:46:49.350200 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:50.551015 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:46:50.749314 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:46:50.749351 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:51.349289 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:51.349435 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:55.349984 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:46:55.349999 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 4/60)
+2026/10/10 23:46:55.350007 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:46:55.350123 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:56.350117 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:56.350193 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:46:59.350036 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:46:59.350057 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/10 23:46:59.350150 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:01.349088 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:01.349110 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:01.349161 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:03.349476 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:47:03.349503 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:03.349571 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:13.349168 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:47:13.349191 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/10 23:47:13.349195 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:13.349244 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:16.349578 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/10 23:47:16.349647 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:19.349961 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:47:19.349977 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 5/60)
+2026/10/10 23:47:19.349979 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/10 23:47:19.349981 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:47:19.349983 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:47:19.349984 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:19.350038 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:21.349761 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:21.349854 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:23.349763 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/10 23:47:23.349941 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:31.349342 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:47:31.349443 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:38.349864 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:38.350034 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:42.349662 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:42.349690 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:47:42.349695 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:47:42.349699 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 4/60)
+2026/10/10 23:47:42.349834 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:44.349355 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:47:44.349381 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 5/60)
+2026/10/10 23:47:44.349386 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:47:44.349390 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/10 23:47:44.349455 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:46.349507 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 5/60)
+2026/10/10 23:47:46.349530 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:47:46.349535 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:46.349538 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:46.349667 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:48.349503 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 5/60)
+2026/10/10 23:47:48.349526 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 5/60)
+2026/10/10 23:47:48.349530 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/10 23:47:48.349640 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:50.349805 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 5/60)
+2026/10/10 23:47:50.349820 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 5/60)
+2026/10/10 23:47:50.349828 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:50.349882 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:51.601059 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:47:52.349503 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/10 23:47:52.349637 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:52.749436 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:47:52.749475 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:47:54.349858 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/10 23:47:54.349880 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/10 23:47:54.349975 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:48:02.950288 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:48:04.149298 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:48:04.149337 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:48:14.350395 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 23:48:15.149945 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 23:48:15.149992 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 23:48:24.614748 [INFO] received signal interrupt, shutting down
+2026/10/10 23:48:24.614799 [INFO] [5g] controller stopped
+2026/10/10 23:48:24.614816 [INFO] cake-autorate-go stopped
+ Done.

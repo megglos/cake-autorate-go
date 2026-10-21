@@ -1,0 +1,24 @@
+date: 2026-10-11T15:10:15+02:00
+interface: enp7s0
+ifb: ifb4enp7s0
+config: recordings/5g-owd-f1.yaml
+binary: cake-autorate-go dev
+git: dd98062
+kernel: 7.2.9-2-cachyos
+link: 2500 Mbit/s, mtu 1500
+route: 1.1.1.1 via 100.90.115.77 dev enp7s0 src 100.90.115.78 uid 0 
+modes: both
+policies: unshaped autorate autorate-learn30 autorate-learn20
+variant learn30: config recordings/5g-s5-learn.yaml, binary ./cake-autorate-go (cake-autorate-go dev)
+variant learn20: config recordings/5g-s7-learn-u20.yaml, binary ./cake-autorate-go (cake-autorate-go dev)
+rounds: 4
+block: idle 15s, load 150s, download warm-up in the mode both 30s
+saturation check (kbit/s, last 10 s of 20 s):
+  dl workers=4 rate=70113
+  dl workers=8 rate=298270
+  dl workers=16 rate=69541
+  ul workers=4 rate=37465
+  ul workers=8 rate=37264
+  ul workers=16 rate=37742
+workers: 8
+capacity_kbps: 298270,37742

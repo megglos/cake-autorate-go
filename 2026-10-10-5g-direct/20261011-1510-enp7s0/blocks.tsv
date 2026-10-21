@@ -1,0 +1,17 @@
+block	round	mode	policy	start	load_start	load_end	end	cake_dl_kbps	cake_ul_kbps	recording
+1	1	both	unshaped	1791724335	1791724381	1791724531	1791724536	unlimited	unlimited	01-both-unshaped.jsonl.gz
+2	1	both	autorate	1791724536	1791724581	1791724731	1791724736	autorate	autorate	02-both-autorate.jsonl.gz
+3	1	both	autorate-learn30	1791724736	1791724781	1791724932	1791724937	autorate	autorate	03-both-autorate-learn30.jsonl.gz
+4	1	both	autorate-learn20	1791724937	1791724982	1791725132	1791725137	autorate	autorate	04-both-autorate-learn20.jsonl.gz
+5	2	both	unshaped	1791725137	1791725182	1791725333	1791725338	unlimited	unlimited	05-both-unshaped.jsonl.gz
+6	2	both	autorate	1791725338	1791725383	1791725533	1791725538	autorate	autorate	06-both-autorate.jsonl.gz
+7	2	both	autorate-learn30	1791725538	1791725583	1791725733	1791725739	autorate	autorate	07-both-autorate-learn30.jsonl.gz
+8	2	both	autorate-learn20	1791725739	1791725784	1791725934	1791725939	autorate	autorate	08-both-autorate-learn20.jsonl.gz
+9	3	both	unshaped	1791725939	1791725984	1791726135	1791726140	unlimited	unlimited	09-both-unshaped.jsonl.gz
+10	3	both	autorate	1791726140	1791726185	1791726335	1791726340	autorate	autorate	10-both-autorate.jsonl.gz
+11	3	both	autorate-learn30	1791726340	1791726385	1791726536	1791726541	autorate	autorate	11-both-autorate-learn30.jsonl.gz
+12	3	both	autorate-learn20	1791726541	1791726586	1791726736	1791726741	autorate	autorate	12-both-autorate-learn20.jsonl.gz
+13	4	both	unshaped	1791726741	1791726787	1791726937	1791726942	unlimited	unlimited	13-both-unshaped.jsonl.gz
+14	4	both	autorate	1791726942	1791726987	1791727137	1791727142	autorate	autorate	14-both-autorate.jsonl.gz
+15	4	both	autorate-learn30	1791727143	1791727188	1791727338	1791727343	autorate	autorate	15-both-autorate-learn30.jsonl.gz
+16	4	both	autorate-learn20	1791727343	1791727388	1791727539	1791727544	autorate	autorate	16-both-autorate-learn20.jsonl.gz

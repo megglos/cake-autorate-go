@@ -1,0 +1,62 @@
+2026/10/11 17:11:28.986718 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/11 17:11:28.986926 [INFO] recording events to recordings/20261011-1620-enp7s0/17-both-autorate.jsonl.gz
+2026/10/11 17:11:28.987154 [INFO] [5g] controller started in RUNNING state
+2026/10/11 17:11:28.987158 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/11 17:11:28.987167 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 17:14:49.309695 [INFO] received signal interrupt, shutting down
+2026/10/11 17:14:49.309743 [INFO] [5g] controller stopped
+2026/10/11 17:14:49.309761 [INFO] cake-autorate-go stopped
+43]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [17:11:43]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [17:11:43]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [17:11:43]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:11:43]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:11:43]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:11:43] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [17:11:43] Starting 8 download workers...
+[load-gen] [17:11:43] Load generation running for 30s...
+[load-gen] [17:11:43] Press Ctrl+C to stop early.
+
+[load-gen] [17:11:54] 10/30s elapsed, 8 workers active, enp7s0: dl 120.4 Mbit/s, ul 3.4 Mbit/s
+[load-gen] [17:12:04] 20/30s elapsed, 8 workers active, enp7s0: dl 99.1 Mbit/s, ul 2.7 Mbit/s
+[load-gen] [17:12:14] 30/30s elapsed, 8 workers active, enp7s0: dl 62.9 Mbit/s, ul 1.7 Mbit/s
+[load-gen] [17:12:14] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.
+[load-gen] [17:12:14] Mode: both | Duration: 150s | Workers: 8 per direction
+[load-gen] [17:12:14] Download URLs:
+[load-gen] [17:12:14]   https://fsn1-speed.hetzner.com/1GB.bin
+[load-gen] [17:12:14]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [17:12:14]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [17:12:14]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [17:12:14]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:12:14]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:12:14]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [17:12:14] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [17:12:14] Starting 8 download workers...
+[load-gen] [17:12:14] Starting 8 upload workers (25 MB for each upload)...
+[load-gen] [17:12:14] Load generation running for 150s...
+[load-gen] [17:12:14] Press Ctrl+C to stop early.
+
+[load-gen] [17:12:24] 10/150s elapsed, 16 workers active, enp7s0: dl 52.5 Mbit/s, ul 4.5 Mbit/s
+[load-gen] [17:12:34] 20/150s elapsed, 16 workers active, enp7s0: dl 48.8 Mbit/s, ul 5.6 Mbit/s
+[load-gen] [17:12:44] 30/150s elapsed, 16 workers active, enp7s0: dl 51.7 Mbit/s, ul 4.4 Mbit/s
+[load-gen] [17:12:54] 40/150s elapsed, 16 workers active, enp7s0: dl 69.0 Mbit/s, ul 9.2 Mbit/s
+[load-gen] [17:13:04] 50/150s elapsed, 16 workers active, enp7s0: dl 131.4 Mbit/s, ul 11.8 Mbit/s
+[load-gen] [17:13:14] 60/150s elapsed, 16 workers active, enp7s0: dl 96.3 Mbit/s, ul 8.6 Mbit/s
+[load-gen] [17:13:24] 70/150s elapsed, 16 workers active, enp7s0: dl 73.8 Mbit/s, ul 10.2 Mbit/s
+[load-gen] [17:13:34] 80/150s elapsed, 16 workers active, enp7s0: dl 57.1 Mbit/s, ul 15.9 Mbit/s
+[load-gen] [17:13:44] 90/150s elapsed, 16 workers active, enp7s0: dl 97.7 Mbit/s, ul 11.4 Mbit/s
+[load-gen] [17:13:54] 100/150s elapsed, 16 workers active, enp7s0: dl 51.1 Mbit/s, ul 15.9 Mbit/s
+[load-gen] [17:14:04] 110/150s elapsed, 16 workers active, enp7s0: dl 222.3 Mbit/s, ul 13.3 Mbit/s
+[load-gen] [17:14:14] 120/150s elapsed, 16 workers active, enp7s0: dl 45.8 Mbit/s, ul 14.8 Mbit/s
+[load-gen] [17:14:24] 130/150s elapsed, 16 workers active, enp7s0: dl 86.6 Mbit/s, ul 15.3 Mbit/s
+[load-gen] [17:14:34] 140/150s elapsed, 16 workers active, enp7s0: dl 108.5 Mbit/s, ul 11.3 Mbit/s
+[load-gen] [17:14:44] 150/150s elapsed, 16 workers active, enp7s0: dl 104.4 Mbit/s, ul 10.0 Mbit/s
+[load-gen] [17:14:44] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.

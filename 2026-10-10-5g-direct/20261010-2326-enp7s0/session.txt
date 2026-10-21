@@ -1,0 +1,23 @@
+date: 2026-10-10T23:26:32+02:00
+interface: enp7s0
+ifb: ifb4enp7s0
+config: recordings/5g-owd.yaml
+binary: cake-autorate-go dev
+git: b7b4741
+kernel: 7.2.9-2-cachyos
+link: 2500 Mbit/s, mtu 1500
+route: 1.1.1.1 via 100.90.115.77 dev enp7s0 src 100.90.115.78 uid 0 
+modes: dl ul both
+policies: unshaped fixed autorate
+rounds: 2
+block: idle 15s, load 150s
+saturation check (kbit/s, last 10 s of 20 s):
+  dl workers=4 rate=68048
+  dl workers=8 rate=219409
+  dl workers=16 rate=70727
+  ul workers=4 rate=31098
+  ul workers=8 rate=32375
+  ul workers=16 rate=30514
+workers: 8
+capacity_kbps: 219409,32375
+fixed_kbps: 186497,27518 (85 %)

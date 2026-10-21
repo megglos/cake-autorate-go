@@ -1,0 +1,33 @@
+2026/10/11 17:05:17.910585 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/11 17:05:17.910771 [INFO] recording events to recordings/20261011-1620-enp7s0/15-ul-autorate-target60.jsonl.gz
+2026/10/11 17:05:17.911005 [INFO] [5g] controller started in RUNNING state
+2026/10/11 17:05:17.911009 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/11 17:05:17.911018 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 17:05:38.313361 [INFO] [5g] [ul] latency target 60 ms: p95 27.0 ms (100 pings), delay threshold 30.0 -> 33.0 ms
+2026/10/11 17:05:58.446529 [INFO] [5g] [ul] latency target 60 ms: p95 33.4 ms (378 pings), delay threshold 33.0 -> 36.3 ms
+2026/10/11 17:06:18.450535 [INFO] [5g] [ul] latency target 60 ms: p95 51.9 ms (355 pings), delay threshold 36.3 -> 39.9 ms
+2026/10/11 17:06:38.513652 [INFO] [5g] [ul] latency target 60 ms: p95 52.7 ms (349 pings), delay threshold 39.9 -> 43.9 ms
+2026/10/11 17:06:58.561815 [INFO] [5g] [ul] latency target 60 ms: p95 49.4 ms (385 pings), delay threshold 43.9 -> 48.3 ms
+2026/10/11 17:07:38.608221 [INFO] [5g] [ul] latency target 60 ms: p95 92.8 ms (327 pings), delay threshold 48.3 -> 38.7 ms
+2026/10/11 17:08:08.112504 [INFO] received signal interrupt, shutting down
+2026/10/11 17:08:08.112582 [INFO] [5g] controller stopped
+2026/10/11 17:08:08.112609 [INFO] cake-autorate-go stopped
+ 17.1 Mbit/s
+[load-gen] [17:05:52] 20/150s elapsed, 8 workers active, enp7s0: dl 0.6 Mbit/s, ul 16.1 Mbit/s
+[load-gen] [17:06:02] 30/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 25.6 Mbit/s
+[load-gen] [17:06:12] 40/150s elapsed, 8 workers active, enp7s0: dl 0.7 Mbit/s, ul 20.4 Mbit/s
+[load-gen] [17:06:22] 50/150s elapsed, 8 workers active, enp7s0: dl 0.7 Mbit/s, ul 22.0 Mbit/s
+[load-gen] [17:06:32] 60/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 27.3 Mbit/s
+[load-gen] [17:06:42] 70/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 25.7 Mbit/s
+[load-gen] [17:06:53] 80/150s elapsed, 8 workers active, enp7s0: dl 0.9 Mbit/s, ul 29.2 Mbit/s
+[load-gen] [17:07:03] 90/150s elapsed, 8 workers active, enp7s0: dl 1.0 Mbit/s, ul 40.0 Mbit/s
+[load-gen] [17:07:13] 100/150s elapsed, 8 workers active, enp7s0: dl 0.9 Mbit/s, ul 28.6 Mbit/s
+[load-gen] [17:07:23] 110/150s elapsed, 8 workers active, enp7s0: dl 0.7 Mbit/s, ul 23.2 Mbit/s
+[load-gen] [17:07:33] 120/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 25.0 Mbit/s
+[load-gen] [17:07:43] 130/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 24.6 Mbit/s
+[load-gen] [17:07:53] 140/150s elapsed, 8 workers active, enp7s0: dl 0.8 Mbit/s, ul 23.4 Mbit/s
+[load-gen] [17:08:03] 150/150s elapsed, 8 workers active, enp7s0: dl 0.7 Mbit/s, ul 22.0 Mbit/s
+[load-gen] [17:08:03] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.

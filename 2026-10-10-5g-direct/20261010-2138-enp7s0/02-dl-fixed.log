@@ -1,0 +1,178 @@
+2026/10/10 21:43:31.965312 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/10 21:43:31.965593 [INFO] recording events to recordings/20261010-2138-enp7s0/02-dl-fixed.jsonl.gz
+2026/10/10 21:43:31.965682 [INFO] [5g] controller started in RUNNING state
+2026/10/10 21:43:31.965686 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/10 21:43:31.965697 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:04.966637 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 3/60)
+2026/10/10 21:44:04.966771 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:06.966626 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 3/60)
+2026/10/10 21:44:06.966641 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:06.966644 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:06.966646 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 3/60)
+2026/10/10 21:44:06.966647 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:06.966713 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:08.965787 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:08.965883 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:10.966702 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 6/60)
+2026/10/10 21:44:10.966724 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 3/60)
+2026/10/10 21:44:10.966729 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:10.966733 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:10.966735 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:10.966830 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:12.966596 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:12.966637 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:14.966717 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:14.966732 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:14.966734 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:44:14.966735 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:14.966737 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:14.966805 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:16.965867 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:16.965884 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:16.965970 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:18.966163 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 6/60)
+2026/10/10 21:44:18.966179 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:18.966181 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:18.966183 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:44:18.966226 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:20.466792 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 21:44:20.566049 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 21:44:20.566078 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:20.966325 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:20.966345 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 3/60)
+2026/10/10 21:44:20.966406 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:22.965728 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 3/60)
+2026/10/10 21:44:22.965748 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 3/60)
+2026/10/10 21:44:22.965752 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 3/60)
+2026/10/10 21:44:22.965827 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:23.966649 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 3/60)
+2026/10/10 21:44:23.966766 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:25.966008 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:25.966030 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:44:25.966130 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:27.966592 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:27.966614 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:27.966619 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:27.966623 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:27.966736 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:29.965858 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:29.965872 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:29.965875 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:29.965916 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:30.966441 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 21:44:30.966469 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 21:44:30.966483 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 3/60)
+2026/10/10 21:44:30.966511 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:30.966528 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:32.965979 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:44:32.965994 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 3/60)
+2026/10/10 21:44:32.966068 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:34.966086 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:34.966109 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:34.966114 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:34.966117 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:34.966176 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:36.965773 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:36.965803 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:36.965908 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:37.966633 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:44:37.966712 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:39.966599 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:39.966622 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:39.966626 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:39.966694 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:41.966236 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:41.966250 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:41.966252 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:41.966300 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:43.017255 [INFO] [5g] state: RUNNING -> STALL
+2026/10/10 21:44:43.166270 [INFO] [5g] state: STALL -> RUNNING
+2026/10/10 21:44:43.166307 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:43.966556 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:44:43.966695 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:45.966549 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:45.966581 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:45.966678 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:47.966477 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 3/60)
+2026/10/10 21:44:47.966491 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:47.966494 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:47.966495 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:47.966621 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:49.966608 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:49.966622 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:44:49.966685 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:51.965705 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:51.965720 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:51.965723 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:44:51.965725 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:51.965770 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:53.966633 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:44:53.966647 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:44:53.966678 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:55.965889 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:44:55.965901 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:44:55.965903 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:44:55.965905 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:44:55.965997 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:56.966704 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 3/60)
+2026/10/10 21:44:56.966842 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:44:58.965994 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:44:58.966084 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:00.966106 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:45:00.966129 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 4/60)
+2026/10/10 21:45:00.966133 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:45:00.966136 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:45:00.966140 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:45:00.966198 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:02.966643 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:45:02.966688 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:04.966077 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 3/60)
+2026/10/10 21:45:04.966114 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:06.966055 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 3/60)
+2026/10/10 21:45:06.966073 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 3/60)
+2026/10/10 21:45:06.966076 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:45:06.966227 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:08.966757 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 4/60)
+2026/10/10 21:45:08.966780 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:45:08.966873 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:10.965901 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 4/60)
+2026/10/10 21:45:10.965920 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 4/60)
+2026/10/10 21:45:10.965927 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 4/60)
+2026/10/10 21:45:10.965929 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 4/60)
+2026/10/10 21:45:10.965997 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:12.966468 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 3/60)
+2026/10/10 21:45:12.966491 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:45:12.966645 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:17.966648 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 3/60)
+2026/10/10 21:45:17.966668 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 3/60)
+2026/10/10 21:45:17.966742 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:19.966082 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 3/60)
+2026/10/10 21:45:19.966097 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 3/60)
+2026/10/10 21:45:19.966244 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:23.965974 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 3/60)
+2026/10/10 21:45:23.965995 [INFO] [5g] replacing misbehaving reflector 8.8.8.8 (missed 3/60)
+2026/10/10 21:45:23.966090 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:26.966027 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 4/60)
+2026/10/10 21:45:26.966049 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 4/60)
+2026/10/10 21:45:26.966054 [INFO] [5g] replacing misbehaving reflector 208.67.222.222 (missed 3/60)
+2026/10/10 21:45:26.966058 [INFO] [5g] replacing misbehaving reflector 1.1.1.1 (missed 3/60)
+2026/10/10 21:45:26.966133 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:29.965939 [INFO] [5g] replacing misbehaving reflector 8.8.4.4 (missed 3/60)
+2026/10/10 21:45:29.965954 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 3/60)
+2026/10/10 21:45:29.965957 [INFO] [5g] replacing misbehaving reflector 1.0.0.1 (missed 3/60)
+2026/10/10 21:45:29.966125 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:34.966586 [INFO] [5g] replacing misbehaving reflector 208.67.220.220 (missed 3/60)
+2026/10/10 21:45:34.966603 [INFO] [5g] replacing misbehaving reflector 9.9.9.9 (missed 3/60)
+2026/10/10 21:45:34.966690 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:45:46.966547 [INFO] [5g] replacing misbehaving reflector 149.112.112.112 (missed 3/60)
+2026/10/10 21:45:46.966631 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/10 21:46:22.120595 [INFO] received signal interrupt, shutting down
+2026/10/10 21:46:22.120637 [INFO] [5g] controller stopped
+2026/10/10 21:46:22.120656 [INFO] cake-autorate-go stopped
+s
+[load-gen] [21:46:07] 140/150s elapsed, 8 workers active, enp7s0: dl 329.8 Mbit/s, ul 3.6 Mbit/s
+[load-gen] [21:46:17] 150/150s elapsed, 8 workers active, enp7s0: dl 345.1 Mbit/s, ul 3.5 Mbit/s
+[load-gen] [21:46:17] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.

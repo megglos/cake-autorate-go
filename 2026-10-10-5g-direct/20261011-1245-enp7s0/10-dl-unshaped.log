@@ -1,0 +1,35 @@
+2026/10/11 13:13:11.927010 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/11 13:13:11.927214 [INFO] recording events to recordings/20261011-1245-enp7s0/10-dl-unshaped.jsonl.gz
+2026/10/11 13:13:11.927295 [INFO] [5g] controller started in RUNNING state
+2026/10/11 13:13:11.927299 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/11 13:13:11.927310 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:14:30.927328 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 3/60)
+2026/10/11 13:14:30.927442 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:14:36.927675 [INFO] [5g] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/11 13:14:36.927880 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:14:43.927744 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/11 13:14:43.927792 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:14:47.927537 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 3/60)
+2026/10/11 13:14:47.927664 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:14:55.927456 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 3/60)
+2026/10/11 13:14:55.927639 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:15:13.928368 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/11 13:15:13.928412 [INFO] [5g] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/11 13:15:13.928577 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:15:31.928264 [INFO] [5g] replacing misbehaving reflector nbg1-speed.hetzner.com (missed 3/60)
+2026/10/11 13:15:31.928406 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:15:57.927676 [INFO] [5g] replacing misbehaving reflector par-fr-ping.vultr.com (missed 3/60)
+2026/10/11 13:15:57.927778 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:15:59.928259 [INFO] [5g] replacing misbehaving reflector 94.140.14.14 (missed 5/60)
+2026/10/11 13:15:59.928291 [INFO] [5g] replacing misbehaving reflector hel1-speed.hetzner.com (missed 5/60)
+2026/10/11 13:15:59.928296 [INFO] [5g] replacing misbehaving reflector fsn1-speed.hetzner.com (missed 5/60)
+2026/10/11 13:15:59.928299 [INFO] [5g] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/11 13:15:59.928404 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 13:16:02.089638 [INFO] received signal interrupt, shutting down
+2026/10/11 13:16:02.089703 [INFO] [5g] controller stopped
+2026/10/11 13:16:02.089708 [INFO] cake-autorate-go stopped
+ Mbit/s
+[load-gen] [13:15:57] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.

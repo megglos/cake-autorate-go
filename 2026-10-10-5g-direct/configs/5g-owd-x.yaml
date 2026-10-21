@@ -1,0 +1,25 @@
+# Same as 5g.yaml, with ICMP timestamps (default reflectors for icmp-timestamp).
+# Config for the 5G modem on enp7s0 in passthrough mode (not committed).
+# The rates are first values. Change them after the saturation check of the
+# first session: max_rate a little above the measured capacity, base_rate
+# approximately 50 % of max_rate, min_rate approximately 10 % of max_rate.
+# 2026-10-10: speedtest (Ookla) 316/35 Mbit/s. Values set from it.
+links:
+  - name: 5g
+    download:
+      interface: ifb4enp7s0
+      adjust: true
+      min_rate_kbps: 30000
+      base_rate_kbps: 150000
+      max_rate_kbps: 400000
+    upload:
+      interface: enp7s0
+      adjust: true
+      min_rate_kbps: 4000
+      base_rate_kbps: 18000
+      max_rate_kbps: 45000
+    ping_interface: enp7s0
+ping_method: icmp-timestamp
+refractory_on_decrease: true
+log_to_file: false
+learn_cross_delay: true

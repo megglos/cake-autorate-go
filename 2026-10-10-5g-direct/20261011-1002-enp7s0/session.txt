@@ -1,0 +1,25 @@
+date: 2026-10-11T10:02:05+02:00
+interface: enp7s0
+ifb: ifb4enp7s0
+config: recordings/5g-owd-f1.yaml
+binary: cake-autorate-go dev
+git: b921643
+kernel: 7.2.9-2-cachyos
+link: 2500 Mbit/s, mtu 1500
+route: 1.1.1.1 via 100.90.115.77 dev enp7s0 src 100.90.115.78 uid 0 
+modes: dl ul both
+policies: unshaped autorate autorate-t15 autorate-d15u25 autorate-d15u30
+variant t15: config recordings/5g-s4-t15.yaml, binary ../cake-autorate-go-cross/cake-autorate-go (cake-autorate-go dev)
+variant d15u25: config recordings/5g-s4-d15u25.yaml, binary ../cake-autorate-go-cross/cake-autorate-go (cake-autorate-go dev)
+variant d15u30: config recordings/5g-s4-d15u30.yaml, binary ../cake-autorate-go-cross/cake-autorate-go (cake-autorate-go dev)
+rounds: 2
+block: idle 15s, load 150s
+saturation check (kbit/s, last 10 s of 20 s):
+  dl workers=4 rate=74008
+  dl workers=8 rate=485957
+  dl workers=16 rate=70978
+  ul workers=4 rate=38987
+  ul workers=8 rate=37919
+  ul workers=16 rate=39685
+workers: 8
+capacity_kbps: 485957,39685

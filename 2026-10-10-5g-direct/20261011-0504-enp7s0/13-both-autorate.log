@@ -1,0 +1,40 @@
+2026/10/11 05:40:04.830266 [INFO] cake-autorate-go dev starting (1 link(s))
+2026/10/11 05:40:04.830461 [INFO] recording events to recordings/20261011-0504-enp7s0/13-both-autorate.jsonl.gz
+2026/10/11 05:40:04.830679 [INFO] [5g] controller started in RUNNING state
+2026/10/11 05:40:04.830686 [INFO] [5g] dl: ifb4enp7s0 30000/150000/400000 kbps, ul: enp7s0 4000/18000/45000 kbps
+2026/10/11 05:40:04.830697 [INFO] [5g] starting 6 pingers with 300ms interval
+2026/10/11 05:42:55.084798 [INFO] received signal interrupt, shutting down
+2026/10/11 05:42:55.084836 [INFO] [5g] controller stopped
+2026/10/11 05:42:55.084852 [INFO] cake-autorate-go stopped
+40:19]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [05:40:19]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [05:40:19]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [05:40:19]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [05:40:19]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [05:40:19]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [05:40:19] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [05:40:19] Starting 8 download workers...
+[load-gen] [05:40:19] Starting 8 upload workers (25 MB for each upload)...
+[load-gen] [05:40:19] Load generation running for 150s...
+[load-gen] [05:40:19] Press Ctrl+C to stop early.
+
+[load-gen] [05:40:29] 10/150s elapsed, 16 workers active, enp7s0: dl 106.9 Mbit/s, ul 7.9 Mbit/s
+[load-gen] [05:40:39] 20/150s elapsed, 16 workers active, enp7s0: dl 93.5 Mbit/s, ul 4.6 Mbit/s
+[load-gen] [05:40:49] 30/150s elapsed, 16 workers active, enp7s0: dl 98.8 Mbit/s, ul 4.8 Mbit/s
+[load-gen] [05:40:59] 40/150s elapsed, 16 workers active, enp7s0: dl 97.8 Mbit/s, ul 4.8 Mbit/s
+[load-gen] [05:41:09] 50/150s elapsed, 16 workers active, enp7s0: dl 122.9 Mbit/s, ul 5.3 Mbit/s
+[load-gen] [05:41:19] 60/150s elapsed, 16 workers active, enp7s0: dl 111.6 Mbit/s, ul 6.4 Mbit/s
+[load-gen] [05:41:29] 70/150s elapsed, 16 workers active, enp7s0: dl 111.0 Mbit/s, ul 5.9 Mbit/s
+[load-gen] [05:41:39] 80/150s elapsed, 16 workers active, enp7s0: dl 64.2 Mbit/s, ul 7.6 Mbit/s
+[load-gen] [05:41:49] 90/150s elapsed, 16 workers active, enp7s0: dl 84.7 Mbit/s, ul 5.0 Mbit/s
+[load-gen] [05:41:59] 100/150s elapsed, 16 workers active, enp7s0: dl 86.3 Mbit/s, ul 6.2 Mbit/s
+[load-gen] [05:42:09] 110/150s elapsed, 16 workers active, enp7s0: dl 67.3 Mbit/s, ul 4.7 Mbit/s
+[load-gen] [05:42:19] 120/150s elapsed, 16 workers active, enp7s0: dl 118.6 Mbit/s, ul 5.9 Mbit/s
+[load-gen] [05:42:29] 130/150s elapsed, 16 workers active, enp7s0: dl 57.6 Mbit/s, ul 5.9 Mbit/s
+[load-gen] [05:42:39] 140/150s elapsed, 16 workers active, enp7s0: dl 110.7 Mbit/s, ul 6.5 Mbit/s
+[load-gen] [05:42:49] 150/150s elapsed, 16 workers active, enp7s0: dl 56.5 Mbit/s, ul 4.9 Mbit/s
+[load-gen] [05:42:49] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+[load-gen] Done.
