@@ -149,11 +149,13 @@ cmd_stop() {
 	# removes the CAKE setup, then the shell starts the services again.
 	# SIGINT does not work: a background process ignores it.
 	# Only the running session: the lock must have its name, and the saved
-	# PID must still be its session shell (a PID can be used again).
+	# PID must still be its session shell (a PID can be used again). Signal
+	# only record-session.sh: after it, the shell starts the services.
 	vm "test \"\$(cat $LOCK/name 2>/dev/null)\" = $1 &&
 		pid=\$(cat $VM_DIR/out/$1.pid) &&
 		grep -q 'out/$1.sh' /proc/\$pid/cmdline 2>/dev/null &&
-		kill -TERM \$(pgrep -P \$pid)" ||
+		child=\$(pgrep -P \$pid -f record-session.sh) &&
+		kill -TERM \$child" ||
 		die "session $1 does not run"
 }
 
