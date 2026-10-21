@@ -245,6 +245,23 @@ If you stop the script with Ctrl+C, it stops all programs and removes CAKE.
 
 To get a proposed config from the session, use `cake-autorate-go calibrate -session recordings/<date>-<interface>` (see [calibration.md](calibration.md)).
 
+#### Data limit
+
+On a link with a data volume (for example 5G), use `-L MB`. The script does not start a block if the data on the interface (received and sent, from the start of the session) plus the data of the largest block so far is more than the limit. The saturation check is not in the limit: use `-s -w WORKERS` to skip it. At approximately 200 Mbit/s, a download block of 60 s uses approximately 1.5 GB.
+
+#### Sessions in the OpenWrt VM
+
+`scripts/openwrt-vm-session.sh` runs the session script in the OpenWrt VM of `scripts/openwrt-vm.sh`, with the WAN of the VM on a real link (`VM_WAN_TAP`). The VM makes the load itself, and CAKE shapes it on the WAN of the VM. Thus, the session needs no sudo on the host:
+
+```sh
+scripts/openwrt-vm-session.sh setup        # bash, curl, fping in the VM, copy the scripts and ../cake-autorate
+scripts/openwrt-vm-session.sh start cmp1 -c 5g.yaml -U fts=upstream-5g.sh -m "dl both" -b 60 -s -w 8 -L 15000
+scripts/openwrt-vm-session.sh status cmp1
+scripts/openwrt-vm-session.sh fetch cmp1   # to recordings/vm-cmp1
+```
+
+The configs use the interfaces `ifb4eth1` (download) and `eth1` (upload). The session stops the services `cake-autorate` and `sqm`, and starts them again at the end.
+
 #### Test the procedure on a different connection first
 
 Before you record the 5G link, do a short session on the usual connection of the PC (for example, fiber through the home router). This makes sure that the tools operate correctly:
