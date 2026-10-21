@@ -20,6 +20,13 @@
     "dl_util": 31.59,
     "ul_util": 11.04
   },
+  "autorate-owd/5g-stalls": {
+    "lat_p95_ms": 55.64,
+    "lat_p99_ms": 333.45,
+    "bloat_s": 12.01,
+    "dl_util": 74.85,
+    "ul_util": 94.14
+  },
   "autorate-owd/5g-variable": {
     "lat_p95_ms": 58.44,
     "lat_p99_ms": 374.1,
@@ -82,6 +89,13 @@
     "bloat_s": 59.62,
     "dl_util": 29.96,
     "ul_util": 22.28
+  },
+  "autorate/5g-stalls": {
+    "lat_p95_ms": 83.66,
+    "lat_p99_ms": 449.02,
+    "bloat_s": 35.12,
+    "dl_util": 82.41,
+    "ul_util": 78.26
   },
   "autorate/5g-variable": {
     "lat_p95_ms": 89.79,

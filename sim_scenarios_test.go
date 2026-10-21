@@ -61,6 +61,26 @@ func randomWalk(seed uint64, dur time.Duration, stepMs, lo, hi, volatility, fade
 	return func(t float64) float64 { return vals[min(int(t/stepMs), n-1)] }
 }
 
+// radioStalls adds short stalls to a capacity trace (the 5G link of
+// 2026-10-18 showed them under download load): every 3 to 10 s, the
+// capacity falls to factor times the capacity for 150 to 450 ms.
+func radioStalls(seed uint64, dur time.Duration, capacity func(float64) float64, factor float64) func(float64) float64 {
+	rng := rand.New(rand.NewPCG(seed, 3))
+	type window struct{ from, to float64 }
+	var ws []window
+	for t := 2000 + 3000*rng.Float64(); t < float64(dur.Milliseconds()); t += 3000 + 7000*rng.Float64() {
+		ws = append(ws, window{t, t + 150 + 300*rng.Float64()})
+	}
+	return func(t float64) float64 {
+		for _, w := range ws {
+			if t >= w.from && t < w.to {
+				return capacity(t) * factor
+			}
+		}
+		return capacity(t)
+	}
+}
+
 // starlinkHandovers returns a capacity trace and a base RTT for each
 // reflector. The two change at each Starlink reconfiguration boundary
 // (seconds 12/27/42/57 of each minute). At each boundary, the base RTT
@@ -253,6 +273,22 @@ func simScenariosVariant(variant uint64) []simScenario {
 			dlDemand: between(2, 118), ulDemand: between(30, 100),
 			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3, ulCouplingMs: 10, ulCouplingJitterMs: 12, ulGrantMs: 8, ulGrantJitterMs: 6,
 			link: link5G,
+		},
+		{
+			// A 5G link with short capacity stalls and a stable capacity
+			// between them (the link of 2026-10-18: calibrated rates, a
+			// large buffer). Each stall decreases the achieved rate, and
+			// the decreases from the achieved rate can set the rate to the
+			// minimum.
+			name: "5g-stalls", duration: dur, seed: 10 + v,
+			dlCapacity: radioStalls(20+v, dur, randomWalk(21+v, dur, 200, 120000, 230000, 0.05, 0), 0.1),
+			ulCapacity: randomWalk(22+v, dur, 200, 90000, 110000, 0.03, 0),
+			dlDemand:   between(2, 118), ulDemand: between(30, 90),
+			bufferMs: 1000, baseRTT: reflectorBase(25), jitterMs: 3,
+			link: LinkConfig{
+				Download: dirConfig(34000, 130000, 245000),
+				Upload:   dirConfig(19000, 94500, 110000),
+			},
 		},
 		{
 			// A 300ms latency spike that queues do not cause (finding F1: each
@@ -489,6 +525,33 @@ func TestSimRefractoryOnDecrease_LatencySpike(t *testing.T) {
 	const capacity = 120000.0
 	if low < 0.75*capacity {
 		t.Errorf("300ms spike cut DL shaper to %.0f kbps (%.0f%% of capacity), want 75%% or more", low, 100*low/capacity)
+	}
+}
+
+// With stall_recovery_ms, the short stalls of 5g-stalls do not keep the
+// download rate low: more throughput for a small increase of the delay.
+func TestSimOWD_StallRecovery(t *testing.T) {
+	const seeds = 4
+	var dlOff, dlOn, p95Off, p95On float64
+	for v := range seeds {
+		var sc simScenario
+		for _, s := range simScenariosVariant(uint64(v)) {
+			if s.name == "5g-stalls" {
+				sc = s
+			}
+		}
+		off := runSim(sc, policyAutorateOWD)
+		sc.tune = func(cfg *Config) { cfg.StallRecoveryMs = 500 }
+		on := runSim(sc, policyAutorateOWD)
+		dlOff, p95Off = dlOff+off.dlUtil/seeds, p95Off+off.latP95/seeds
+		dlOn, p95On = dlOn+on.dlUtil/seeds, p95On+on.latP95/seeds
+	}
+	t.Logf("5g-stalls (%d seeds): DL %.1f%% -> %.1f%%, p95 %.1f -> %.1f ms", seeds, 100*dlOff, 100*dlOn, p95Off, p95On)
+	if dlOn < dlOff+0.05 {
+		t.Errorf("DL utilization %.1f%% with stall recovery, want 5 points more than %.1f%%", 100*dlOn, 100*dlOff)
+	}
+	if p95On > p95Off+10 {
+		t.Errorf("p95 %.1f ms with stall recovery, want not more than 10 ms above %.1f ms", p95On, p95Off)
 	}
 }
 

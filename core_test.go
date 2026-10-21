@@ -1898,3 +1898,99 @@ func TestSnapshotCountsReplies(t *testing.T) {
 		t.Errorf("replies in IDLE: %d, want 3", got)
 	}
 }
+
+// stallRun sends one ping each 50 ms and a throughput sample each 200 ms.
+// dlMs returns the download delay of the ping i, achieved the download
+// load (achieved rate / shaper rate) at the sample.
+func stallRun(c *Core, start time.Time, from, to int, dlMs func(i int) float64, load func(i int) float64) {
+	for i := from; i < to; i++ {
+		ts := start.Add(time.Duration(i) * 50 * time.Millisecond)
+		if i%4 == 0 {
+			c.HandleRate(RateStats{DlRateKbps: load(i) * c.dl.shaperRateKbps, Timestamp: ts})
+		}
+		c.HandlePing(owdPing("1.1.1.1", ts, 10, dlMs(i)))
+	}
+}
+
+// A capacity stall of 200 ms: the achieved rate falls, and each ping in the
+// stall decreases the rate again. With stall_recovery_ms, the rate goes back
+// to 0.75 times the rate before the stall when the delay is low again.
+func TestProcessDelay_StallRecovery(t *testing.T) {
+	for _, recovery := range []int{0, 500} {
+		c, _ := newTestCore(t)
+		c.cfg.StallRecoveryMs = recovery
+		c.link.Download.Adjust = true
+		c.dl.shaperRateKbps = 40000
+		start := time.Now()
+		low := func(int) float64 { return 10 }
+		full := func(int) float64 { return 0.95 }
+
+		stallRun(c, start, 0, 20, low, full)
+		before := c.dl.shaperRateKbps
+		stallRun(c, start, 20, 24, func(int) float64 { return 110 }, func(int) float64 { return 0.2 })
+		cut := c.dl.shaperRateKbps
+		if cut > 0.5*before {
+			t.Fatalf("recovery %d: rate %.0f after the stall, want a deep decrease from %.0f", recovery, cut, before)
+		}
+		stallRun(c, start, 24, 30, low, full)
+
+		want := 0.75 * 0.95 * before
+		if recovery == 0 && c.dl.shaperRateKbps > 0.5*before {
+			t.Errorf("without recovery: rate %.0f, want no recovery from %.0f", c.dl.shaperRateKbps, cut)
+		}
+		// After the recovery, the high load increases the rate as usual.
+		if recovery > 0 && (c.dl.shaperRateKbps < 0.98*want || c.dl.shaperRateKbps > before) {
+			t.Errorf("with recovery: rate %.0f, want %.0f (0.75 times the achieved rate before the stall) to %.0f", c.dl.shaperRateKbps, want, before)
+		}
+	}
+}
+
+// A capacity decrease: the delay stays high for more than
+// stall_recovery_ms. Then the rate must not go back up.
+func TestProcessDelay_StallRecoveryNotAfterLongBloat(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	low := func(int) float64 { return 10 }
+
+	stallRun(c, start, 0, 20, low, func(int) float64 { return 0.95 })
+	stallRun(c, start, 20, 40, func(int) float64 { return 110 }, func(int) float64 { return 0.5 }) // 1 s
+	cut := c.dl.shaperRateKbps
+	stallRun(c, start, 40, 46, low, func(int) float64 { return 0.95 })
+
+	if c.dl.shaperRateKbps > 1.1*cut {
+		t.Errorf("rate %.0f after 1 s of bufferbloat and %.0f before the delay was low, want no recovery", c.dl.shaperRateKbps, cut)
+	}
+}
+
+// After a recovery, the next episode uses only the achieved rates after
+// the recovery. If the capacity is lower, a second recovery must not set
+// the old rate again.
+func TestProcessDelay_StallRecoveryUsesNewRates(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	low := func(int) float64 { return 10 }
+	high := func(int) float64 { return 110 }
+
+	stallRun(c, start, 0, 20, low, func(int) float64 { return 0.95 })
+	before := c.dl.shaperRateKbps
+	stallRun(c, start, 20, 24, high, func(int) float64 { return 0.2 })
+	stallRun(c, start, 24, 30, low, func(int) float64 { return 0.95 })
+	first := c.dl.shaperRateKbps
+	if first < 0.6*before {
+		t.Fatalf("rate %.0f after the first stall, want a recovery to approximately %.0f", first, 0.75*0.95*before)
+	}
+	// The capacity is now 30 % of the rate: the load is 0.3 for more than
+	// stall_recovery_ms.
+	stallRun(c, start, 30, 42, low, func(int) float64 { return 0.3 })
+	stallRun(c, start, 42, 46, high, func(int) float64 { return 0.3 })
+	stallRun(c, start, 46, 52, low, func(int) float64 { return 0.95 })
+	if c.dl.shaperRateKbps > 0.5*first {
+		t.Errorf("rate %.0f after the second stall, want 0.75 times the new achieved rate (approximately %.0f), not the old rate", c.dl.shaperRateKbps, 0.75*0.3*first)
+	}
+}
