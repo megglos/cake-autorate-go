@@ -566,6 +566,13 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
 	bbRefractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
 
+	// A recovery is possible only in StallRecoveryMs after the first
+	// decrease. Expire it here, also when the delay is still high: a late
+	// reply with a low delay must not start a recovery after the deadline.
+	if !ds.stallStart.IsZero() && now.Sub(ds.stallStart) > time.Duration(c.cfg.StallRecoveryMs)*time.Millisecond {
+		ds.stallStart = time.Time{}
+	}
+
 	if bbDetected {
 		// With RefractoryOnDecrease, decrease the rate only one time in
 		// each refractory period. After a decrease, the detection window
@@ -598,7 +605,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		ds.lastBBTime = now
 		ds.lastBBDeltaUs = deltaUs
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
-	} else if c.stallRecovered(dir, now) {
+	} else if !exceeded && c.stallRecovered(dir, now) {
 		// The delay is low again soon after the first decrease: a short
 		// capacity stall, not a lower capacity.
 	} else if ds.loadPercent >= c.cfg.HighLoadThr {
@@ -807,6 +814,11 @@ func (ds *dirState) peakAchieved(now time.Time, period time.Duration) float64 {
 func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 	ds := c.getDirState(dir)
 	if c.cfg.StallRecoveryMs <= 0 || ds.stallStart.IsZero() {
+		return false
+	}
+	// Only a reply with one-way delays shows the delay of this direction.
+	// A timestamp pinger also sends replies with only the RTT.
+	if !c.lastPingOWD {
 		return false
 	}
 	// A reply from before the first decrease is not evidence that the

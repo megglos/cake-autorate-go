@@ -2184,3 +2184,46 @@ func TestProcessDelay_StallRecoveryKeepsNewerSamples(t *testing.T) {
 		t.Errorf("peak %.0f at 1450 ms, want 30000 (the sample of 1400 ms)", peak)
 	}
 }
+
+// A reply without one-way delays (RTT/2) must not start a recovery: half
+// of the RTT can be below the threshold while the download delay is high.
+func TestProcessDelay_StallRecoveryNeedsOWDReply(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.95 })
+	stallRun(c, start, 20, 24, func(int) float64 { return 110 }, func(int) float64 { return 0.2 })
+	if c.dl.stallStart.IsZero() {
+		t.Fatal("no bufferbloat episode")
+	}
+	// RTT-only replies: RTT 60 ms (baseline 20 ms) gives a delta of 20 ms.
+	for i := 24; i < 30; i++ {
+		c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 60 * time.Millisecond, Timestamp: start.Add(time.Duration(i) * 50 * time.Millisecond)})
+	}
+	if !c.dl.recoveredAt.IsZero() {
+		t.Errorf("recovery from replies without one-way delays, want none")
+	}
+}
+
+// The delay stays high for more than stall_recovery_ms. Then late replies
+// with a low delay from inside the window must not start a recovery.
+func TestProcessDelay_StallRecoveryExpiresDuringBloat(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.95 })
+	// High delay from 1000 to 1650 ms.
+	stallRun(c, start, 20, 34, func(int) float64 { return 110 }, func(int) float64 { return 0.5 })
+	cut := c.dl.shaperRateKbps
+	// Late low-delay replies of 1350 to 1500 ms.
+	for i := 27; i <= 30; i++ {
+		c.HandlePing(owdPing("1.1.1.1", start.Add(time.Duration(i)*50*time.Millisecond), 10, 10))
+	}
+	if !c.dl.recoveredAt.IsZero() || c.dl.shaperRateKbps > cut {
+		t.Errorf("recovery after 650 ms of bufferbloat (rate %.0f, cut %.0f), want none", c.dl.shaperRateKbps, cut)
+	}
+}
