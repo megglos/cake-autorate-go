@@ -581,7 +581,10 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		if c.cfg.RepeatDecreaseOnRise && inRefractory && deltaUs <= ds.lastBBDeltaUs {
 			return
 		}
-		if c.cfg.StallRecoveryMs > 0 && !ds.bbDetected && ds.stallStart.IsZero() {
+		if c.cfg.StallRecoveryMs > 0 && c.lastPingOWD && !ds.bbDetected && ds.stallStart.IsZero() {
+			// Only with one-way delays: only then the decreases start
+			// from the achieved rate, which a stall decreases. With RTT/2,
+			// a queue in the other direction also gives bufferbloat here.
 			// A recovery needs a measured rate before the episode. Below
 			// the minimum rate, the achieved rate is not a measurement of
 			// the capacity.

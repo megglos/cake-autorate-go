@@ -528,8 +528,9 @@ func TestSimRefractoryOnDecrease_LatencySpike(t *testing.T) {
 	}
 }
 
-// With stall_recovery_ms, the short stalls of 5g-stalls do not keep the
-// download rate low: more throughput for a small increase of the delay.
+// With stall_recovery_ms (the default), the short stalls of 5g-stalls do
+// not keep the download rate low: more throughput for a small increase of
+// the delay.
 func TestSimOWD_StallRecovery(t *testing.T) {
 	const seeds = 4
 	var dlOff, dlOn, p95Off, p95On float64
@@ -540,6 +541,7 @@ func TestSimOWD_StallRecovery(t *testing.T) {
 				sc = s
 			}
 		}
+		sc.tune = func(cfg *Config) { cfg.StallRecoveryMs = 0 }
 		off := runSim(sc, policyAutorateOWD)
 		sc.tune = func(cfg *Config) { cfg.StallRecoveryMs = 500 }
 		on := runSim(sc, policyAutorateOWD)

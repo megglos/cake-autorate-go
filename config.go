@@ -128,7 +128,7 @@ type Config struct {
 	// the delay is low again in this time after the first decrease of a
 	// bufferbloat episode, the rate goes to
 	// ShaperRateMaxAdjustDownBufferbloat times the rate before the episode.
-	// 0 disables it.
+	// Only with one-way delays (icmp-timestamp). 0 disables it.
 	StallRecoveryMs int `yaml:"stall_recovery_ms"`
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
@@ -321,6 +321,7 @@ func DefaultConfig() *Config {
 		MonitorIntervalMs:             200,
 		BufferbloatRefractoryPeriodMs: 300,
 		DecayRefractoryPeriodMs:       1000,
+		StallRecoveryMs:               500,
 
 		ReflectorResponseDeadlineS:          1.0,
 		ReflectorMisbehavingDetectionWindow: 60,

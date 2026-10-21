@@ -2112,3 +2112,27 @@ func TestProcessDelay_StallRecoveryKeepsOlderSamples(t *testing.T) {
 		t.Errorf("peak %.0f for a ping at 1090 ms, want 40000 (the sample at 600 ms)", peak)
 	}
 }
+
+// With RTT/2 (no one-way delays), the decreases start from the shaper rate:
+// a stall does not set the rate to the minimum, and there is no recovery.
+func TestProcessDelay_StallRecoveryOnlyWithOWD(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	for i := 0; i < 30; i++ {
+		ts := start.Add(time.Duration(i) * 50 * time.Millisecond)
+		load, rtt := 0.95, 20*time.Millisecond
+		if i >= 20 && i < 24 {
+			load, rtt = 0.2, 240*time.Millisecond
+		}
+		if i%4 == 0 {
+			c.HandleRate(RateStats{DlRateKbps: load * c.dl.shaperRateKbps, Timestamp: ts})
+		}
+		c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: rtt, Timestamp: ts})
+	}
+	if !c.dl.recoveredAt.IsZero() {
+		t.Errorf("recovery with RTT/2, want none")
+	}
+}
