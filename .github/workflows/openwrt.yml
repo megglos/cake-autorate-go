@@ -87,7 +87,8 @@ jobs:
   # package job), in the background while it installs QEMU and the
   # browser. Thus it does not wait for the package job.
   vm:
-    runs-on: ubuntu-latest
+    # Playwright 1.56 has no Chromium for Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
