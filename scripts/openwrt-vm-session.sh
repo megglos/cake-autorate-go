@@ -10,8 +10,9 @@
 #
 # Usage:
 #   scripts/openwrt-vm-session.sh setup
-#       install bash, curl, fping, coreutils-date and coreutils-realpath in the VM, and copy the
-#       session scripts. If UPSTREAM_DIR (default ../cake-autorate) exists,
+#       install bash, curl, fping, coreutils-date, coreutils-realpath and
+#       procps-ng-pkill (load-gen.sh stops its workers with pkill) in the
+#       VM, and copy the session scripts. If UPSTREAM_DIR (default ../cake-autorate) exists,
 #       copy the original cake-autorate too.
 #   scripts/openwrt-vm-session.sh start NAME OPTIONS...
 #       start a session in the background. The OPTIONS go to
@@ -23,6 +24,8 @@
 #       show the last lines of the session log
 #   scripts/openwrt-vm-session.sh stop NAME
 #       stop the session (record-session.sh removes its CAKE setup)
+#
+# Only one session can run in the VM at a time (a lock in the VM).
 #   scripts/openwrt-vm-session.sh fetch NAME
 #       copy the output of the session to recordings/vm-NAME
 #
@@ -56,7 +59,7 @@ check_name() {
 }
 
 cmd_setup() {
-	vm "apk update >/dev/null && apk add bash curl fping coreutils-date coreutils-realpath >/dev/null && mkdir -p $VM_DIR/scripts $VM_DIR/conf $VM_DIR/out"
+	vm "apk update >/dev/null && apk add bash curl fping coreutils-date coreutils-realpath procps-ng-pkill >/dev/null && mkdir -p $VM_DIR/scripts $VM_DIR/conf $VM_DIR/out"
 	put "$SCRIPT_DIR/record-session.sh" "$VM_DIR/scripts/record-session.sh"
 	put "$SCRIPT_DIR/cake-pc.sh" "$VM_DIR/scripts/cake-pc.sh"
 	put "$SCRIPT_DIR/summarize-session.sh" "$VM_DIR/scripts/summarize-session.sh"
@@ -73,25 +76,35 @@ cmd_setup() {
 }
 
 cmd_start() {
-	local name=${1:-} args=() opt val
+	local name=${1:-} args=() opt val dest n=0
 	check_name "$name"
 	shift
 	vm "test ! -e $VM_DIR/out/$name" || die "session $name exists in the VM"
-	# Copy the config files of -c, -A and -U, and change the paths.
+	# Only one session at a time: all sessions use the CAKE setup of eth1.
+	# The lock (mkdir is atomic) stays until the services run again.
+	vm "mkdir $VM_DIR/lock 2>/dev/null && echo $name > $VM_DIR/lock/name" ||
+		die "a session runs in the VM ($(vm "cat $VM_DIR/lock/name 2>/dev/null"))"
+	trap 'vm "rm -rf $VM_DIR/lock" || true' EXIT
+	# Copy the config files of -c, -A and -U, and change the paths. Each
+	# file gets its own number: two files can have the same name.
 	while [ $# -gt 0 ]; do
 		opt=$1
 		case $opt in
 			-i | -x | -o) die "$opt is set by this script" ;;
 			-c)
 				val=${2:?-c needs a file}
-				put "$val" "$VM_DIR/conf/$name-$(basename "$val")"
-				args+=(-c "$VM_DIR/conf/$name-$(basename "$val")")
+				n=$((n + 1))
+				dest="$VM_DIR/conf/$name-$n-$(basename "$val")"
+				put "$val" "$dest"
+				args+=(-c "$dest")
 				shift 2 ;;
 			-A | -U)
 				val=${2:?$opt needs NAME=FILE}
 				[[ $val != *,* ]] || die "$opt: a different binary is not supported in the VM"
-				put "${val#*=}" "$VM_DIR/conf/$name-$(basename "${val#*=}")"
-				args+=("$opt" "${val%%=*}=$VM_DIR/conf/$name-$(basename "${val#*=}")")
+				n=$((n + 1))
+				dest="$VM_DIR/conf/$name-$n-$(basename "${val#*=}")"
+				put "${val#*=}" "$dest"
+				args+=("$opt" "${val%%=*}=$dest")
 				shift 2 ;;
 			*)
 				args+=("$1")
@@ -105,8 +118,14 @@ cmd_start() {
 	vm "cd $VM_DIR && service cake-autorate stop; service sqm stop; \
 		setsid bash -c 'UPSTREAM_DIR=$VM_DIR/upstream scripts/record-session.sh \
 		-i $IFACE -x /usr/sbin/cake-autorate-go -o out/$name $q; \
-		service sqm start; service cake-autorate start' > out/$name.log 2>&1 < /dev/null & \
-		echo \$! > out/$name.pid"
+		service sqm start; service cake-autorate start; rm -rf $VM_DIR/lock' \
+		> out/$name.log 2>&1 < /dev/null & \
+		echo \$! > out/$name.pid" || {
+		vm "rm -rf $VM_DIR/lock; service sqm start; service cake-autorate start" || true
+		die "the start of the session failed"
+	}
+	# The session shell removes the lock at its end.
+	trap - EXIT
 	echo "session $name started. Log: $0 status $name"
 }
 
@@ -117,9 +136,10 @@ cmd_status() {
 
 cmd_stop() {
 	check_name "${1:-}"
-	# record-session.sh is the child of the session shell: its trap
+	# record-session.sh is the child of the session shell: its TERM trap
 	# removes the CAKE setup, then the shell starts the services again.
-	vm "pkill -INT -P \$(cat $VM_DIR/out/$1.pid) || true"
+	# SIGINT does not work: a background process ignores it.
+	vm "kill -TERM \$(pgrep -P \$(cat $VM_DIR/out/$1.pid)) 2>/dev/null || true"
 }
 
 cmd_fetch() {
