@@ -284,6 +284,7 @@ func printDefaults() {
 	fmt.Printf("refractory_on_decrease: %v\n", cfg.RefractoryOnDecrease)
 	fmt.Printf("repeat_decrease_on_rise: %v\n", cfg.RepeatDecreaseOnRise)
 	fmt.Printf("decay_refractory_period_ms: %d\n", cfg.DecayRefractoryPeriodMs)
+	fmt.Printf("stall_recovery_ms: %d\n", cfg.StallRecoveryMs)
 	fmt.Printf("learn_cross_delay: %v\n", cfg.LearnCrossDelay)
 	fmt.Printf("\nreflector_response_deadline_s: %g\n", cfg.ReflectorResponseDeadlineS)
 	fmt.Printf("reflector_misbehaving_detection_window: %d\n", cfg.ReflectorMisbehavingDetectionWindow)

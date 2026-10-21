@@ -183,6 +183,16 @@ func TestValidate_MonitorIntervalZero(t *testing.T) {
 	}
 }
 
+func TestValidate_StallRecoveryNegative(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.StallRecoveryMs = -1
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "stall_recovery_ms") {
+		t.Errorf("expected stall_recovery_ms error, got: %v", err)
+	}
+}
+
 func TestValidate_PingIntervalZero(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.migrateLinks()

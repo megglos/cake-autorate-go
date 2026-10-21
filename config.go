@@ -124,6 +124,12 @@ type Config struct {
 	// decreases the rate again. RefractoryOnDecrease has priority.
 	RepeatDecreaseOnRise    bool `yaml:"repeat_decrease_on_rise"`
 	DecayRefractoryPeriodMs int  `yaml:"decay_refractory_period_ms"`
+	// StallRecoveryMs sets the rate back after a short capacity stall: if
+	// the delay is low again in this time after the first decrease of a
+	// bufferbloat episode, the rate goes to
+	// ShaperRateMaxAdjustDownBufferbloat times the rate before the episode.
+	// Only with one-way delays (icmp-timestamp). 0 disables it.
+	StallRecoveryMs int `yaml:"stall_recovery_ms"`
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
 	LearnCrossDelay bool `yaml:"learn_cross_delay"`
@@ -315,6 +321,7 @@ func DefaultConfig() *Config {
 		MonitorIntervalMs:             200,
 		BufferbloatRefractoryPeriodMs: 300,
 		DecayRefractoryPeriodMs:       1000,
+		StallRecoveryMs:               500,
 
 		ReflectorResponseDeadlineS:          1.0,
 		ReflectorMisbehavingDetectionWindow: 60,
@@ -657,6 +664,9 @@ func (c *Config) Validate() error {
 	}
 	if c.PingIntervalMs <= 0 {
 		return fmt.Errorf("ping_interval_ms must be positive")
+	}
+	if c.StallRecoveryMs < 0 {
+		return fmt.Errorf("stall_recovery_ms must be 0 (off) or positive")
 	}
 	if c.PingMethod != PingMethodEcho && c.PingMethod != PingMethodTimestamp {
 		return fmt.Errorf("ping_method must be %q or %q", PingMethodEcho, PingMethodTimestamp)

@@ -68,6 +68,18 @@ type dirState struct {
 	rateChanges       int       // number of rate changes since the start
 	lastRequestedKbps int       // last rate that Core sent to the actuator
 	paused            bool      // true: Core does not change the shaper rate
+
+	// Stall recovery (StallRecoveryMs)
+	achievedHist []achievedSample // achieved rates of the last 2 × StallRecoveryMs
+	stallStart   time.Time        // first decrease of the bufferbloat episode, or zero
+	stallRefKbps float64          // rate before the episode
+	recoveredAt  time.Time        // time of the last recovery
+}
+
+// achievedSample is an achieved rate at a time.
+type achievedSample struct {
+	at   time.Time
+	kbps float64
 }
 
 // reflectorDelay is the delay data for one reflector.
@@ -262,6 +274,11 @@ func (c *Core) HandleRate(stats RateStats) {
 	c.rateSeen = true
 	c.dl.achievedKbps = stats.DlRateKbps
 	c.ul.achievedKbps = stats.UlRateKbps
+	if c.cfg.StallRecoveryMs > 0 {
+		period := time.Duration(c.cfg.StallRecoveryMs) * time.Millisecond
+		c.dl.addAchieved(stats.Timestamp, stats.DlRateKbps, period)
+		c.ul.addAchieved(stats.Timestamp, stats.UlRateKbps, period)
+	}
 
 	// Update load percentages
 	if c.dl.shaperRateKbps > 0 {
@@ -549,6 +566,13 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	bbDetected := bbCount >= c.cfg.BufferbloatDetectionThr
 	bbRefractoryDur := time.Duration(c.cfg.BufferbloatRefractoryPeriodMs) * time.Millisecond
 
+	// A recovery is possible only in StallRecoveryMs after the first
+	// decrease. Expire it here, also when the delay is still high: a late
+	// reply with a low delay must not start a recovery after the deadline.
+	if !ds.stallStart.IsZero() && now.Sub(ds.stallStart) > time.Duration(c.cfg.StallRecoveryMs)*time.Millisecond {
+		ds.stallStart = time.Time{}
+	}
+
 	if bbDetected {
 		// With RefractoryOnDecrease, decrease the rate only one time in
 		// each refractory period. After a decrease, the detection window
@@ -564,10 +588,26 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		if c.cfg.RepeatDecreaseOnRise && inRefractory && deltaUs <= ds.lastBBDeltaUs {
 			return
 		}
+		if c.cfg.StallRecoveryMs > 0 && c.lastPingOWD && !ds.bbDetected && ds.stallStart.IsZero() {
+			// Only with one-way delays: only then the decreases start
+			// from the achieved rate, which a stall decreases. With RTT/2,
+			// a queue in the other direction also gives bufferbloat here.
+			// A recovery needs a measured rate before the episode. Below
+			// the minimum rate, the achieved rate is not a measurement of
+			// the capacity.
+			window := time.Duration(c.cfg.StallRecoveryMs) * time.Millisecond
+			if peak := ds.peakAchieved(now, window); peak > float64(dc.MinRateKbps) {
+				ds.stallStart = now
+				ds.stallRefKbps = math.Min(peak, ds.shaperRateKbps)
+			}
+		}
 		ds.bbDetected = true
 		ds.lastBBTime = now
 		ds.lastBBDeltaUs = deltaUs
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
+	} else if !exceeded && c.stallRecovered(dir, now) {
+		// The delay is low again soon after the first decrease: a short
+		// capacity stall, not a lower capacity.
 	} else if ds.loadPercent >= c.cfg.HighLoadThr {
 		// High load and no bufferbloat: increase the rate
 		if !ds.bbDetected || now.Sub(ds.lastBBTime) > bbRefractoryDur {
@@ -734,4 +774,80 @@ func clamp(v, min, max float64) float64 {
 		return max
 	}
 	return v
+}
+
+// addAchieved keeps the achieved rates of the last two periods: a ping
+// that comes after a newer sample can need the older samples. It ignores a
+// sample from before the last recovery: the rate and ping channels can
+// deliver it late, and it shows the capacity before the recovery.
+func (ds *dirState) addAchieved(at time.Time, kbps float64, period time.Duration) {
+	if !at.After(ds.recoveredAt) {
+		return
+	}
+	ds.achievedHist = append(ds.achievedHist, achievedSample{at, kbps})
+	n := 0
+	for n < len(ds.achievedHist) && at.Sub(ds.achievedHist[n].at) > 2*period {
+		n++
+	}
+	ds.achievedHist = ds.achievedHist[n:]
+}
+
+// peakAchieved returns the highest achieved rate of the last period. It
+// ignores samples after now: the rate channel can deliver a sample before
+// an older ping.
+func (ds *dirState) peakAchieved(now time.Time, period time.Duration) float64 {
+	var peak float64
+	for _, s := range ds.achievedHist {
+		if age := now.Sub(s.at); age >= 0 && age <= period {
+			peak = math.Max(peak, s.kbps)
+		}
+	}
+	return peak
+}
+
+// stallRecovered sets the rate back after a short capacity stall. A stall
+// decreases the achieved rate, and each ping in the stall decreases the rate
+// again, frequently to the minimum. If the delay is low again in
+// StallRecoveryMs after the first decrease, the capacity did not decrease:
+// set the rate to ShaperRateMaxAdjustDownBufferbloat times the rate before
+// the stall. It returns true if it changed the rate.
+func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
+	ds := c.getDirState(dir)
+	if c.cfg.StallRecoveryMs <= 0 || ds.stallStart.IsZero() {
+		return false
+	}
+	// Only a reply with one-way delays shows the delay of this direction.
+	// A timestamp pinger also sends replies with only the RTT.
+	if !c.lastPingOWD {
+		return false
+	}
+	// A reply from before the first decrease is not evidence that the
+	// delay is low again: the pingers can deliver replies out of order.
+	if now.Before(ds.stallStart) {
+		return false
+	}
+	window := time.Duration(c.cfg.StallRecoveryMs) * time.Millisecond
+	start := ds.stallStart
+	ds.stallStart = time.Time{}
+	if now.Sub(start) > window {
+		return false
+	}
+	dc := c.link.DirConfig(dir)
+	newRate := clamp(ds.stallRefKbps*c.cfg.ShaperRateMaxAdjustDownBufferbloat, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+	if newRate <= ds.shaperRateKbps {
+		return false
+	}
+	c.logger.Debugf("[%s] [%s] stall recovery: rate %.0f -> %.0f kbps", c.name, dir, ds.shaperRateKbps, newRate)
+	ds.shaperRateKbps = newRate
+	// Remove the samples up to the recovery. Keep newer samples: the rate
+	// channel can deliver them before this ping.
+	n := 0
+	for n < len(ds.achievedHist) && !ds.achievedHist[n].at.After(now) {
+		n++
+	}
+	ds.achievedHist = ds.achievedHist[n:]
+	ds.recoveredAt = now
+	ds.bbDetected = false
+	c.applyRate(dir)
+	return true
 }
