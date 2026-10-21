@@ -283,7 +283,7 @@ Discussion (2026-10-17, user decision: **option 1 for now**). A third option was
 - Against option 1: 2 packages and 2 pages more. The SQM rates are not correct while the daemon runs. The user must type the IFB name (`ifb4<wan>`, cut to 15 characters).
 - Option 2 costs: our own reconnect handling (hotplug; USB modems remove and add the device), detection of SQM on the same device, cleanup, and the CAKE options UI. Size M.
 - If we do option 2 later: a switch for each link (off = SQM, as today), one WAN device field, few CAKE options plus a free-text field. Write the reconnect tests first (ifdown/ifup, device removed and added again) in the VM and on the GL-MT6000 with the 5G modem. Make it the default for new links only when these tests pass.
-- Small help for option 1 (issue #74): the link modal can propose the interfaces from `/etc/config/sqm` (WAN for upload, `ifb4<wan>` for download). L7 docs: a section "Set up CAKE with SQM".
+- Small help for option 1 (issue #74, done in #77): the link modal proposes the interfaces from `/etc/config/sqm` (WAN for upload, `ifb4<wan>` for download). L7 docs: a section "Set up CAKE with SQM".
 
 ## 10. Test environment (no router at hand)
 
@@ -344,7 +344,29 @@ Each phase is a PR, with the Copilot review cycles.
 | L7 | Done (2026-10-16): #52 merged. 2 Copilot cycles (fix: enable the service after the installation). README: install from a release, UCI heading, 4 screenshots in docs/images; tests/screenshots.js makes them again from the VM. The release workflow was already done in L1. |
 | Issues | 2026-10-16: #53 colors: done (#60, core #61 `high_delay`). #54 graph history: done (core #59, opt-in `status_history` #63 after the user review, LuCI #62). #58 cursor on all graphs of a link and the time of the sample: done. #64 CI time: done (#66). Open: #55 README, #56 calibration (in progress), #57 passive and continuous calibration. |
 | CI | 2026-10-16: #66 merged: the job vm is a matrix (service + 3 browser shards, each with its own VM; wait for the WAN of the VM before the tests; the VM state in the artifacts on a failure). Package build as a reusable workflow: package-x86 (needed by vm), package-arm only on main and releases. Fixed flaky tests: dropdown selection (#65), sample times instead of ages in the cursor tests, history tests check the samples. VM tests now approximately 16 min after the start instead of 26 min. |
-| L5 | In progress (2026-10-16). Core #67 (online calibration session): 10 Copilot rounds, all findings fixed, CI green; waits for the safety review of the user (Copilot asks for a human review, the session removes the shaper limit for some time). LuCI part: done locally (branch feat/luci-calibration, one commit): button "Calibrate…", dialog with load time and data volume, load from the browser (Cloudflare `__down`/`__up`, 4 streams each), progress, stop, resume after a reload, result table with current/proposed values and apply to UCI, rpcd methods `calibrate_start/status/stop` (write ACL); 6 Playwright tests (fake session and fake endpoints, one real session start/stop), VM test checks. PR (Closes #56) after the merge of #67. Not possible in the VM: the browser traffic does not go through the VM (a SOCKS proxy over SSH into the VM would work). Idea: show the last result after the session. |
+| L5 | Done (2026-10-17): core #67 (online calibration session, daemon runs it) and LuCI #70 (Closes #56): button "Calibrate…", load from the browser (Cloudflare `__down`/`__up`), progress, stop, resume after a reload, result table with current/proposed values and apply to UCI. Follow-ups: #79 longer load phases, #80 no resume of an old session after the dialog opened, #85 no data limit. |
+| Shaping off | Done (2026-10-17): core #71 (`unshape LINK [SECONDS]`, `shape LINK` on the control socket), LuCI #72 (Closes #68): switch on the status page. Without SECONDS, the shaping stays off until `shape` or a restart of the program (not saved in UCI). |
+| Bufferbloat test | Done (2026-10-17): #76 (Closes #69). Test on the status page, with the load from the browser: no load, download, upload, both; grade A+ to F; optional comparison without shaping. #92: the phase without load only in the last run. #75: number of ping replies in the status (the test uses it). |
+| SQM interfaces | Done (2026-10-17): #77 (Closes #74). The link modal proposes the interfaces from an enabled SQM queue (WAN for upload, `ifb4<wan>` for download) and checks the SQM queue. |
+| Docs | Done (2026-10-17): #78 (Closes #55). README shorter, details in docs/ (luci.md, configuration.md, calibration.md). |
+| Calibration rules | 2026-10-17/18: #88 lower base rate and threshold for a stable link (fiber), #90 reflectors from the good reflectors only (Closes #89), #102 keep the upload base rate on a wired line (cut to the p50 with download load only on a shared link: unstable capacity, cross or grant delay). Live results: memory files fiber-live-reference and 5g-live-reference. |
+| Multi-WAN | Done (2026-10-18): core #94 (`pin LINK SECONDS` / `unpin`: routes the load hosts through the link) and LuCI #95 (Closes #93): the calibration and the bufferbloat test pin the link; the calibration warns if the link rate is below half the browser rate. #103: the warning needs 5 statuses (a false warning on 5G). |
+| Live test setup | Done (2026-10-17): #86. The VM WAN on a host tap device (`VM_WAN_TAP`, NAT on the host, ICMP timestamps go through) and a client network namespace behind the VM (`VM_LAN_TAP`, `scripts/openwrt-vm-client.sh`, Firefox through the VM). 5G: the host routes only the VM subnet through the modem (policy routing), see memory local-5g-test-setup. |
+| CI | 2026-10-17: #81 release SDK images, six browser shards (now 8). #83, #91 flaky tests. #105 (open): the job vm on ubuntu-24.04 (Playwright 1.56 has no Chromium for Ubuntu 26.04, ubuntu-latest). |
+| Package | #104 (open): `conntrack` as a dependency of the LuCI package (the pin then also moves the existing connections; CI checks the tool after the install). |
+
+### Open (2026-10-21)
+
+| Item | Status |
+|---|---|
+| #104 conntrack dependency, #105 CI runner pin | PRs open, Copilot 🟢. |
+| #98 LuCI: switch the link mode on the status page | After the link modes (#96 exploration, #97 core). Data of 2026-10-18 on #96: on 5G, a threshold factor for each direction with a lower limit for the upload (grant delay); higher thresholds give no throughput. No merge of the mode PRs without the user's test. |
+| Line type in the calibration | Idea: the user selects fiber/cable/DSL, 5G/LTE or Starlink; the rules use it in addition to the measurement. After the link modes. |
+| `openwrt-build.sh` | Idea: warn about a stale `prebuilt/` binary. Developer only. |
+| IFB without SQM | Not needed now: the download field is a device select (also free text), and the SQM picker fills it. Only a first setup without SQM must type `ifb4<wan>`. |
+| #57 passive and continuous calibration | Later. |
+| L6 option 2 (own CAKE setup) | Only if users ask (section 9). |
+| Real router | GL-MT6000 (arm64) and EdgeRouter 4 (#101, mips64, slow CPU): install, calibration, bufferbloat test on the real WAN. |
 
 ### L0 decisions and results
 
@@ -392,4 +414,4 @@ Each phase is a PR, with the Copilot review cycles.
 - Browser tests in CI (user request 2026-10-15): Playwright in the job `vm`, `openwrt/luci-app-cake-autorate-go/tests/`. Each Copilot finding got a test that fails with the old code.
 - Checks follow the converter and `Config.Validate`: integers, decimals (LuCI `parseDecimal` = converter syntax), pairs with defaults of empty fields, rates per field, `icmp-timestamp` reflectors with live form values (not for a disabled service or link), absolute log path, interfaces of enabled links only, anonymous or missing global section, link dialog save keeps page edits.
 - Follow-up core PR: `Config.Validate` must reject an interface that more than one direction or link uses (two controllers on one shaper). The page checks this, but a manual UCI or YAML edit can still do it.
-- Local 5G test: later, macvtap passthru on enp7s0 for the VM WAN, host on Wi-Fi (adapter off in BIOS for now). Separate small PR.
+- Local 5G test: done without macvtap (2026-10-18): the VM WAN stays on the tap device, and the host routes only the VM subnet through the modem (policy routing). See the row "Live test setup" in section 13.
