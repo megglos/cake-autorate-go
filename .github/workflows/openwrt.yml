@@ -152,6 +152,9 @@ jobs:
         run: |
           scripts/openwrt-vm.sh start
           scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
+          # The dependencies of the packages are installed (the pin of the
+          # link uses conntrack).
+          scripts/openwrt-vm.sh ssh 'command -v conntrack'
 
       # The VM must finish its start (the WAN gets its address by DHCP)
       # before the browser tests: the start changes the network. Before the
