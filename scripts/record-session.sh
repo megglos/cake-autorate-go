@@ -230,9 +230,9 @@ CAR_PID=""
 LOAD_PID=""
 UP_PID=""
 cleanup() {
-    [ -n "$LOAD_PID" ] && kill "$LOAD_PID" 2>/dev/null && wait "$LOAD_PID" 2>/dev/null
-    [ -n "$UP_PID" ] && kill "$UP_PID" 2>/dev/null && wait "$UP_PID" 2>/dev/null
-    [ -n "$CAR_PID" ] && kill -INT "$CAR_PID" 2>/dev/null && wait "$CAR_PID" 2>/dev/null
+    [ -n "$LOAD_PID" ] && kill "$LOAD_PID" 2>/dev/null && wait "$LOAD_PID" 2>/dev/null || true
+    [ -n "$UP_PID" ] && kill "$UP_PID" 2>/dev/null && wait "$UP_PID" 2>/dev/null || true
+    [ -n "$CAR_PID" ] && kill -INT "$CAR_PID" 2>/dev/null && wait "$CAR_PID" 2>/dev/null || true
     "$CAKE_PC" down "$IFACE" >/dev/null 2>&1 || true
     # Give the files to the user who started sudo.
     if [ -n "${SUDO_USER:-}" ] && [ -d "$OUTDIR" ]; then
