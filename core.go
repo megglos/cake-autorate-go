@@ -809,6 +809,11 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 	if c.cfg.StallRecoveryMs <= 0 || ds.stallStart.IsZero() {
 		return false
 	}
+	// A reply from before the first decrease is not evidence that the
+	// delay is low again: the pingers can deliver replies out of order.
+	if now.Before(ds.stallStart) {
+		return false
+	}
 	window := time.Duration(c.cfg.StallRecoveryMs) * time.Millisecond
 	start := ds.stallStart
 	ds.stallStart = time.Time{}
@@ -822,7 +827,13 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 	}
 	c.logger.Debugf("[%s] [%s] stall recovery: rate %.0f -> %.0f kbps", c.name, dir, ds.shaperRateKbps, newRate)
 	ds.shaperRateKbps = newRate
-	ds.achievedHist = ds.achievedHist[:0]
+	// Remove the samples up to the recovery. Keep newer samples: the rate
+	// channel can deliver them before this ping.
+	n := 0
+	for n < len(ds.achievedHist) && !ds.achievedHist[n].at.After(now) {
+		n++
+	}
+	ds.achievedHist = ds.achievedHist[n:]
 	ds.recoveredAt = now
 	ds.bbDetected = false
 	c.applyRate(dir)

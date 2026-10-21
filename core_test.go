@@ -2136,3 +2136,51 @@ func TestProcessDelay_StallRecoveryOnlyWithOWD(t *testing.T) {
 		t.Errorf("recovery with RTT/2, want none")
 	}
 }
+
+// The pingers can deliver replies out of order. A low-delay reply from
+// before the first decrease must not start a recovery.
+func TestProcessDelay_StallRecoveryIgnoresOlderReply(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.95 })
+	stallRun(c, start, 20, 24, func(int) float64 { return 110 }, func(int) float64 { return 0.2 })
+	if c.dl.stallStart.IsZero() {
+		t.Fatal("no bufferbloat episode")
+	}
+	cut := c.dl.shaperRateKbps
+	// Low-delay replies from before the episode, delivered late.
+	for i := 0; i < 6; i++ {
+		c.HandlePing(owdPing("1.1.1.1", start.Add(time.Duration(10+i)*50*time.Millisecond), 10, 10))
+	}
+	if !c.dl.recoveredAt.IsZero() || c.dl.shaperRateKbps > cut {
+		t.Errorf("recovery from replies before the episode (rate %.0f, cut %.0f), want none", c.dl.shaperRateKbps, cut)
+	}
+}
+
+// A throughput sample from after a recovery can arrive before the ping of
+// the recovery. The next episode must be able to use it.
+func TestProcessDelay_StallRecoveryKeepsNewerSamples(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	ms := func(v int) time.Time { return start.Add(time.Duration(v) * time.Millisecond) }
+	stallRun(c, start, 0, 20, func(int) float64 { return 10 }, func(int) float64 { return 0.95 })
+	stallRun(c, start, 20, 24, func(int) float64 { return 110 }, func(int) float64 { return 0.2 })
+	// A sample of 1400 ms arrives before the low-delay pings of 1200 to
+	// 1350 ms that give the recovery.
+	c.HandleRate(RateStats{DlRateKbps: 30000, Timestamp: ms(1400)})
+	for i := 24; i < 28; i++ {
+		c.HandlePing(owdPing("1.1.1.1", ms(i*50), 10, 10))
+	}
+	if c.dl.recoveredAt.IsZero() {
+		t.Fatal("no recovery")
+	}
+	if peak := c.dl.peakAchieved(ms(1450), 500*time.Millisecond); peak != 30000 {
+		t.Errorf("peak %.0f at 1450 ms, want 30000 (the sample of 1400 ms)", peak)
+	}
+}
