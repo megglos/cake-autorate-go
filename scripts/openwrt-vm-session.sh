@@ -57,7 +57,8 @@ put() {
 }
 
 check_name() {
-	[[ ${1:-} =~ ^[A-Za-z0-9_-]+$ ]] || die "NAME must contain only letters, digits, _ and -"
+	[[ ${1:-} =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] ||
+		die "NAME must start with a letter or a digit and contain only letters, digits, _ and -"
 }
 
 cmd_setup() {
@@ -94,7 +95,8 @@ cmd_start() {
 	while [ $# -gt 0 ]; do
 		opt=$1
 		case $opt in
-			-i | -x | -o) die "$opt is set by this script" ;;
+			-i* | -x* | -o*) die "$opt is set by this script" ;;
+			-c?* | -A?* | -U?*) die "$opt: put a space between the option and its value (the script copies the file)" ;;
 			-c)
 				val=${2:?-c needs a file}
 				n=$((n + 1))
