@@ -12,7 +12,9 @@
 #   scripts/openwrt-vm-session.sh setup
 #       install bash, curl, fping, coreutils-date, coreutils-realpath and
 #       procps-ng-pkill (load-gen.sh stops its workers with pkill) in the
-#       VM, and copy the session scripts. If UPSTREAM_DIR (default ../cake-autorate) exists,
+#       VM, and the kernel modules of cake-pc.sh (kmod-sched-cake, kmod-ifb,
+#       kmod-sched-core: act_mirred and cls_matchall). Copy the session
+#       scripts. If UPSTREAM_DIR (default ../cake-autorate) exists,
 #       copy the original cake-autorate too.
 #   scripts/openwrt-vm-session.sh start NAME OPTIONS...
 #       start a session in the background. The OPTIONS go to
@@ -62,7 +64,7 @@ check_name() {
 }
 
 cmd_setup() {
-	vm "apk update >/dev/null && apk add bash curl fping coreutils-date coreutils-realpath procps-ng-pkill >/dev/null && mkdir -p $VM_DIR/scripts $VM_DIR/conf $VM_DIR/out"
+	vm "apk update >/dev/null && apk add bash curl fping coreutils-date coreutils-realpath procps-ng-pkill kmod-sched-cake kmod-ifb kmod-sched-core >/dev/null && mkdir -p $VM_DIR/scripts $VM_DIR/conf $VM_DIR/out"
 	put "$SCRIPT_DIR/record-session.sh" "$VM_DIR/scripts/record-session.sh"
 	put "$SCRIPT_DIR/cake-pc.sh" "$VM_DIR/scripts/cake-pc.sh"
 	put "$SCRIPT_DIR/summarize-session.sh" "$VM_DIR/scripts/summarize-session.sh"
