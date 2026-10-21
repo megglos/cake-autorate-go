@@ -780,11 +780,13 @@ func (ds *dirState) addAchieved(at time.Time, kbps float64, period time.Duration
 	ds.achievedHist = ds.achievedHist[n:]
 }
 
-// peakAchieved returns the highest achieved rate of the last period.
+// peakAchieved returns the highest achieved rate of the last period. It
+// ignores samples after now: the rate channel can deliver a sample before
+// an older ping.
 func (ds *dirState) peakAchieved(now time.Time, period time.Duration) float64 {
 	var peak float64
 	for _, s := range ds.achievedHist {
-		if now.Sub(s.at) <= period {
+		if age := now.Sub(s.at); age >= 0 && age <= period {
 			peak = math.Max(peak, s.kbps)
 		}
 	}

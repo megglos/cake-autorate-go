@@ -2024,3 +2024,31 @@ func TestProcessDelay_StallRecoveryIgnoresLateSample(t *testing.T) {
 		t.Errorf("rate %.0f after the second stall, want 0.75 times the new achieved rate (approximately %.0f): the late sample must not count", c.dl.shaperRateKbps, 0.75*0.3*first)
 	}
 }
+
+// A throughput sample from after the first ping of an episode can arrive
+// before that ping. The rate before the episode must not use it.
+func TestProcessDelay_StallRecoveryIgnoresNewerSample(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.StallRecoveryMs = 500
+	c.link.Download.Adjust = true
+	c.dl.shaperRateKbps = 40000
+	start := time.Now()
+	low := func(int) float64 { return 10 }
+	lowLoad := func(int) float64 { return 0.3 }
+
+	// The capacity is 30 % of the rate for more than stall_recovery_ms.
+	stallRun(c, start, 0, 20, low, lowLoad)
+	rate := c.dl.shaperRateKbps
+	// A sample from after the first pings of the stall (1.2 s), with the
+	// full rate, arrives before them.
+	c.HandleRate(RateStats{DlRateKbps: rate, Timestamp: start.Add(1200 * time.Millisecond)})
+	for i := 20; i < 24; i++ {
+		c.HandlePing(owdPing("1.1.1.1", start.Add(time.Duration(i)*50*time.Millisecond), 10, 110))
+	}
+	if c.dl.stallStart.IsZero() {
+		t.Fatal("no bufferbloat episode")
+	}
+	if c.dl.stallRefKbps > 0.5*rate {
+		t.Errorf("rate before the episode %.0f, want the achieved rate before it (approximately %.0f): the newer sample must not count", c.dl.stallRefKbps, 0.3*rate)
+	}
+}
