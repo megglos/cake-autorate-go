@@ -681,8 +681,11 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	var factor float64
 	if c.cfg.IncreaseToDelayThr {
 		// As in the original: the factor is 1 up to maxUpThrUs and 0 at
-		// the delay threshold.
-		if thresholdUs <= maxUpThrUs {
+		// the delay threshold. A delay at or above the delay threshold
+		// gives no increase, also when maxUpThrUs is not below it.
+		if deltaUs >= thresholdUs {
+			factor = 0
+		} else if thresholdUs <= maxUpThrUs {
 			factor = 1
 		} else {
 			factor = (thresholdUs - deltaUs) / (thresholdUs - maxUpThrUs)

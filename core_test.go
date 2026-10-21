@@ -459,16 +459,28 @@ func TestAdjustRateHighLoad_IncreaseToDelayThr(t *testing.T) {
 	}
 }
 
-// TestAdjustRateHighLoad_IncreaseToDelayThrUpAboveDelayThr checks that
-// increase_to_delay_thr gives the maximum increase when the up threshold is
-// not below the delay threshold (no division by zero).
-func TestAdjustRateHighLoad_IncreaseToDelayThrUpAboveDelayThr(t *testing.T) {
-	c, _ := newTestCore(t)
-	c.cfg.IncreaseToDelayThr = true
-	c.dl.shaperRateKbps = 20000
-	c.adjustRateHighLoad(DL, 5000, 10000)
-	if want := 20000 * c.cfg.ShaperRateMaxAdjustUpLoadHigh; math.Abs(c.dl.shaperRateKbps-want) > 0.01 {
-		t.Errorf("rate %.2f, want %.2f", c.dl.shaperRateKbps, want)
+// TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr checks
+// increase_to_delay_thr when the up threshold (10 ms) is not below the
+// delay threshold: the maximum increase below the delay threshold (no
+// division by zero), no increase at and above it.
+func TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr(t *testing.T) {
+	cases := []struct {
+		thrMs, deltaMs float64
+		factor         float64
+	}{
+		{10, 5, 1}, {10, 10, 0}, {10, 15, 0},
+		{8, 5, 1}, {8, 8, 0}, {8, 12, 0},
+	}
+	for _, tc := range cases {
+		c, _ := newTestCore(t)
+		c.cfg.IncreaseToDelayThr = true
+		c.dl.shaperRateKbps = 20000
+		c.adjustRateHighLoad(DL, tc.deltaMs*1000, tc.thrMs*1000)
+		minAdj, maxAdj := c.cfg.ShaperRateMinAdjustUpLoadHigh, c.cfg.ShaperRateMaxAdjustUpLoadHigh
+		want := 20000 * (minAdj + tc.factor*(maxAdj-minAdj))
+		if math.Abs(c.dl.shaperRateKbps-want) > 0.01 {
+			t.Errorf("thr=%.0f delta=%.0f ms: rate %.2f, want %.2f", tc.thrMs, tc.deltaMs, c.dl.shaperRateKbps, want)
+		}
 	}
 }
 

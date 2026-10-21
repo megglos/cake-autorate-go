@@ -189,8 +189,9 @@ type simScenario struct {
 	// constant.
 	ulGrantMs, ulGrantJitterMs float64
 	// dlGrantMs is the mean download delay that the radio adds when the
-	// download is active (exponential distribution, for each ping). The
-	// download shaper cannot remove it.
+	// download is active. The download shaper cannot remove it. The TCP
+	// flows and the latency score get the mean, each ping also gets a
+	// random part (exponential distribution around the mean).
 	dlGrantMs float64
 
 	// reflectorTimeMs is the time in the reflector (ICMP timestamps only):
@@ -366,8 +367,9 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 		grantActive := math.Min(ulUse/0.05, 1)
 		couplingMs := (sc.ulCouplingMs+sc.ulCouplingJitterMs)*couplingActive +
 			(sc.ulGrantMs+sc.ulGrantJitterMs)*grantActive
-		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)
-		dl.step(t, simStepMs, base0, dlRev)
+		dlGrantMs := sc.dlGrantMs * math.Min(dlUse/0.2, 1)
+		dlRev, ulRev := ul.bottleneckDelayMs(t)+couplingMs, dl.bottleneckDelayMs(t)+dlGrantMs
+		dl.step(t, simStepMs, base0+dlGrantMs, dlRev)
 		// The upload TCP flows also see the coupling delay on their
 		// forward path.
 		ul.step(t, simStepMs, base0+couplingMs, ulRev)
@@ -382,7 +384,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 			ulCap += ul.capacity(t) * simStepMs
 		}
 
-		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t), ul.bottleneckDelayMs(t)+couplingMs
+		dlQueueMs, ulQueueMs := dl.bottleneckDelayMs(t)+dlGrantMs, ul.bottleneckDelayMs(t)+couplingMs
 		queueMs := dlQueueMs + ulQueueMs
 
 		if core != nil {
@@ -403,7 +405,7 @@ func runSim(sc simScenario, policy simPolicy) simResult {
 				// Then the other scenarios keep the same random sequence.
 				var ulNoise, dlNoise float64
 				if sc.dlGrantMs > 0 {
-					dlNoise = sc.dlGrantMs * rng.ExpFloat64() * math.Min(dlUse/0.2, 1)
+					dlNoise = dlGrantMs * (rng.ExpFloat64() - 1)
 				}
 				if sc.ulCouplingJitterMs > 0 {
 					ulNoise = sc.ulCouplingJitterMs * (rng.ExpFloat64() - 1) * couplingActive
