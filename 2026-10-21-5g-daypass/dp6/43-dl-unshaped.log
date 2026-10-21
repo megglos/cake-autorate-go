@@ -1,0 +1,46 @@
+2026/10/21 19:30:01.268026 [INFO] cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc starting (1 link(s))
+2026/10/21 19:30:01.268283 [INFO] recording events to out/dp6/43-dl-unshaped.jsonl.gz
+2026/10/21 19:30:01.268493 [INFO] [wan] controller started in RUNNING state
+2026/10/21 19:30:01.268501 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 19:30:01.268515 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:31:24.268533 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 19:31:24.268546 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/21 19:31:24.268547 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/21 19:31:24.268549 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/21 19:31:24.268550 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 19:31:24.268742 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:31:26.268850 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 5/60)
+2026/10/21 19:31:26.268856 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/21 19:31:26.268857 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/21 19:31:26.268859 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 19:31:26.268918 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:31:30.268606 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 6/60)
+2026/10/21 19:31:30.268618 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 6/60)
+2026/10/21 19:31:30.268619 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/21 19:31:30.268620 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 19:31:30.268622 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/21 19:31:30.268623 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/21 19:31:30.268728 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:31:42.269209 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/21 19:31:42.269221 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 4/60)
+2026/10/21 19:31:42.269223 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 4/60)
+2026/10/21 19:31:42.269224 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/21 19:31:42.269225 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/21 19:31:42.269227 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 4/60)
+2026/10/21 19:31:42.269360 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:32:05.268532 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/21 19:32:05.268540 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/21 19:32:05.268542 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/21 19:32:05.268543 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 4/60)
+2026/10/21 19:32:05.268544 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/21 19:32:05.268629 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:32:10.268913 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 19:32:10.269046 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:32:21.335806 [INFO] received signal interrupt, shutting down
+2026/10/21 19:32:21.335893 [INFO] [wan] controller stopped
+2026/10/21 19:32:21.335914 [INFO] cake-autorate-go stopped
+               curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+[load-gen] Done.

@@ -1,0 +1,37 @@
+2026/10/21 19:01:57.430510 [INFO] cake-autorate-go 1.0.0-alpha.1-395-g6e8dbca-inc starting (1 link(s))
+2026/10/21 19:01:57.430750 [INFO] recording events to out/dp6/31-dl-unshaped.jsonl.gz
+2026/10/21 19:01:57.430970 [INFO] [wan] controller started in RUNNING state
+2026/10/21 19:01:57.430978 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 19:01:57.430992 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:03:20.431620 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/21 19:03:20.431634 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/21 19:03:20.431636 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/21 19:03:20.431637 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/21 19:03:20.431638 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 19:03:20.431639 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 19:03:20.431813 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:03:22.431974 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/21 19:03:22.431984 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/21 19:03:22.431985 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/21 19:03:22.431986 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/21 19:03:22.432085 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:03:24.431084 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 5/60)
+2026/10/21 19:03:24.431095 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/21 19:03:24.431096 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 19:03:24.431098 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 19:03:24.431214 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 19:04:17.495822 [INFO] received signal interrupt, shutting down
+2026/10/21 19:04:17.495875 [INFO] [wan] controller stopped
+2026/10/21 19:04:17.495877 [INFO] cake-autorate-go stopped
+-gen] [19:03:52] 100/120s elapsed, 8 workers active, eth1: dl 185.6 Mbit/s, ul 1.1 Mbit/s
+[load-gen] [19:04:02] 110/120s elapsed, 8 workers active, eth1: dl 185.5 Mbit/s, ul 1.1 Mbit/s
+[load-gen] [19:04:12] 120/120s elapsed, 8 workers active, eth1: dl 189.4 Mbit/s, ul 1.2 Mbit/s
+[load-gen] [19:04:12] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+[load-gen] Done.
