@@ -1,0 +1,47 @@
+2026/10/21 17:42:02.476338 [INFO] cake-autorate-go 1.0.0-alpha.1-386-g4e997cb starting (1 link(s))
+2026/10/21 17:42:02.476597 [INFO] recording events to out/dp5/61-both-unshaped.jsonl.gz
+2026/10/21 17:42:02.476761 [INFO] [wan] controller started in RUNNING state
+2026/10/21 17:42:02.476766 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/21 17:42:02.476776 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:43:29.477308 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 17:43:29.477321 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/21 17:43:29.477322 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/21 17:43:29.477507 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:43:30.477356 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 3/60)
+2026/10/21 17:43:30.477567 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:43:33.477265 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/21 17:43:33.477480 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:43:57.477530 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 5/60)
+2026/10/21 17:43:57.477551 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 5/60)
+2026/10/21 17:43:57.477555 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 5/60)
+2026/10/21 17:43:57.477557 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 5/60)
+2026/10/21 17:43:57.477558 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 5/60)
+2026/10/21 17:43:57.477560 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 6/60)
+2026/10/21 17:43:57.477705 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:43:59.476904 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 3/60)
+2026/10/21 17:43:59.476951 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 3/60)
+2026/10/21 17:43:59.476954 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/21 17:43:59.476956 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 17:43:59.477245 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:44:01.477369 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/21 17:44:01.477375 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/21 17:44:01.477444 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:44:04.477230 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 3/60)
+2026/10/21 17:44:04.477248 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/21 17:44:04.477250 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/21 17:44:04.477252 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/21 17:44:04.477424 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/21 17:44:22.621572 [INFO] received signal interrupt, shutting down
+2026/10/21 17:44:22.621636 [INFO] [wan] controller stopped
+2026/10/21 17:44:22.621643 [INFO] cake-autorate-go stopped
+
+[load-gen] [17:44:17] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+[load-gen] Done.

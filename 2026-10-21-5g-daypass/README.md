@@ -15,7 +15,8 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp3` | unshaped, autorate, up20, up30, upstream-fts | dl ul both | 120 s | 2 |
 | `dp4` | unshaped, autorate, rod, rdr, rodlcd, upstream-fts | dl both | 120 s | 2 |
 | `dp5` | unshaped, autorate, rod, rdr | dl both | 120 s | 8 |
-| `dp6` | unshaped, autorate, rod, rdr, upstream-fts | dl | 120 s | 12 |
+| `dp6` | unshaped, autorate, rod, inc, incrod, upstream-fts | dl | 120 s | 12 |
+| `dp7` | unshaped, autorate, rod, inc, incrod, upstream-fts | both | 120 s | 12 |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
@@ -30,6 +31,10 @@ Policy names:
 - `rod`: `refractory_on_decrease: true`.
 - `rdr`: `repeat_decrease_on_rise: true`.
 - `rodlcd`: `rod` and `lcd`.
+- `inc`: `increase_to_delay_thr: true` (branch `feat/increase-to-threshold`,
+  build 1.0.0-alpha.1-395-g6e8dbca-inc; dp6 and dp7 use this build for all
+  policies).
+- `incrod`: `inc` and `rod`.
 - `upstream-fts`: the original cake-autorate.
 
 Saturation check (dp1): dl 169/234/248 Mbit/s with 4/8/16 workers, ul
