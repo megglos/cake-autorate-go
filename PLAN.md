@@ -153,6 +153,19 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
 - Upstream vs ours on 5G (step 8): `-U fts=recordings/upstream-5g-fping-ts.sh` vs `5g-s7-learn-u20.yaml` (our best 5G profile), modes `ul both`, `-W 30`, 2 rounds = 12 blocks ≈ 40 min. Gives the main result of the comparison on the real link.
 - Not needed: a re-test of the latency target after the #27 changes (they affect the reference at moderate load and RTT mode; session 8 used OWD at full load, the main path did not change).
 
+## Download gap on 5G (2026-10-21)
+
+Reference of 2026-10-18 (5G via cav1): shaped DL 91-110 Mbit/s, unshaped 147-159 (-30 %). Cause in `recordings/5g-autorate-20261018-1351.jsonl.gz` (per-second timeline and cut episodes, scripts in the session scratchpad):
+
+- 10 of 13 DL cut episodes ended at 14-26 % of the rate before, most at the minimum (34 Mbit/s), while the link gave 100-208 Mbit/s in the second before.
+- Mechanism 1: a capacity stall of 200-400 ms drops the achieved rate (155 -> 40); the cut from the achieved rate (F2) goes to the minimum. The delay is low again 200-300 ms later.
+- Mechanism 2: without `refractory_on_decrease`, each ping with bufferbloat cuts again (8 cuts in 370 ms, 239 -> 34), each from the falling achieved rate.
+- The rate then needs 6-10 s to increase again. A speed test of 10-15 s spends most of its time there.
+
+Fix: PR #106, option `stall_recovery_ms` (default off): if the delay is low again in this time after the first cut of an episode, set the rate to 0.75 x the rate before the episode. Sim scenario `5g-stalls` (8 seeds): DL 73-80 % -> 83-87 % (+7 ms p95); with DL threshold x0.6 the same p95 as now. Rejected: a limit of the cut depth per period (p95 5g-variable 53 -> 100-270 ms: real capacity drops converge too slowly).
+
+Next: live A/B on 5G (bufferbloat test, `stall_recovery_ms` 0/500, DL threshold 36/22), then decide the default and whether the calibration proposes it. #106 waits for this test (no merge before).
+
 ## Lessons from steps 1 and 2
 
 1. **The latency under load is high because of the default thresholds.** With steady load, autorate keeps 40 to 65 ms of excess RTT. The threshold is 30 ms OWD, but the OWD is RTT/2. Thus, the RTT can increase by 60 ms before a cut. To get a low latency, we must fix F4 and then tune the thresholds.
