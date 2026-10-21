@@ -310,3 +310,68 @@ All runs grade A. Recordings: session scratchpad `5grun/rec-*.jsonl.gz` (not kep
 - 19 recoveries: 15 kept the rate for 1.5 s or more, 4 got a new decrease in 1.5 s (21 %).
 - Delay: no increase seen (DL p95 in the DL phase 13.7-32.5 ms with the option, 14.7-50.6 ms without).
 - Upload (separate problem): in the DL phase, the cross delay cuts the UL rate (A1: 94.5 -> 20 Mbit/s with UL idle), and the UL increase is slow because the UL delta under load (15-20 ms, grant delay) is above avg_owd_delta_max_adjust_up_thr_ms (10): the increase factor is then 1.0. Shaped UL 42-91 vs unshaped 99.
+
+## 5G day pass (2026-10-21)
+
+Setup: cav1 on the 5G modem (Telekom mobile), host on Wi-Fi. The VM makes the load (8 curl workers for each direction) and shapes with CAKE on eth1/ifb4eth1 (`scripts/openwrt-vm-session.sh`). Calibration of 2026-10-18: DL 34/130/245, UL 19/94.5/110 Mbit/s, thresholds 36 ms, `icmp-timestamp`, `stall_recovery_ms` 500. Original: cake-autorate ac75f49, `fping-ts`, the same rates, thresholds and reflectors. Saturation check: DL 169/234/248 Mbit/s with 4/8/16 workers, UL 94-96. Unshaped: DL 470-790 ms excess RTT (p50), 140-240 Mbit/s.
+
+Raw data: branch `recordings`, directory `2026-10-21-5g-daypass` (README with all policies and configs).
+
+| Session | Policies | Modes | Block | Rounds |
+|---|---|---|---|---|
+| dp2 | default, lcd, lcd+UL up thr 20, original | dl ul both | 60 s | 2 |
+| dp3 | default, up thr 20, up thr 30 (both directions), original | dl ul both | 120 s | 2 |
+| dp4 | default, rod, rdr, rod+lcd, original | dl both | 120 s | 2 |
+| dp5 | default, rod, rdr | dl both | 120 s | 8 |
+| dp6 | default, rod, inc, inc+rod, original (build with `increase_to_delay_thr`) | dl | 120 s | 12 |
+| dp7 | default, rod, inc+rod, rod+lcd, original | both | 120 s | 12 (overnight) |
+
+rod = `refractory_on_decrease`, rdr = `repeat_decrease_on_rise`, lcd = `learn_cross_delay`, inc = `increase_to_delay_thr` (new option, branch `feat/increase-to-threshold`). All sessions have an unshaped block in each round.
+
+Method: each round has one block of each policy, in a fixed order. The cell changes much between blocks (the same policy: 40-79 % of unshaped DL). Thus the comparison uses pairs (variant minus default in the same round and mode, absolute Mbit/s and ms) and a t-test (95 %, * = significant). The % of the unshaped block of the round is not a good reference: it adds the noise of one more block.
+
+### Download only (pairs from dp2-dp6)
+
+| Variant - default | n | DL Mbit/s | p50 ms | p99 ms |
+|---|---|---|---|---|
+| rod | 22 | +12 ± 11 * | +0.9 ± 0.8 * | -18 ± 30 |
+| inc | 12 | +16 ± 21 | +1.7 ± 1.2 * | +16 ± 37 |
+| inc + rod | 12 | +22 ± 22 * | +3.9 ± 1.9 * | +33 ± 63 |
+| original | 18 | +25 ± 16 * | +6.9 ± 1.6 * | +24 ± 41 |
+| rdr | 10 | -7 ± 18 | -0.8 ± 1.1 | +5 ± 33 |
+| up20, up30, lcd, lcd+up20 | 2 each | -18 to +11 (not significant) | | |
+
+Means: default DL 55 % of unshaped, excess RTT 26/98/186 ms (p50/p95/p99, n=26); original 66 %, 33/117/213 ms (n=18).
+
+- The original gets more download, but with more delay. This is a trade-off, not a fault of the default.
+- rod gives +12 Mbit/s (about +11 %) for +1 ms p50 and no p99 cost. Cause: the default decreases at each delayed ping. In a radio stall, many pings in a row are delayed and the achieved rate is low, so the rate falls to the minimum. In dp6, the default made 50-95 cuts per 120 s block (2-17 to the minimum rate), rod 22-45 (0-3 to the minimum).
+- inc: the default increase factor is 0 at a delay of `avg_owd_delta_max_adjust_up_thr_ms` (10 ms). On this cell the DL delay under load is 14-17 ms also without a queue, so the rate increases only slowly. inc uses the factor of the original (1 up to 10 ms, 0 at the delay threshold). Alone, it makes about 2 times more cuts (150-190 per block) and the gain is not significant. With rod, it gets most of the gain of the original for half of its delay cost.
+- The trade-off is almost linear: default -> rod -> inc+rod -> original: +0 / +12 / +22 / +25-28 Mbit/s for +0 / +1 / +4 / +7 ms p50.
+
+### Upload only (dp2, dp3, 4 blocks)
+
+| Policy | p50/p95/p99 ms | UL |
+|---|---|---|
+| unshaped | 94/118/134 | 92 Mbit/s (100 %) |
+| default | 22/49/62 | 86 Mbit/s (94 %) |
+| original | 30/68/86 | 83 Mbit/s (91 %) |
+
+The default is better than the original in delay (p50 -7.6 ms *, p99 -24 ms *) and equal in throughput. up20, up30, lcd and lcd+up20 give no gain.
+
+### Both directions (dp2-dp5; dp7 adds 12 rounds)
+
+| Variant - default | n | DL Mbit/s | p50 ms | p99 ms |
+|---|---|---|---|---|
+| rod | 10 | +14 ± 18 | +2.8 ± 1.1 * | +4 ± 27 |
+| rdr | 10 | +15 ± 29 | +1.4 ± 1.1 * | +39 ± 153 |
+| original | 6 | +25 ± 23 * | +16 ± 3 * | +36 ± 49 |
+
+Means: default DL 61 % and UL 74 Mbit/s (unshaped: 44 Mbit/s UL, the DL load starves it), 30/81/153 ms (n=14); original 80 %, 73 Mbit/s, 47/121/179 ms (n=6). lcd gave +8 Mbit/s UL in dp2/dp3 (2 blocks, not significant).
+
+### Conclusions
+
+- Delay: the default has the lowest p50 in all modes. Against the original: DL only -7 ms, UL only -8 ms, both -16 ms (all significant).
+- Throughput: the original gets +25 Mbit/s more download (about +20 %) in DL only and in both. The upload is equal.
+- The modes latency / balanced / bandwidth can be option sets (default / rod / inc+rod) instead of threshold factors: on this cell, higher thresholds (up20, up30; 36 -> 54 ms on 2026-10-18) gave no gain.
+- rdr: no gain, remove it from the candidates for 5G.
+- The A/B of rod on 2026-10-18 (LuCI test, 2 runs each, "mixed") was too small: with 22 pairs, rod is significant.
