@@ -14,6 +14,8 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp2` | unshaped, autorate, lcd, lcdup20, upstream-fts | dl ul both | 60 s | 2 |
 | `dp3` | unshaped, autorate, up20, up30, upstream-fts | dl ul both | 120 s | 2 |
 | `dp4` | unshaped, autorate, rod, rdr, rodlcd, upstream-fts | dl both | 120 s | 2 |
+| `dp5` | unshaped, autorate, rod, rdr | dl both | 120 s | 8 |
+| `dp6` | unshaped, autorate, rod, rdr, upstream-fts | dl | 120 s | 12 |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
