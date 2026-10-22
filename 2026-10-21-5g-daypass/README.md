@@ -17,9 +17,17 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp5` | unshaped, autorate, rod, rdr | dl both | 120 s | 8 |
 | `dp6` | unshaped, autorate, rod, inc, incrod, upstream-fts | dl | 120 s | 12 |
 | `dp7` | unshaped, autorate, rod, incrod, rodlcd, upstream-fts | both | 120 s | 12 |
+| `dp8` | unshaped, autorate, rod, incrod, upstream-fts | dl ul both | 120 s | 5 (2) |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
+
+(2) Stopped at block 77 of 90: the VM root file system was full. At night
+the cell gave 420 Mbit/s DL and 141 Mbit/s UL unshaped. This is more than
+the maximum rates of the configs (245000 and 110000 kbit/s), thus all
+shaped policies were at the maximum rate and are equal. Sessions after dp8
+use the configs in `configs-max500` (maximum rates 500000 and 160000 kbit/s,
+all other values unchanged).
 
 Policy names:
 
