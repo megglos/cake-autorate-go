@@ -901,22 +901,40 @@ return view.extend({
 	// the page keep the state of each link.
 	renderReflectors: function(name, reflectors, rows) {
 		const missed = reflectors.reduce((sum, r) => sum + (+r.missed || 0), 0);
-		const summary = [ _('Reflectors: %d in use of %d').format(
-			reflectors.filter((r) => r.active).length, reflectors.length) ];
+		const counts = [ _('%d in use of %d').format(reflectors.filter((r) => r.active).length, reflectors.length) ];
 		if (missed > 0)
-			summary.push(_('%d missed replies').format(missed));
+			counts.push(_('%d missed replies').format(missed));
+		const open = this.reflectorsOpen.has(name);
+		const action = E('span', { 'class': 'reflectors-action', 'style': 'margin-left:auto; font-weight:normal; text-decoration:underline' },
+			open ? _('Hide') : _('Show'));
+		// The flex layout removes the marker of the browser.
+		const arrow = E('span', { 'aria-hidden': 'true' }, open ? '▾' : '▸');
 		return E('details', {
 			'class': 'cake-autorate-reflectors',
-			'open': this.reflectorsOpen.has(name) ? '' : null,
+			'style': 'margin:1em 0 2em',
+			'open': open ? '' : null,
 			'toggle': L.bind(function(ev) {
 				if (ev.target.open)
 					this.reflectorsOpen.add(name);
 				else
 					this.reflectorsOpen.delete(name);
+				arrow.textContent = ev.target.open ? '▾' : '▸';
+				action.textContent = ev.target.open ? _('Hide') : _('Show');
 				saveReflectorsOpen(this.reflectorsOpen);
 			}, this)
 		}, [
-			E('summary', { 'data-focus': focusKey(name, 'reflectors', '') }, text(summary.join(', '))),
+			// A bar like the title row of a table: else the closed table
+			// is easy to miss.
+			E('summary', {
+				'data-focus': focusKey(name, 'reflectors', ''),
+				'style': 'display:flex; gap:.75em; align-items:center; padding:.6em .9em; cursor:pointer; ' +
+					'border:1px solid rgba(128,128,128,.5); border-radius:4px; background:rgba(128,128,128,.12)'
+			}, [
+				arrow,
+				E('strong', {}, _('Reflectors')),
+				E('span', {}, text(counts.join(', '))),
+				action
+			]),
 			E('table', { 'class': 'table' }, rows)
 		]);
 	},

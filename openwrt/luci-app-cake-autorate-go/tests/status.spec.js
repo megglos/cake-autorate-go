@@ -124,7 +124,7 @@ test('page shows the link, its directions and reflectors', async ({ page }) => {
 	await expect(link.locator('tr[data-dir="ul"]')).toContainText('5.0 to 35.0, base 12.0');
 	// The reflector table is closed at the start.
 	const reflectors = link.locator('details.cake-autorate-reflectors');
-	await expect(reflectors.locator('summary')).toHaveText(/^Reflectors: \d in use of 2/);
+	await expect(reflectors.locator('summary')).toHaveText(/Reflectors\s*\d in use of 2.*Show$/);
 	await expect(link.getByRole('cell', { name: '1.1.1.1', exact: true })).toBeHidden();
 	await reflectors.locator('summary').click();
 	await expect(link.getByRole('cell', { name: '1.1.1.1', exact: true })).toBeVisible();
