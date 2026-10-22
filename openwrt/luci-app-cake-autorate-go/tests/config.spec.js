@@ -594,6 +594,11 @@ test('a configuration from before the modes shows the mode custom', async ({ pag
 		await page.reload();
 		await expect(input(page, 'global', 'mode')).toHaveValue('custom');
 		await expect(modeOption(page, 'refractory_on_decrease')).toBeChecked();
+		// Without the last option that is on, the mode stays custom.
+		await modeOption(page, 'refractory_on_decrease').uncheck();
+		await saveApply(page);
+		expect(vm('uci -q get cake-autorate.global.mode').trim()).toBe('custom');
+		expect(vm('uci -q get cake-autorate.global.refractory_on_decrease || true').trim()).not.toBe('1');
 	}
 	finally {
 		resetConfig();

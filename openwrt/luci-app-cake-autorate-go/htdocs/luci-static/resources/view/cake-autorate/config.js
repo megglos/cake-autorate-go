@@ -332,6 +332,9 @@ function globalSection(m, sid) {
 		return MODE_OPTIONS.some((k) => uci.get('cake-autorate', sid, k) == '1') ? 'custom' : 'balanced';
 	};
 	o.rmempty = false;
+	// Write the shown mode also when it is not in the configuration: else
+	// the program finds balanced when all options are off.
+	o.forcewrite = true;
 
 	// The options apply only in the mode custom. A hidden option keeps its
 	// value (retain): the mode custom of a link or of the status page uses
