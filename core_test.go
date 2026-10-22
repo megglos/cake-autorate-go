@@ -549,6 +549,41 @@ func TestAutoMaxRate_LowLoadStopsHold(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_PauseStopsHold checks that a pause of the rate control
+// stops the hold time.
+func TestAutoMaxRate_PauseStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 500*time.Millisecond)
+	c.dl.paused = true
+	now = runAtMax(c, now, 3*time.Second)
+	c.dl.paused = false
+	runAtMax(c, now, time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s at high load with a pause)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
+// does not move the time of the decrease back.
+func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	t0 := time.Now()
+	c.updateAutoMax(DL, t0)
+	c.updateAutoMax(DL, t0.Add(1000*time.Millisecond))
+	c.updateAutoMax(DL, t0.Add(950*time.Millisecond))
+	c.updateAutoMax(DL, t0.Add(1050*time.Millisecond))
+	if want := 2 * cfgMax * math.Exp(-1.05/autoMaxRateDecayS); math.Abs(c.maxRateKbps(DL)-want) > 0.01 {
+		t.Errorf("max %.2f, want %.2f (1.05 s of decrease)", c.maxRateKbps(DL), want)
+	}
+}
+
 // TestAutoMaxRate_NoIncreaseWithoutCapacity checks that the maximum does
 // not increase when the achieved rate is below 90 % of it.
 func TestAutoMaxRate_NoIncreaseWithoutCapacity(t *testing.T) {

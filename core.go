@@ -878,6 +878,7 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 // Constants of AutoMaxRate.
 const (
 	autoMaxRateHold       = 2 * time.Second
+	autoMaxRateGap        = time.Second // a longer time without an update is a break
 	autoMaxRateStep       = 1.1
 	autoMaxRateUse        = 0.9   // achieved rate at the maximum, relative to the maximum
 	autoMaxRateDecayBelow = 0.8   // the maximum decreases while the rate is below this part of it
@@ -910,12 +911,23 @@ func (c *Core) updateAutoMax(dir Direction, now time.Time) {
 	ds := c.getDirState(dir)
 	cfgMax := float64(c.link.DirConfig(dir).MaxRateKbps)
 	maxKbps := c.maxRateKbps(dir)
+	// The pingers can deliver replies out of order. An older reply does
+	// not move the time back: the next reply would count a time again.
+	if !now.After(ds.autoMaxUpdated) {
+		return
+	}
 	var dt time.Duration
 	if !ds.autoMaxUpdated.IsZero() {
-		// A long time without an update (no load, stall) is not time in use.
-		dt = min(now.Sub(ds.autoMaxUpdated), time.Second)
+		dt = now.Sub(ds.autoMaxUpdated)
 	}
 	ds.autoMaxUpdated = now
+	if dt > autoMaxRateGap {
+		// A break without an update (low load, bufferbloat, pause, stall)
+		// is not time in use: start the hold time again, and do not
+		// decrease the maximum for the break.
+		ds.atMaxSince = time.Time{}
+		dt = 0
+	}
 	if ds.shaperRateKbps >= maxKbps && ds.achievedKbps >= autoMaxRateUse*maxKbps {
 		if ds.atMaxSince.IsZero() {
 			ds.atMaxSince = now
