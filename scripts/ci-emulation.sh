@@ -15,12 +15,13 @@
 # square wave: the high rate and half of it, PERIOD_S each). The kernel of
 # the server namespace replies to ICMP echo and ICMP timestamp requests.
 #
-# The test has two phases (three with -U). Each phase has IDLE_S without load, then LOAD_S
+# The test has three phases (four with -U). Each phase has IDLE_S without load, then LOAD_S
 # with load in the two directions (iperf3):
 #   1. unshaped: CAKE without a rate limit. The modem queue fills. This
 #      phase makes sure that the emulation has bufferbloat.
-#   2. autorate: cake-autorate-go controls CAKE.
-#   3. upstream (only with -U): the original cake-autorate controls CAKE.
+#   2. autorate: cake-autorate-go in the mode latency controls CAKE.
+#   3. balanced: cake-autorate-go in the mode balanced (the default).
+#   4. upstream (only with -U): the original cake-autorate controls CAKE.
 #      This phase is for comparison. It has no limits, and an error in it
 #      does not change the exit code.
 # Then the script compares the results with the limits. The exit code is 1
@@ -53,7 +54,13 @@
 # Each limit is approximately 10 ms or 10 percent points from the worst
 # value (the counts: a factor of 1.5 or more): a regression fails, the
 # run-to-run variation does not.
-#   MAX_P95_MS [55]     autorate: maximum p95 of the excess RTT under load
+#   MAX_P95_MS [55]     autorate (mode latency): maximum p95 of the excess
+#                       RTT under load
+#   MAX_BALANCED_P95_MS [70]  balanced (the default mode): maximum p95 of the
+#                       excess RTT under load. The first run gave 56.8 ms
+#                       (latency: 43.7 ms, cake-autorate: 81.9 ms):
+#                       refractory_on_decrease follows a fast capacity
+#                       decrease more slowly.
 #   MIN_UNSHAPED_P95_MS [500]  unshaped: minimum p95 of the excess RTT
 #   MIN_DL_PCT [75], MIN_UL_PCT [65]  autorate: minimum throughput in
 #                       percent of the mean capacity
@@ -88,6 +95,7 @@ QUEUE=${QUEUE:-1000}
 IDLE_S=${IDLE_S:-10}
 LOAD_S=${LOAD_S:-60}
 MAX_P95_MS=${MAX_P95_MS:-55}
+MAX_BALANCED_P95_MS=${MAX_BALANCED_P95_MS:-70}
 MIN_UNSHAPED_P95_MS=${MIN_UNSHAPED_P95_MS:-500}
 MIN_DL_PCT=${MIN_DL_PCT:-75}
 MIN_SHAPER_EVENTS=${MIN_SHAPER_EVENTS:-200}
@@ -307,8 +315,12 @@ mean_ul=$(( UL_KBPS * (LOAD_S + high_s) / (2 * LOAD_S) ))
 
 phase unshaped
 
-CONFIG="$OUTDIR/config.yaml"
-cat > "$CONFIG" <<EOF
+# run_autorate NAME MODE: runs cake-autorate-go in the link mode MODE for
+# the phase NAME. The recording is NAME.jsonl.gz, the log NAME.log.
+run_autorate() {
+    local name=$1 mode=$2
+    local config="$OUTDIR/config-$name.yaml"
+    cat > "$config" <<EOF
 # Made by ci-emulation.sh.
 links:
   - name: emu
@@ -329,19 +341,24 @@ links:
 ping_method: icmp-timestamp
 pinger_count: 6
 log_to_file: false
+mode: $mode
 EOF
-# Not with r: a function in the background is a subshell, and a kill of its
-# PID does not stop the binary. ip netns exec replaces itself with the
-# command, thus the PID is the PID of the binary.
-ip netns exec "$NS_R" "$BINARY" -config "$CONFIG" -record "$OUTDIR/autorate.jsonl.gz" > "$OUTDIR/autorate.log" 2>&1 &
-AUTORATE_PID=$!
-sleep 5
-kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped"; }
-phase autorate
-kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/autorate.log" >&2; die "cake-autorate-go stopped during the load"; }
-kill "$AUTORATE_PID"
-wait "$AUTORATE_PID" 2>/dev/null || true
-AUTORATE_PID=""
+    # Not with r: a function in the background is a subshell, and a kill of
+    # its PID does not stop the binary. ip netns exec replaces itself with
+    # the command, thus the PID is the PID of the binary.
+    ip netns exec "$NS_R" "$BINARY" -config "$config" -record "$OUTDIR/$name.jsonl.gz" > "$OUTDIR/$name.log" 2>&1 &
+    AUTORATE_PID=$!
+    sleep 5
+    kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/$name.log" >&2; die "cake-autorate-go stopped"; }
+    phase "$name"
+    kill -0 "$AUTORATE_PID" 2>/dev/null || { cat "$OUTDIR/$name.log" >&2; die "cake-autorate-go stopped during the load"; }
+    kill "$AUTORATE_PID"
+    wait "$AUTORATE_PID" 2>/dev/null || true
+    AUTORATE_PID=""
+}
+
+run_autorate autorate latency
+run_autorate balanced balanced
 
 # upstream_ok is 1 when the upstream phase has a result.
 upstream_ok=0
@@ -439,6 +456,10 @@ le() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a != "nan" && a <= b) }' && echo 
 
 u_p95=$(excess_p95 "$OUTDIR/unshaped/ping.txt")
 a_p95=$(excess_p95 "$OUTDIR/autorate/ping.txt")
+b_p95=$(excess_p95 "$OUTDIR/balanced/ping.txt")
+b_dl=$(kbps "$OUTDIR/balanced/iperf-dl.json"); b_ul=$(kbps "$OUTDIR/balanced/iperf-ul.json")
+b_dl_pct=$(( ${b_dl:-0} * 100 / mean_dl ))
+b_ul_pct=$(( ${b_ul:-0} * 100 / mean_ul ))
 u_dl=$(kbps "$OUTDIR/unshaped/iperf-dl.json"); u_ul=$(kbps "$OUTDIR/unshaped/iperf-ul.json")
 a_dl=$(kbps "$OUTDIR/autorate/iperf-dl.json"); a_ul=$(kbps "$OUTDIR/autorate/iperf-ul.json")
 a_dl_pct=$(( ${a_dl:-0} * 100 / mean_dl ))
@@ -465,6 +486,8 @@ owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"pin
     printf '%-9s %8s ms   %9s   %9s\n' unshaped "$u_p95" "${u_dl:-?}" "${u_ul:-?}"
     printf '%-9s %8s ms   %9s   %9s   (%d %% / %d %% of the mean capacity %d / %d)\n' \
         autorate "$a_p95" "${a_dl:-?}" "${a_ul:-?}" "$a_dl_pct" "$a_ul_pct" "$mean_dl" "$mean_ul"
+    printf '%-9s %8s ms   %9s   %9s   (%d %% / %d %%, mode balanced)\n' \
+        balanced "$b_p95" "${b_dl:-?}" "${b_ul:-?}" "$b_dl_pct" "$b_ul_pct"
     if [ "$upstream_ok" -eq 1 ]; then
         printf '%-9s %8s ms   %9s   %9s   (%d %% / %d %%, for comparison: no limits)\n' \
             upstream "$p_p95" "${p_dl:-?}" "${p_ul:-?}" "$p_dl_pct" "$p_ul_pct"
@@ -480,6 +503,9 @@ owd_pings=$(gzip -dc "$OUTDIR/autorate.jsonl.gz" 2>/dev/null | grep '"type":"pin
     check "autorate: excess RTT p95 $a_p95 ms <= $MAX_P95_MS ms" "$(le "$a_p95" "$MAX_P95_MS")"
     check "autorate: download $a_dl_pct % >= $MIN_DL_PCT % of the mean capacity" "$(ge "$a_dl_pct" "$MIN_DL_PCT")"
     check "autorate: upload $a_ul_pct % >= $MIN_UL_PCT % of the mean capacity" "$(ge "$a_ul_pct" "$MIN_UL_PCT")"
+    check "balanced: excess RTT p95 $b_p95 ms <= $MAX_BALANCED_P95_MS ms" "$(le "$b_p95" "$MAX_BALANCED_P95_MS")"
+    check "balanced: download $b_dl_pct % >= $MIN_DL_PCT % of the mean capacity" "$(ge "$b_dl_pct" "$MIN_DL_PCT")"
+    check "balanced: upload $b_ul_pct % >= $MIN_UL_PCT % of the mean capacity" "$(ge "$b_ul_pct" "$MIN_UL_PCT")"
     check "autorate: the shaper rate changed ($shaper_events times)" "$(ge "$shaper_events" "$MIN_SHAPER_EVENTS")"
     check "autorate: netlink, no tc fallback ($tc_fallbacks log lines)" "$(le "$tc_fallbacks" 0)"
     check "autorate: ICMP timestamp replies ($owd_pings)" "$(ge "$owd_pings" "$MIN_OWD_PINGS")"
