@@ -182,6 +182,7 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
+	ds.atMaxSince = time.Time{}
 	c.applyRate(dir)
 	ds.paused = paused
 }
@@ -209,6 +210,8 @@ func (c *Core) SetUnshaped(on bool, now time.Time) {
 	c.idleSince = time.Time{}
 	// The low upload load of the unshaped time is not a low load.
 	c.ul.lowLoadSince = time.Time{}
+	// The time at the maximum (AutoMaxRate) starts again after the change.
+	c.dl.atMaxSince, c.ul.atMaxSince = time.Time{}, time.Time{}
 	if on {
 		c.wake(now)
 	}
@@ -229,6 +232,7 @@ func (c *Core) wake(now time.Time) {
 	c.transitionTo(StateRunning)
 	c.consecutiveTimeouts = 0
 	c.lastPingTime = now
+	c.dl.atMaxSince, c.ul.atMaxSince = time.Time{}, time.Time{}
 	c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
 	c.act.StartPingers()
 }
@@ -243,6 +247,7 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(rateKbps)
+	ds.atMaxSince = time.Time{}
 	c.applyRate(dir)
 	ds.paused = true
 }
@@ -942,6 +947,8 @@ func (c *Core) updateAutoMax(dir Direction, now time.Time) {
 	}
 	ds.atMaxSince = time.Time{}
 	if dt > 0 && ds.shaperRateKbps < autoMaxRateDecayBelow*maxKbps {
-		ds.autoMaxKbps = math.Max(cfgMax, maxKbps*math.Exp(-dt.Seconds()/autoMaxRateDecayS))
+		// Not below the rate / autoMaxRateDecayBelow: one long interval
+		// (slow pings) must not decrease the maximum below the rate.
+		ds.autoMaxKbps = max(cfgMax, ds.shaperRateKbps/autoMaxRateDecayBelow, maxKbps*math.Exp(-dt.Seconds()/autoMaxRateDecayS))
 	}
 }
