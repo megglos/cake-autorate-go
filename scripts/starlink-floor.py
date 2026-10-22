@@ -147,16 +147,20 @@ def boundary_steps(pings, period, offset, window, guard):
     out = []
     b = first
     while b <= t1:
-        steps = [[], [], []]
-        for r, samples in by_refl.items():
-            ts = times[r]
+        # One estimate for each reflector: from the one-way delays if they
+        # have samples before and after the boundary, else from RTT/2.
+        est = {}
+        for (refl, kind), samples in by_refl.items():
+            if refl in est and kind != 'owd':
+                continue
+            ts = times[(refl, kind)]
             before = samples[bisect.bisect_left(ts, b - window):bisect.bisect_left(ts, b - guard)]
             after = samples[bisect.bisect_left(ts, b + guard):bisect.bisect_left(ts, b + window)]
             if not before or not after:
                 continue
-            for i in range(3):
-                steps[i].append(min(s[i + 1] for s in after) - min(s[i + 1] for s in before))
-        if len(steps[0]) >= 2:
+            est[refl] = [min(s[i + 1] for s in after) - min(s[i + 1] for s in before) for i in range(3)]
+        steps = [[e[i] for e in est.values()] for i in range(3)]
+        if len(est) >= 2:
             out.append((b, *(statistics.median(s) for s in steps)))
         b += period
     return out
@@ -236,7 +240,11 @@ def self_test():
     mean_off = statistics.mean(abs(s[3]) for s in off)
     best = max(((statistics.mean(abs(x[3]) for x in boundary_steps(pings, 15, o / 2, 3, 0.2)), o / 2)
                 for o in range(30)))
-    ok = mean_on > 3 * mean_off and best[1] == 12 % 15 and max(abs(x[1]) for x in off) < 5
+    # One reflector with the two kinds of replies is one reflector: no
+    # boundary has 2 or more reflectors.
+    single = [p for p in pings if p[1][0] == 'r0']
+    ok = (mean_on > 3 * mean_off and best[1] == 12 % 15 and max(abs(x[1]) for x in off) < 5
+          and not boundary_steps(single, 15, 12, 3, 0.2))
     print('self-test: mean |rtt step| %.1f ms at the boundaries, %.1f ms in the middle, best offset %.1f s: %s'
           % (mean_on, mean_off, best[1], 'ok' if ok else 'FAILED'))
     return 0 if ok else 1
