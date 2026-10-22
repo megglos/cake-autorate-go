@@ -21,9 +21,9 @@ The questions:
   - `reconfig.yaml`: `balanced` plus `starlink_reconfiguration` (binary from the rebased branch).
   - `upstream-starlink.sh`: the original cake-autorate with `fping` and ICMP timestamps, with its Starlink settings.
 - [ ] Host setup script for Starlink on `enp8s0`, as for 5G: table 55 with the default route through the Starlink gateway, NAT on `enp8s0`, ufw route rules for `cavtap0`. Starlink gives the address with DHCP. Thus, read the gateway from the lease.
-- [ ] Ask the user: the data limit of the Starlink plan (the value of `-L` for the sessions), the Starlink router (bypass mode, or a second NAT), and the location of the dish (obstructions).
+- [ ] Ask the user: the Starlink router (bypass mode, or a second NAT), and the location of the dish (obstructions).
 
-## B. Day 1: first look (approximately 2 hours, approximately 2 GB)
+## B. Day 1: first look (approximately 2 hours)
 
 1. Connect the Starlink router (in bypass mode if possible) to `enp8s0`. Run the host setup. Check from cav1: the public address, the RTT to `100.64.0.1` and to `fra-de-ping.vultr.com`.
 2. Idle recording, 30 minutes, without load, `ping_method: icmp-timestamp`, all candidate reflectors. Use the analysis script: answers question 1 (the floor steps without a queue).
@@ -33,6 +33,8 @@ The questions:
 Stop and look at the data before the A/B sessions. If the floor steps are not at 12/27/42/57: make the period and the offset config keys of `starlink_reconfiguration` before the sessions.
 
 ## C. A/B sessions (2 or 3 days, at different times of the day)
+
+The Starlink plan has no data limit (user, 2026-10-22). Thus, the sessions need no `-L`, and the session can have more rounds than on 5G.
 
 The method of the 5G day pass: `openwrt-vm-session.sh` on cav1, blocks of 120 s, the policies alternate in each round, so they get the same link conditions. Use paired differences per round for the comparison.
 
@@ -62,7 +64,6 @@ Question 6: when a block has an outage, examine the recording. Does the rate com
 
 ## Risks
 
-- **Data limit.** A 120 s download block at 200 Mbit/s uses 3 GB. Set `-L` from the plan of the user, and use fewer rounds of `ul`.
 - **Obstructions.** Outages make blocks not comparable. Mark the blocks with an outage, and leave them out of the paired comparison.
 - **Second NAT in the Starlink router.** It adds a queue that CAKE does not control. Use the bypass mode if possible.
 - **ICMP timestamps blocked.** Then use `icmp` with `latency` (`balanced` is equal to `latency` with `icmp`). `starlink_reconfiguration` needs one-way delays, thus it cannot be used then.
