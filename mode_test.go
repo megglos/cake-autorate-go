@@ -14,6 +14,7 @@ import (
 // The options of each mode. custom uses the config.
 func TestLinkMode_Options(t *testing.T) {
 	c, _ := newTestCore(t)
+	c.cfg.PingMethod = PingMethodTimestamp
 	c.cfg.RefractoryOnDecrease, c.cfg.IncreaseToDelayThr, c.cfg.AutoMaxRate = false, true, false
 	for _, tc := range []struct {
 		mode          LinkMode
@@ -29,6 +30,24 @@ func TestLinkMode_Options(t *testing.T) {
 			t.Errorf("%s: refractory_on_decrease %v, increase_to_delay_thr %v, auto_max_rate %v; want %v %v %v",
 				tc.mode, c.refractoryOnDecrease(), c.increaseToDelayThr(), c.autoMaxRate(), tc.rod, tc.inc, tc.max)
 		}
+	}
+	// With icmp (RTT/2), balanced has no refractory_on_decrease; bandwidth
+	// has it.
+	c.cfg.PingMethod = PingMethodEcho
+	c.SetMode(ModeBalanced)
+	if c.refractoryOnDecrease() {
+		t.Error("balanced with icmp: refractory_on_decrease must be off")
+	}
+	c.SetMode(ModeBandwidth)
+	if !c.refractoryOnDecrease() {
+		t.Error("bandwidth with icmp: refractory_on_decrease must be on")
+	}
+	// The ping method of the link applies.
+	method := PingMethodTimestamp
+	c.link.PingMethod = &method
+	c.SetMode(ModeBalanced)
+	if !c.refractoryOnDecrease() {
+		t.Error("balanced with icmp-timestamp of the link: refractory_on_decrease must be on")
 	}
 	// The mode of the config in latency also turns the options off.
 	c.cfg.RefractoryOnDecrease, c.cfg.AutoMaxRate = true, true
@@ -61,6 +80,7 @@ func TestLinkMode_LeaveBandwidthRemovesLearnedMax(t *testing.T) {
 func TestLinkMode_RefractoryOnDecrease(t *testing.T) {
 	decreases := func(m LinkMode) int {
 		c, act := newTestCore(t)
+		c.cfg.PingMethod = PingMethodTimestamp
 		c.link.Download.Adjust = true
 		c.SetMode(m)
 		c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
@@ -116,6 +136,41 @@ func TestLoadConfig_Mode(t *testing.T) {
 	}
 	if cfg.ForLink(&cfg.Links[1]).Mode != string(ModeBandwidth) {
 		t.Error("ForLink must apply the mode of the link")
+	}
+}
+
+// In the mode custom, the options of the link override the top-level
+// options. In the other modes, the mode sets them.
+func TestLinkMode_CustomLinkOverrides(t *testing.T) {
+	c, _ := newTestCore(t)
+	on, off := true, false
+	c.cfg.RefractoryOnDecrease, c.cfg.IncreaseToDelayThr, c.cfg.AutoMaxRate = true, false, false
+	c.link.RefractoryOnDecrease, c.link.AutoMaxRate = &off, &on
+	c.SetMode(ModeCustom)
+	if c.refractoryOnDecrease() || c.increaseToDelayThr() || !c.autoMaxRate() {
+		t.Errorf("custom: %v %v %v, want false false true", c.refractoryOnDecrease(), c.increaseToDelayThr(), c.autoMaxRate())
+	}
+	c.SetMode(ModeLatency)
+	if c.autoMaxRate() {
+		t.Error("latency: the link option must not apply")
+	}
+}
+
+func TestLoadConfig_ModeOfLinkWithOptions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	yaml := strings.Replace(linkOverrideYAML, "    learn_cross_delay: true\n", "    learn_cross_delay: true\n    auto_max_rate: true\n", 1)
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkModeOf(cfg, &cfg.Links[0]) != ModeBalanced || linkModeOf(cfg, &cfg.Links[1]) != ModeCustom {
+		t.Errorf("modes %s %s, want balanced custom", linkModeOf(cfg, &cfg.Links[0]), linkModeOf(cfg, &cfg.Links[1]))
+	}
+	if !cfg.ForLink(&cfg.Links[1]).AutoMaxRate || cfg.AutoMaxRate {
+		t.Error("auto_max_rate of the link must apply only to the link")
 	}
 }
 

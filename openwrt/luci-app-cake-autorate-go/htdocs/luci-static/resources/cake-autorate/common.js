@@ -27,9 +27,9 @@ function text(v) {
 // The link modes of the program: the name, the title and the description.
 const MODES = [
 	[ 'latency', _('Latency'), _('The lowest delay. All options of the modes are off.') ],
-	[ 'balanced', _('Balanced'), _('Only one rate decrease in each refractory period. On a 5G link: more throughput for approximately 1 ms more delay.') ],
+	[ 'balanced', _('Balanced'), _('With ICMP timestamps: only one rate decrease in each refractory period (on a 5G link: more throughput for approximately 1 ms more delay). With ICMP echo: as Latency.') ],
 	[ 'bandwidth', _('Bandwidth'), _('The most throughput: also the increase up to the bufferbloat threshold and a learned maximum rate. More delay, mostly on a busy link.') ],
-	[ 'custom', _('Custom'), _('The options of the configuration page (Service, General).') ]
+	[ 'custom', _('Custom'), _('The options of the configuration page (of the link, or of the service).') ]
 ];
 
 return baseclass.extend({

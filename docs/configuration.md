@@ -93,7 +93,7 @@ On a router with more than one WAN (for example with mwan3), set `ping_interface
 
 ## Link overrides
 
-A link can override five top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay` and `mode`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
+A link can override these top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay`, `mode`, `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
 
 ```yaml
 ping_method: icmp
@@ -113,7 +113,7 @@ A mode sets the trade-off between delay and throughput of a link. It sets three 
 | Mode | `refractory_on_decrease` | `increase_to_delay_thr` | `auto_max_rate` |
 |---|---|---|---|
 | `latency` | off | off | off |
-| `balanced` (default) | on | off | off |
+| `balanced` (default) | on with `icmp-timestamp`, off with `icmp` | off | off |
 | `bandwidth` | on | on | on |
 | `custom` | config | config | config |
 
@@ -126,8 +126,9 @@ links:
 ```
 
 - `mode` is the mode after a start. A link can set its own mode (see [Link overrides](#link-overrides)).
-- In the modes `latency`, `balanced` and `bandwidth`, the program ignores the three options in the config. In the mode `custom`, it uses them.
-- Without `mode`, the mode is `custom` if the config turns one of the three options on (a config from before the modes). Else it is `balanced`.
+- In the modes `latency`, `balanced` and `bandwidth`, the program ignores the three options in the config. In the mode `custom`, it uses them. A link can set the three options for itself; they override the top-level options.
+- `balanced` turns `refractory_on_decrease` on only with `ping_method: icmp-timestamp`. With `icmp` (RTT/2), `balanced` is equal to `latency`: in the simulator, `refractory_on_decrease` with RTT/2 increased the delay much on variable links.
+- Without `mode`, the mode is `custom` if the config turns one of the three options on (a config from before the modes; for a link, also its own options). Else it is `balanced`.
 - The control command `mode LINK MODE [SECONDS]` changes the mode while the program runs, without a restart (see [Control socket](#control-socket)). The LuCI status page has a button for it.
 
 On a 5G link (2026-10-21 and 2026-10-22, pairs of 120 s blocks against `latency`), the modes gave:
@@ -139,7 +140,7 @@ On a 5G link (2026-10-21 and 2026-10-22, pairs of 120 s blocks against `latency`
 | `bandwidth` (without `auto_max_rate`) | Download | +21 Mbit/s | +4.1 ms |
 | `bandwidth` (without `auto_max_rate`) | Two directions | +13 Mbit/s | +6.4 ms |
 
-The original cake-autorate: +26 and +19 Mbit/s, +7.0 and +9.1 ms. The delay cost of `bandwidth` increases with the load of the cell: at night +2 ms (p50), in the morning +16.5 ms (two directions). See [comparison.md](comparison.md) and [5G links](#5g-links). These tests used `icmp-timestamp`; with `icmp`, the simulator shows a higher delay cost of `refractory_on_decrease` on variable links.
+The original cake-autorate: +26 and +19 Mbit/s, +7.0 and +9.1 ms. The delay cost of `bandwidth` increases with the load of the cell: at night +2 ms (p50), in the morning +16.5 ms (two directions). See [comparison.md](comparison.md) and [5G links](#5g-links). These tests used `icmp-timestamp`.
 
 
 ## Reflectors
@@ -440,7 +441,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `auto_max_rate_limit_factor` | `3.0` | With `auto_max_rate`: the maximum rate stays at or below this factor × `max_rate_kbps` (1.0 or more) |
 | `monitor_interval_ms` | `200` | Time between two throughput samples (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Time after a bufferbloat decrease without a rate increase (ms) |
-| `mode` | `balanced` | The link mode after a start: `latency`, `balanced`, `bandwidth` or `custom`. All modes except `custom` set `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate`. Without the key: `custom` if the config turns one of these options on. See [Link modes](#link-modes) |
+| `mode` | `balanced` | The link mode after a start: `latency`, `balanced`, `bandwidth` or `custom`. All modes except `custom` set `refractory_on_decrease` (`balanced`: only with `icmp-timestamp`), `increase_to_delay_thr` and `auto_max_rate`. Without the key: `custom` if the config turns one of these options on. See [Link modes](#link-modes) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
 | `repeat_decrease_on_rise` | `false` | In the refractory period after a decrease, decrease the rate again only when the delay is higher than at the last decrease. After a decrease, the queue empties only slowly, and each delayed ping decreases the rate again. This option prevents these extra decreases. Use it with `icmp-timestamp` (see [5G links](#5g-links)). `refractory_on_decrease` has priority |
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |

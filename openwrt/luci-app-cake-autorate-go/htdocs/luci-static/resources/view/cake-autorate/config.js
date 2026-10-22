@@ -21,7 +21,7 @@ const LINK_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 // The link modes (mode.go) and the options that they set.
 const MODES = [
 	[ 'latency', _('Latency: the lowest delay') ],
-	[ 'balanced', _('Balanced: refractory period after a decrease') ],
+	[ 'balanced', _('Balanced: refractory period after a decrease (ICMP timestamps only)') ],
 	[ 'bandwidth', _('Bandwidth: the most throughput') ],
 	[ 'custom', _('Custom: the options below') ]
 ];
@@ -320,7 +320,7 @@ function globalSection(m, sid) {
 	flag(s, 'general', 'status_history', _('Graph history'), false,
 		_('Keep the samples of the last 15 minutes in the memory of the router (approximately 36 kB for each link). Then the graphs on the status page also show the time before you opened the page.'));
 	o = s.taboption('general', form.ListValue, 'mode', _('Mode'),
-		_('The trade-off between delay and throughput after a start. A link can set a different mode. The status page can change the mode while the service runs. Latency: all three options below are off. Balanced: only the refractory period after a decrease (on a 5G link: more throughput for approximately 1 ms more delay). Bandwidth: all three options are on (more throughput, more delay, mostly on a busy link). Custom: set the options yourself.'));
+		_('The trade-off between delay and throughput after a start. A link can set a different mode. The status page can change the mode while the service runs. Latency: all three options below are off. Balanced: only the refractory period after a decrease, and only with ICMP timestamps (on a 5G link: more throughput for approximately 1 ms more delay); with ICMP echo, as Latency. Bandwidth: all three options are on (more throughput, more delay, mostly on a busy link). Custom: set the options yourself.'));
 	for (const [ mode, title ] of MODES)
 		o.value(mode, title);
 	// Without the option, the program uses custom if one of the options is
@@ -647,8 +647,29 @@ function linkSection(m) {
 	o = s.taboption('rates', form.ListValue, 'mode', _('Mode'));
 	o.value('', _('Global value'));
 	for (const [ mode, title ] of MODES)
-		o.value(mode, mode == 'custom' ? _('Custom: the options of Service, General') : title);
+		o.value(mode, title);
 	o.modalonly = true;
+
+	// The options of the modes apply only in the mode custom: the mode of
+	// the link, or the global mode (saved value) for "Global value".
+	const globalSid = (uci.sections('cake-autorate', 'global')[0] || {})['.name'];
+	const globalMode = globalSid ? uci.get('cake-autorate', globalSid, 'mode') : null;
+	const globalCustom = globalMode == 'custom' || (isEmpty(globalMode) && globalSid &&
+		MODE_OPTIONS.some((k) => uci.get('cake-autorate', globalSid, k) == '1'));
+	for (const [ key, title ] of [
+		[ 'refractory_on_decrease', _('Refractory period after a decrease') ],
+		[ 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold') ],
+		[ 'auto_max_rate', _('Learn the maximum rate') ]
+	]) {
+		o = s.taboption('rates', form.ListValue, key, title);
+		o.value('', _('Global value'));
+		o.value('1', _('On'));
+		o.value('0', _('Off'));
+		o.depends('mode', 'custom');
+		if (globalCustom)
+			o.depends('mode', '');
+		o.modalonly = true;
+	}
 
 	o = s.option(form.DummyValue, '_dl_rates', _('Download base / max (Mbit/s)'));
 	o.modalonly = false;

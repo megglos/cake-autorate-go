@@ -115,7 +115,7 @@ For **5G and Starlink**, use `ping_method: icmp-timestamp`. The settings that ga
 
 ## Status
 
-This is an **experimental** project. The core algorithm comes from the original cake-autorate, with some changes. The larger changes for 5G links (see [5G links](docs/configuration.md#5g-links)) are options. The default link mode `balanced` turns on only `refractory_on_decrease`; the mode `latency` turns it off. The tests are emulations, a simulator and test sessions on one 5G link. The program is not yet tested much in daily use. Use it at your own risk and report problems as issues.
+This is an **experimental** project. The core algorithm comes from the original cake-autorate, with some changes. The larger changes for 5G links (see [5G links](docs/configuration.md#5g-links)) are options. The default link mode `balanced` turns on only `refractory_on_decrease`, and only with `icmp-timestamp`; the mode `latency` turns it off. The tests are emulations, a simulator and test sessions on one 5G link. The program is not yet tested much in daily use. Use it at your own risk and report problems as issues.
 
 ## License
 

@@ -17,9 +17,11 @@ import (
 // auto_max_rate:
 //
 //   - latency: all off.
-//   - balanced: refractory_on_decrease.
+//   - balanced: refractory_on_decrease, only with ping_method
+//     icmp-timestamp. With icmp, balanced is equal to latency: with RTT/2,
+//     refractory_on_decrease increased the delay much in the simulator.
 //   - bandwidth: all on.
-//   - custom: the values of the config.
+//   - custom: the values of the config (of the link, or top-level).
 type LinkMode string
 
 // Link modes.
@@ -56,6 +58,23 @@ func (c *Config) defaultMode() LinkMode {
 		return ModeCustom
 	}
 	return ModeBalanced
+}
+
+// setDefaultModes sets the modes of a config without the key "mode" (see
+// defaultMode). A link without its own mode gets custom if it turns on one
+// of the options. Thus, the config in a recording has the modes.
+func (c *Config) setDefaultModes() {
+	if c.Mode != "" {
+		return
+	}
+	c.Mode = string(c.defaultMode())
+	for i := range c.Links {
+		l := &c.Links[i]
+		if l.Mode == nil && c.ForLink(l).defaultMode() == ModeCustom {
+			m := string(ModeCustom)
+			l.Mode = &m
+		}
+	}
 }
 
 // linkModeOf returns the mode of the link after the start: the mode of the
@@ -98,16 +117,34 @@ func (c *Core) SetMode(m LinkMode) {
 	}
 }
 
+// orLink returns the value of a link override, or def.
+func orLink(v *bool, def bool) bool {
+	if v != nil {
+		return *v
+	}
+	return def
+}
+
+// pingMethod returns the ping method of the link.
+func (c *Core) pingMethod() string {
+	if c.link.PingMethod != nil {
+		return *c.link.PingMethod
+	}
+	return c.cfg.PingMethod
+}
+
 // refractoryOnDecrease reports whether refractory_on_decrease applies in
 // the current mode.
 func (c *Core) refractoryOnDecrease() bool {
 	switch c.mode {
 	case ModeLatency:
 		return false
-	case ModeBalanced, ModeBandwidth:
+	case ModeBalanced:
+		return c.pingMethod() == PingMethodTimestamp
+	case ModeBandwidth:
 		return true
 	}
-	return c.cfg.RefractoryOnDecrease
+	return orLink(c.link.RefractoryOnDecrease, c.cfg.RefractoryOnDecrease)
 }
 
 // increaseToDelayThr reports whether increase_to_delay_thr applies in the
@@ -119,7 +156,7 @@ func (c *Core) increaseToDelayThr() bool {
 	case ModeBandwidth:
 		return true
 	}
-	return c.cfg.IncreaseToDelayThr
+	return orLink(c.link.IncreaseToDelayThr, c.cfg.IncreaseToDelayThr)
 }
 
 // autoMaxRate reports whether auto_max_rate applies in the current mode.
@@ -130,7 +167,7 @@ func (c *Core) autoMaxRate() bool {
 	case ModeBandwidth:
 		return true
 	}
-	return c.cfg.AutoMaxRate
+	return orLink(c.link.AutoMaxRate, c.cfg.AutoMaxRate)
 }
 
 // maxModeSeconds is the maximum time of "mode LINK MODE SECONDS".

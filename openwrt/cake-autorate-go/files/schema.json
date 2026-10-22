@@ -52,6 +52,8 @@
 		"owd_delta_delay_thr_ms": "float"
 	},
 	"link": {
+		"auto_max_rate": "bool",
+		"increase_to_delay_thr": "bool",
 		"learn_cross_delay": "bool",
 		"mode": "string",
 		"name": "string",
@@ -60,7 +62,8 @@
 		"ping_method": "string",
 		"ping_source_addr": "string",
 		"pinger_count": "int",
-		"reflectors": "list"
+		"reflectors": "list",
+		"refractory_on_decrease": "bool"
 	},
 	"direction": {
 		"adjust": "bool",
