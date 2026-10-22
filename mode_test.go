@@ -384,3 +384,59 @@ func TestModeTimeEndsAfterCalibration(t *testing.T) {
 		t.Errorf("mode %s after the calibration, want balanced", m)
 	}
 }
+
+// testFailingModeController returns a controller in the mode bandwidth
+// with a download rate above max_rate_kbps (a learned maximum).
+func testFailingModeController(t *testing.T) (*LinkController, *failingActuator, int) {
+	t.Helper()
+	c := testPingerController(t)
+	c.link.Download.Adjust = true
+	c.cfg.Mode = string(ModeBalanced)
+	act := &failingActuator{c: c}
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	runCommands(t, c)
+	core := c.core.Core()
+	runOnController(t, c, func(now time.Time) {
+		c.core.SetMode(ModeBandwidth, now)
+		core.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
+		runAtMax(core, now, 10*time.Second)
+	})
+	if core.dl.shaperRateKbps <= float64(c.link.Download.MaxRateKbps) {
+		t.Fatalf("rate %.0f, want above the maximum", core.dl.shaperRateKbps)
+	}
+	return c, act, c.link.Download.MaxRateKbps
+}
+
+// A failed rate change at a mode change: the same command again sends the
+// rate again.
+func TestModeRetryAfterRateError(t *testing.T) {
+	c, act, maxKbps := testFailingModeController(t)
+	act.fails = 1
+	if err := c.SetMode(ModeBalanced, 0); err == nil {
+		t.Fatal("want the rate error")
+	}
+	if err := c.SetMode(ModeBalanced, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastRate(&act.fakeActuator, DL); got != maxKbps {
+		t.Errorf("rate %d after the second command, want %d", got, maxKbps)
+	}
+}
+
+// A failed rate change at the end of a timed mode: the controller tries
+// again without a new command.
+func TestModeTimeRetryAfterRateError(t *testing.T) {
+	c, act, maxKbps := testFailingModeController(t)
+	if err := c.SetMode(ModeBandwidth, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	act.fails = 1
+	runOnController(t, c, func(now time.Time) { c.checkModeTime(now.Add(2 * time.Minute)) })
+	if c.modeUntil.IsZero() || c.modeTimer == nil {
+		t.Fatal("the controller must try again after the rate error")
+	}
+	runOnController(t, c, func(now time.Time) { c.checkModeTime(now.Add(3 * time.Minute)) })
+	if got := lastRate(&act.fakeActuator, DL); got != maxKbps || !c.modeUntil.IsZero() {
+		t.Errorf("rate %d, time %v; want %d and no time", got, c.modeUntil, maxKbps)
+	}
+}

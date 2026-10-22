@@ -364,9 +364,11 @@ func (c *LinkController) SetMode(m LinkMode, d time.Duration) error {
 		c.setModeTime(now, d)
 		c.rateErr = nil
 		if m != c.core.Core().Mode() {
-			c.core.SetMode(m, now)
 			c.logger.Infof("[%s] mode %s", c.name, m)
 		}
+		// Also with the current mode: then Core sends the rates again,
+		// for example after a failed rate change.
+		c.core.SetMode(m, now)
 		return c.rateErr
 	})
 }
@@ -397,10 +399,19 @@ func (c *LinkController) checkModeTime(now time.Time) {
 		c.modeTimer = time.NewTimer(unshapeRetry)
 		return
 	}
-	c.setModeTime(now, 0)
 	m := linkModeOf(c.cfg, c.link)
-	c.logger.Infof("[%s] the time of the mode ended, mode %s", c.name, m)
+	if c.core.Core().Mode() != m {
+		c.logger.Infof("[%s] the time of the mode ended, mode %s", c.name, m)
+	}
+	c.rateErr = nil
 	c.core.SetMode(m, now)
+	if c.rateErr != nil {
+		// Try again later: the rate can be above the maximum of the mode.
+		c.logger.Errorf("[%s] setting the mode %s (again in %v): %v", c.name, m, unshapeRetry, c.rateErr)
+		c.modeTimer = time.NewTimer(unshapeRetry)
+		return
+	}
+	c.setModeTime(now, 0)
 }
 
 // timerC returns the channel of t, or nil for a nil timer (a nil channel

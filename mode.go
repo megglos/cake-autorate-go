@@ -98,8 +98,14 @@ func (c *Core) Mode() LinkMode { return c.mode }
 // reply. The time at the maximum (auto_max_rate) starts again. If the new
 // mode has no auto_max_rate, the learned maximum is removed, and a rate
 // above max_rate_kbps decreases to it.
+//
+// A call with the current mode sends the rates again (as SetPaused): after
+// a failed rate change, the user can send the command again.
 func (c *Core) SetMode(m LinkMode) {
 	if m == c.mode {
+		for _, dir := range Directions() {
+			c.applyRate(dir)
+		}
 		return
 	}
 	c.mode = m
