@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -328,5 +329,58 @@ func TestRecording_ReplayMode(t *testing.T) {
 	recorded, replayed := replayRecording(t, path)
 	if len(recorded) == 0 || !slices.Equal(recorded, replayed) {
 		t.Errorf("recorded:\n%v\nreplay:\n%v", recorded, replayed)
+	}
+}
+
+// The output of --defaults is a valid config with the mode balanced.
+func TestPrintDefaults_ModeLoads(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = w
+	printDefaults()
+	os.Stdout = stdout
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("the defaults do not load: %v", err)
+	}
+	if cfg.Mode != string(ModeBalanced) {
+		t.Errorf("mode %q, want balanced", cfg.Mode)
+	}
+}
+
+// The end of the time of a mode during a calibration does not change the
+// mode: it comes after the calibration.
+func TestModeTimeEndsAfterCalibration(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	c.cfg.Mode = string(ModeBalanced)
+	c.core.Core().SetMode(ModeBalanced)
+	if err := c.SetMode(ModeBandwidth, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	runOnController(t, c, func(now time.Time) {
+		c.core.SetCalibrating(true, now)
+		c.checkModeTime(now.Add(2 * time.Minute))
+	})
+	if m := c.core.Core().Mode(); m != ModeBandwidth {
+		t.Fatalf("mode %s during the calibration, want bandwidth", m)
+	}
+	runOnController(t, c, func(now time.Time) {
+		c.core.SetCalibrating(false, now)
+		c.checkModeTime(now.Add(2 * time.Minute))
+	})
+	if m := c.core.Core().Mode(); m != ModeBalanced {
+		t.Errorf("mode %s after the calibration, want balanced", m)
 	}
 }

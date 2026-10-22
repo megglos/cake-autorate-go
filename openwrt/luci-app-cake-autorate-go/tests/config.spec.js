@@ -600,14 +600,13 @@ test('a configuration from before the modes shows the mode custom', async ({ pag
 	}
 });
 
-test('a link in the mode custom shows the options in all modes', async ({ page }) => {
-	vm('uci set cake-autorate.wan.mode=custom && uci commit cake-autorate');
-	try {
-		await page.reload();
-		await expect(input(page, 'global', 'mode')).toHaveValue('balanced');
-		await expect(modeOption(page, 'refractory_on_decrease')).toBeVisible();
-	}
-	finally {
-		resetConfig();
-	}
+test('a hidden option of the modes keeps its value', async ({ page }) => {
+	await input(page, 'global', 'mode').selectOption('custom');
+	await modeOption(page, 'refractory_on_decrease').check();
+	await input(page, 'global', 'mode').selectOption('balanced');
+	await expect(modeOption(page, 'refractory_on_decrease')).toBeHidden();
+	await saveApply(page);
+	expect(vm('uci -q get cake-autorate.global.refractory_on_decrease').trim()).toBe('1');
+	expect(vm('uci -q get cake-autorate.global.mode').trim()).toBe('balanced');
+	resetConfig();
 });

@@ -333,12 +333,12 @@ function globalSection(m, sid) {
 	};
 	o.rmempty = false;
 
-	// The options apply only in the mode custom. A link in the mode custom
-	// also uses them: then show them in all modes.
-	const linkCustom = uci.sections('cake-autorate', 'link').some((l) => l.mode == 'custom');
+	// The options apply only in the mode custom. A hidden option keeps its
+	// value (retain): the mode custom of a link or of the status page uses
+	// it.
 	const modeOption = (o) => {
-		if (!linkCustom)
-			o.depends('mode', 'custom');
+		o.depends('mode', 'custom');
+		o.retain = true;
 	};
 
 	o = flag(s, 'general', 'refractory_on_decrease', _('Refractory period after a decrease'), false,
@@ -650,12 +650,8 @@ function linkSection(m) {
 		o.value(mode, title);
 	o.modalonly = true;
 
-	// The options of the modes apply only in the mode custom: the mode of
-	// the link, or the global mode (saved value) for "Global value".
-	const globalSid = (uci.sections('cake-autorate', 'global')[0] || {})['.name'];
-	const globalMode = globalSid ? uci.get('cake-autorate', globalSid, 'mode') : null;
-	const globalCustom = globalMode == 'custom' || (isEmpty(globalMode) && globalSid &&
-		MODE_OPTIONS.some((k) => uci.get('cake-autorate', globalSid, k) == '1'));
+	// The options of the modes apply only in the mode custom of the link.
+	// A hidden option keeps its value (retain).
 	for (const [ key, title ] of [
 		[ 'refractory_on_decrease', _('Refractory period after a decrease') ],
 		[ 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold') ],
@@ -666,8 +662,7 @@ function linkSection(m) {
 		o.value('1', _('On'));
 		o.value('0', _('Off'));
 		o.depends('mode', 'custom');
-		if (globalCustom)
-			o.depends('mode', '');
+		o.retain = true;
 		o.modalonly = true;
 	}
 

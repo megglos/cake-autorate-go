@@ -391,6 +391,12 @@ func (c *LinkController) checkModeTime(now time.Time) {
 	if c.modeUntil.IsZero() || now.Before(c.modeUntil) {
 		return
 	}
+	// A mode change changes the rate control of a calibration block: try
+	// again after the calibration.
+	if c.core.Core().Calibrating() {
+		c.modeTimer = time.NewTimer(unshapeRetry)
+		return
+	}
 	c.setModeTime(now, 0)
 	m := linkModeOf(c.cfg, c.link)
 	c.logger.Infof("[%s] the time of the mode ended, mode %s", c.name, m)

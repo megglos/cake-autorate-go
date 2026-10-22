@@ -281,7 +281,7 @@ func printDefaults() {
 	fmt.Printf("\nhigh_load_thr: %g\n", cfg.HighLoadThr)
 	fmt.Printf("\nmonitor_interval_ms: %d\n", cfg.MonitorIntervalMs)
 	fmt.Printf("bufferbloat_refractory_period_ms: %d\n", cfg.BufferbloatRefractoryPeriodMs)
-	fmt.Printf("mode: %s (custom if one of the next options is on)\n", cfg.defaultMode())
+	fmt.Printf("mode: %s # custom if one of the next three options is on\n", cfg.defaultMode())
 	fmt.Printf("refractory_on_decrease: %v\n", cfg.RefractoryOnDecrease)
 	fmt.Printf("repeat_decrease_on_rise: %v\n", cfg.RepeatDecreaseOnRise)
 	fmt.Printf("decay_refractory_period_ms: %d\n", cfg.DecayRefractoryPeriodMs)
