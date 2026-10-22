@@ -682,6 +682,26 @@ func TestAutoMaxRate_LowLoadSampleStopsHold(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_StallStopsHold checks that a STALL stops the hold time,
+// also when the throughput samples show high load (ping_interval_ms 5000).
+func TestAutoMaxRate_StallStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 5000
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.link.Download.BaseRateKbps = c.link.Download.MaxRateKbps
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 1500*time.Millisecond)
+	c.state = StateStall
+	c.HandleRate(RateStats{Timestamp: now, DlRateKbps: cfgMax, UlRateKbps: 0})
+	c.state = StateRunning
+	c.dl.shaperRateKbps = cfgMax
+	runAtMax(c, now.Add(time.Second), time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s and 1 s at the maximum with a STALL)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
 // TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
 // does not move the time of the decrease back.
 func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {

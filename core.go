@@ -300,9 +300,10 @@ func (c *Core) HandleRate(stats RateStats) {
 		c.ul.loadPercent = stats.UlRateKbps / c.ul.shaperRateKbps
 	}
 	// A throughput sample at low load between two ping replies is also a
-	// break of the time at the maximum (AutoMaxRate).
+	// break of the time at the maximum (AutoMaxRate). So is a sample in
+	// IDLE or STALL: the recovery below goes to RUNNING without wake().
 	for _, ds := range []*dirState{&c.dl, &c.ul} {
-		if ds.loadPercent < c.cfg.HighLoadThr {
+		if ds.loadPercent < c.cfg.HighLoadThr || c.state != StateRunning {
 			ds.autoMaxBreak()
 		}
 	}
