@@ -14,13 +14,13 @@ The questions:
 ## A. Before the access (until 2026-10-27)
 
 - [ ] Merge PR #112: the calibration probe tests `100.64.0.1`.
-- [ ] Rebase `feat/starlink-reconfig` on main. The branch is from 2026-10-11. Since then, main has link modes, `auto_max_rate`, stall recovery and the calibration. Run the simulator again: starlink-like, 8 seeds, with and without the option. No PR before the live data.
-- [ ] Analysis script for the 15 s schedule: from a recording, the OWD (DL and UL) per second of the minute (p10, p50, p90), and the size of the step at each boundary. Test it with the `starlink-like` simulator trace.
-- [ ] Session configs in `recordings/starlink/`:
+- [x] Rebase `feat/starlink-reconfig` on main. The branch is from 2026-10-11. Since then, main has link modes, `auto_max_rate`, stall recovery and the calibration. Run the simulator again: starlink-like, 8 seeds, with and without the option. No PR before the live data. Done 2026-10-22: branch `feat/starlink-reconfig-v2` (f28566a, pushed, no PR; the old branch stays). The option is now also a link override. Floor step +40 ms with download load: 90 Mbit/s without, 161 with (135 before). starlink-like, 8 seeds: p95 36.8 → 37.8 ms, DL 89.7 → 90.2 %; with `refractory_on_decrease`: p95 42.7 → 44.1 ms, DL 90.4 → 90.1 %.
+- [x] Analysis script for the 15 s schedule: from a recording, the OWD (DL and UL) per second of the minute (p10, p50, p90), and the size of the step at each boundary. Test it with the `starlink-like` simulator trace. Done 2026-10-22: `scripts/starlink-floor.py` (PR #114): profile, boundary steps against control points, offset scan, `--self-test`. A 5G session (with load) shows no peak.
+- [x] Session configs in `recordings/starlink/`: Done 2026-10-22: `starlink/configs/` on the branch `recordings` (also `bandwidth-reconfig` and `balanced-lcd`). Rates and reflectors are placeholders: change them after the calibration of day 1.
   - `latency.yaml`, `balanced.yaml`, `bandwidth.yaml`: the same link and thresholds, only `mode` is different.
   - `reconfig.yaml`: `balanced` plus `starlink_reconfiguration` (binary from the rebased branch).
   - `upstream-starlink.sh`: the original cake-autorate with `fping` and ICMP timestamps, with its Starlink settings.
-- [ ] Host setup script for Starlink on `enp8s0`, as for 5G: table 55 with the default route through the Starlink gateway, NAT on `enp8s0`, ufw route rules for `cavtap0`. Starlink gives the address with DHCP. Thus, read the gateway from the lease.
+- [x] Host setup script for Starlink on `enp8s0`, as for 5G: table 55 with the default route through the Starlink gateway, NAT on `enp8s0`, ufw route rules for `cavtap0`. Starlink gives the address with DHCP. Thus, read the gateway from the lease. Done 2026-10-22: `starlink/host-setup.sh up|down|status` on the branch `recordings`, with an unreachable rule so the VM cannot use the fiber by mistake.
 - Setup (user, 2026-10-22): the Starlink router runs in bypass mode, and the dish has a clear view of the sky.
 
 ## B. Day 1: first look (approximately 2 hours)
