@@ -138,6 +138,29 @@ function focusKey(link, kind, id) {
 	return JSON.stringify([ link, kind, id ]);
 }
 
+// The browser storage key of the links with an open reflector table.
+const REFLECTORS_OPEN_KEY = 'cake-autorate-reflectors-open';
+
+// Returns the links with an open reflector table from the browser storage.
+// The storage can be empty or not available: then all tables are closed.
+function loadReflectorsOpen() {
+	try {
+		return new Set(JSON.parse(localStorage.getItem(REFLECTORS_OPEN_KEY)) || []);
+	}
+	catch (e) {
+		return new Set();
+	}
+}
+
+function saveReflectorsOpen(links) {
+	try {
+		localStorage.setItem(REFLECTORS_OPEN_KEY, JSON.stringify([ ...links ]));
+	}
+	catch (e) {
+		// Without the storage, the state stays only until a reload.
+	}
+}
+
 function svg(tag, attrs) {
 	const e = document.createElementNS(SVG_NS, tag);
 	for (const k in attrs)
@@ -285,6 +308,8 @@ return view.extend({
 	// The answer of the method "history" at the load of the page, or null.
 	programHistory: null,
 	period: 300,
+	// The links with an open reflector table (a Set, from render).
+	reflectorsOpen: null,
 	lastSampled: null,
 	lastData: null,
 
@@ -853,7 +878,8 @@ return view.extend({
 				E('th', { 'class': 'th' }, _('Missed replies'))
 			])
 		];
-		for (const r of ls.reflectors || [])
+		const reflectors = ls.reflectors || [];
+		for (const r of reflectors)
 			refl.push(E('tr', { 'class': 'tr' }, [
 				E('td', { 'class': 'td', 'data-title': _('Reflector') }, text(r.address)),
 				E('td', { 'class': 'td', 'data-title': _('In use') }, r.active ? _('Yes') : _('No')),
@@ -866,7 +892,32 @@ return view.extend({
 			...this.renderCakeWarnings(ls),
 			E('table', { 'class': 'table' }, rows),
 			this.renderGraphs(ls.name),
-			E('table', { 'class': 'table' }, refl)
+			this.renderReflectors(ls.name, reflectors, refl)
+		]);
+	},
+
+	// The reflector table is closed at the start: with many links, it uses
+	// much space. The summary shows the counts. A refresh and a reload of
+	// the page keep the state of each link.
+	renderReflectors: function(name, reflectors, rows) {
+		const missed = reflectors.reduce((sum, r) => sum + (+r.missed || 0), 0);
+		const summary = [ _('Reflectors: %d in use of %d').format(
+			reflectors.filter((r) => r.active).length, reflectors.length) ];
+		if (missed > 0)
+			summary.push(_('%d missed replies').format(missed));
+		return E('details', {
+			'class': 'cake-autorate-reflectors',
+			'open': this.reflectorsOpen.has(name) ? '' : null,
+			'toggle': L.bind(function(ev) {
+				if (ev.target.open)
+					this.reflectorsOpen.add(name);
+				else
+					this.reflectorsOpen.delete(name);
+				saveReflectorsOpen(this.reflectorsOpen);
+			}, this)
+		}, [
+			E('summary', { 'data-focus': focusKey(name, 'reflectors', '') }, text(summary.join(', '))),
+			E('table', { 'class': 'table' }, rows)
 		]);
 	},
 
@@ -917,6 +968,7 @@ return view.extend({
 
 	render: function(data) {
 		this.canControl = data[1];
+		this.reflectorsOpen = loadReflectorsOpen();
 		this.addSamples(data[0].status);
 		this.lastData = data[0];
 		this.container = E('div', { 'id': 'cake-autorate-status' }, this.renderStatus(data[0]));
@@ -949,7 +1001,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. Click "Reflectors" of a link to show its reflectors. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);
