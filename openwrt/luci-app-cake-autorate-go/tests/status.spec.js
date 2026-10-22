@@ -122,6 +122,11 @@ test('page shows the link, its directions and reflectors', async ({ page }) => {
 	await expect(link.locator('tr[data-dir="dl"]')).toContainText('5.0 to 80.0, base 20.0');
 	await expect(link.locator('tr[data-dir="ul"]')).toContainText('eth1');
 	await expect(link.locator('tr[data-dir="ul"]')).toContainText('5.0 to 35.0, base 12.0');
+	// The reflector table is closed at the start.
+	const reflectors = link.locator('details.cake-autorate-reflectors');
+	await expect(reflectors.locator('summary')).toHaveText(/Reflectors\s*\d in use of 2.*Show$/);
+	await expect(link.getByRole('cell', { name: '1.1.1.1', exact: true })).toBeHidden();
+	await reflectors.locator('summary').click();
 	await expect(link.getByRole('cell', { name: '1.1.1.1', exact: true })).toBeVisible();
 	await expect(link.getByRole('cell', { name: '8.8.8.8', exact: true })).toBeVisible();
 	await expect(link.locator('button[data-dir="dl"]')).toHaveText('Pause');
@@ -877,6 +882,25 @@ test('a link name that is an Object property has graphs', async ({ page }) => {
 		resetConfig();
 		await waitForStatus();
 	}
+});
+
+test('the reflector table stays open after a refresh and a reload', async ({ page }) => {
+	await page.goto(PAGE);
+	const summary = page.locator('.cbi-section[data-link="wan"] details.cake-autorate-reflectors summary');
+	const cell = page.locator('.cbi-section[data-link="wan"]').getByRole('cell', { name: '1.1.1.1', exact: true });
+	await summary.click();
+	await expect(cell).toBeVisible();
+	// Wait for a refresh: it makes a new table.
+	const old = await summary.elementHandle();
+	await expect.poll(() => old.evaluate((e) => e.isConnected), { timeout: 10000 }).toBe(false);
+	await expect(cell).toBeVisible();
+	await page.reload();
+	await expect(cell).toBeVisible();
+	await summary.click();
+	await expect(cell).toBeHidden();
+	await page.reload();
+	await expect(summary).toBeVisible();
+	await expect(cell).toBeHidden();
 });
 
 test('the graph period changes the time axis and stays after a refresh', async ({ page }) => {
