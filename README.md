@@ -29,3 +29,4 @@ To make a capacity trace for the simulator, use
 | `2026-10-10-5g-direct` | 5G (Telekom), modem on the PC | first 5G sessions: RTT and one-way delays, tuning variants |
 | `2026-10-18-5g-luci` | 5G (Telekom), OpenWrt VM | one recording of the service with LuCI tests and speed tests |
 | `2026-10-21-5g-daypass` | 5G (Telekom), OpenWrt VM | cake-autorate-go variants against the original cake-autorate |
+| `starlink` | Starlink, OpenWrt VM (from 2026-10-28) | prepared configs for the Starlink sessions, no data yet |

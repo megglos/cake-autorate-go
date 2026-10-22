@@ -1,0 +1,37 @@
+{
+  "enable_sleep_function": true,
+  "log_to_file": false,
+  "ping_method": "icmp-timestamp",
+  "links": [
+    {
+      "name": "wan",
+      "reflectors": [
+        "100.64.0.1",
+        "fra-de-ping.vultr.com",
+        "nbg1-speed.hetzner.com",
+        "fsn1-speed.hetzner.com",
+        "94.140.14.14",
+        "94.140.15.15",
+        "ams-nl-ping.vultr.com",
+        "par-fr-ping.vultr.com"
+      ],
+      "download": {
+        "interface": "ifb4eth1",
+        "adjust": true,
+        "min_rate_kbps": 20000,
+        "base_rate_kbps": 100000,
+        "max_rate_kbps": 300000,
+        "owd_delta_delay_thr_ms": 30
+      },
+      "upload": {
+        "interface": "eth1",
+        "adjust": true,
+        "min_rate_kbps": 5000,
+        "base_rate_kbps": 20000,
+        "max_rate_kbps": 40000,
+        "owd_delta_delay_thr_ms": 30
+      }
+    }
+  ],
+  "mode": "bandwidth"
+}
