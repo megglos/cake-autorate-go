@@ -1,0 +1,38 @@
+2026/10/22 03:49:39.984332 [INFO] cake-autorate-go 1.0.0-alpha.1-zzamax starting (1 link(s))
+2026/10/22 03:49:39.984624 [INFO] recording events to out/dp12/11-dl-unshaped.jsonl.gz
+2026/10/22 03:49:39.984868 [INFO] [wan] controller started in RUNNING state
+2026/10/22 03:49:39.984879 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/22 03:49:39.984906 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 03:52:00.049875 [INFO] received signal interrupt, shutting down
+2026/10/22 03:52:00.049963 [INFO] [wan] controller stopped
+2026/10/22 03:52:00.049977 [INFO] cake-autorate-go stopped
+54]   https://nbg1-speed.hetzner.com/1GB.bin
+[load-gen] [03:49:54]   https://hel1-speed.hetzner.com/1GB.bin
+[load-gen] [03:49:54]   http://speedtest.serverius.net/files/1000mb.bin
+[load-gen] [03:49:54]   http://fra-de-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [03:49:54]   http://ams-nl-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [03:49:54]   http://par-fr-ping.vultr.com/vultr.com.1000MB.bin
+[load-gen] [03:49:54] Upload URL: https://speed.cloudflare.com/__up
+
+[load-gen] [03:49:54] Starting 8 download workers...
+[load-gen] [03:49:54] Load generation running for 120s...
+[load-gen] [03:49:54] Press Ctrl+C to stop early.
+
+[load-gen] [03:50:04] 10/120s elapsed, 8 workers active, eth1: dl 341.0 Mbit/s, ul 2.1 Mbit/s
+[load-gen] [03:50:14] 20/120s elapsed, 8 workers active, eth1: dl 315.0 Mbit/s, ul 1.7 Mbit/s
+[load-gen] [03:50:25] 30/120s elapsed, 8 workers active, eth1: dl 358.4 Mbit/s, ul 2.1 Mbit/s
+[load-gen] [03:50:35] 40/120s elapsed, 8 workers active, eth1: dl 380.9 Mbit/s, ul 2.3 Mbit/s
+[load-gen] [03:50:45] 50/120s elapsed, 8 workers active, eth1: dl 377.1 Mbit/s, ul 2.3 Mbit/s
+[load-gen] [03:50:55] 60/120s elapsed, 8 workers active, eth1: dl 387.9 Mbit/s, ul 2.4 Mbit/s
+[load-gen] [03:51:05] 70/120s elapsed, 8 workers active, eth1: dl 298.1 Mbit/s, ul 1.9 Mbit/s
+[load-gen] [03:51:15] 80/120s elapsed, 8 workers active, eth1: dl 371.3 Mbit/s, ul 2.4 Mbit/s
+[load-gen] [03:51:25] 90/120s elapsed, 8 workers active, eth1: dl 401.6 Mbit/s, ul 2.5 Mbit/s
+[load-gen] [03:51:35] 100/120s elapsed, 8 workers active, eth1: dl 377.9 Mbit/s, ul 2.4 Mbit/s
+[load-gen] [03:51:45] 110/120s elapsed, 8 workers active, eth1: dl 350.8 Mbit/s, ul 2.2 Mbit/s
+[load-gen] [03:51:55] 120/120s elapsed, 8 workers active, eth1: dl 339.0 Mbit/s, ul 2.2 Mbit/s
+[load-gen] [03:51:55] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+[load-gen] Done.

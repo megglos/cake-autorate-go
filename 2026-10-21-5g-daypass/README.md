@@ -18,6 +18,8 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp6` | unshaped, autorate, rod, inc, incrod, upstream-fts | dl | 120 s | 12 |
 | `dp7` | unshaped, autorate, rod, incrod, rodlcd, upstream-fts | both | 120 s | 12 |
 | `dp8` | unshaped, autorate, rod, incrod, upstream-fts | dl ul both | 120 s | 5 (2) |
+| `dp11` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (3) |
+| `dp12` | unshaped, autorate (max 245), amax, max500, incrodamax | dl both | 120 s | 3 (4) |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
@@ -28,6 +30,19 @@ the maximum rates of the configs (245000 and 110000 kbit/s), thus all
 shaped policies were at the maximum rate and are equal. Sessions after dp8
 use the configs in `configs-max500` (maximum rates 500000 and 160000 kbit/s,
 all other values unchanged).
+
+(3) Stopped after round 3 to run dp12 at night. Session dp11b has the
+remaining rounds.
+
+(4) Exploration build 1.0.0-alpha.1-zzamax (local branch, not published).
+It adds the config key `zz_auto_max`: while the download rate is at the
+maximum rate for 2 s, the achieved rate is at least 90 % of it and there
+is no bufferbloat, the maximum increases by 10 % (up to 3 times the
+configured value). At bufferbloat, the maximum decreases to 1.5 times the
+rate of the decrease, not below the configured value. Without the key, the
+build is equal to the build of dp6 to dp11. Session `autorate` here uses
+`5g-max245.yaml` (maximum rates 245000 and 110000 kbit/s), `max500` uses
+`5g.yaml`. dp11b, dp10 and dp9 use this build too.
 
 Policy names:
 
@@ -47,6 +62,9 @@ Policy names:
 - `rodsrm0`: `rod` and `srm0`.
 - `pi200`: `ping_interval_ms: 200`.
 - `base180`: download base rate 180000 kbit/s.
+- `amax`: `5g-max245.yaml` and `zz_auto_max: true`.
+- `incrodamax`: `incrod`, `amax`.
+- `max500`: `5g.yaml` (maximum rates 500000 and 160000 kbit/s).
 - `upstream-fts`: the original cake-autorate.
 
 Saturation check (dp1): dl 169/234/248 Mbit/s with 4/8/16 workers, ul
