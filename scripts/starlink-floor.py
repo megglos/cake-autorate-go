@@ -44,13 +44,15 @@
 #   --offset S     time of the first reconfiguration in the minute (default 12)
 #   --window S     time before and after a boundary for the floor (default 3)
 #   --guard S      time at a boundary that the floor does not use (default 0.2)
-#   --link NAME    use only the pings of this link (default: all)
+#   --link NAME    use only the pings of this link (necessary if the
+#                  recordings have more than one link)
 #   --self-test    make a recording with known floor steps and check the
 #                  result
 #
 # Requirements: python3.
 
 import argparse
+import bisect
 import gzip
 import json
 import math
@@ -62,10 +64,13 @@ from datetime import datetime
 
 
 def read_pings(paths, link=None):
-    """Returns a list of (send time in s since the epoch, reflector, dl ms,
-    ul ms, rtt ms) of the replies. dl and ul are RTT/2 without one-way
-    delays."""
+    """Returns a list of (send time in s since the epoch, series, dl ms,
+    ul ms, rtt ms) of the replies, and the set of the links. dl and ul are
+    RTT/2 without one-way delays. The series is the reflector and the kind
+    of the measurement: a one-way delay contains the clock offset of the
+    reflector, RTT/2 does not. Thus, the two kinds are different series."""
     out = []
+    links = set()
     for path in paths:
         opener = gzip.open if path.endswith('.gz') else open
         start = None
@@ -82,15 +87,18 @@ def read_pings(paths, link=None):
                     continue
                 if link and ev.get('link') != link:
                     continue
+                links.add(ev.get('link'))
                 rtt = ev['rtt_us'] / 1000
                 sent = start + ev['t'] / 1e6 - rtt / 1000
                 dl = ev.get('dl_owd_us')
                 ul = ev.get('ul_owd_us')
+                kind = 'owd'
                 if dl is None or ul is None:
                     dl = ul = rtt * 1000 / 2
-                out.append((sent, ev['reflector'], dl / 1000, ul / 1000, rtt))
+                    kind = 'rtt'
+                out.append((sent, (ev['reflector'], kind), dl / 1000, ul / 1000, rtt))
     out.sort()
-    return out
+    return out, links
 
 
 def excess(pings):
@@ -132,15 +140,18 @@ def boundary_steps(pings, period, offset, window, guard):
     by_refl = {}
     for t, r, dl, ul, rtt in pings:
         by_refl.setdefault(r, []).append((t, dl, ul, rtt))
+    # The pings are in time order: a binary search finds the windows.
+    times = {r: [s[0] for s in v] for r, v in by_refl.items()}
     t0, t1 = pings[0][0], pings[-1][0]
     first = math.floor((t0 - offset) / period) * period + offset
     out = []
     b = first
     while b <= t1:
         steps = [[], [], []]
-        for samples in by_refl.values():
-            before = [s for s in samples if b - window <= s[0] < b - guard]
-            after = [s for s in samples if b + guard <= s[0] < b + window]
+        for r, samples in by_refl.items():
+            ts = times[r]
+            before = samples[bisect.bisect_left(ts, b - window):bisect.bisect_left(ts, b - guard)]
+            after = samples[bisect.bisect_left(ts, b + guard):bisect.bisect_left(ts, b + window)]
             if not before or not after:
                 continue
             for i in range(3):
@@ -190,9 +201,10 @@ def scan(pings, period, window, guard):
 
 
 def self_test():
-    """A recording of 10 minutes: 6 reflectors, a floor that changes at the
-    seconds 12, 27, 42 and 57 by up to +-15 ms (the same in the two
-    directions), and a random jitter."""
+    """A recording of 10 minutes: 6 reflectors with clock offsets, a floor
+    that changes at the seconds 12, 27, 42 and 57 by up to +-15 ms (the
+    same in the two directions), a random jitter, and some replies without
+    one-way delays."""
     rng = random.Random(1)
     start = 1798761600.0  # 2027-01-01T00:00:00Z
     lines = [json.dumps({'type': 'header', 'start': '2027-01-01T00:00:00Z'})]
@@ -208,20 +220,23 @@ def self_test():
         dl = floor + 5 * refl + rng.expovariate(1 / 2) + 1000 * refl  # clock offset
         ul = floor + 3 * refl + rng.expovariate(1 / 2) - 1000 * refl
         rtt = (dl - 1000 * refl) + (ul + 1000 * refl)
-        lines.append(json.dumps({'t': int((sent + rtt / 1000) * 1e6), 'type': 'ping', 'link': 'wan',
-                                 'reflector': 'r%d' % refl, 'rtt_us': int(rtt * 1000),
-                                 'dl_owd_us': int(dl * 1000), 'ul_owd_us': int(ul * 1000)}))
+        ev = {'t': int((sent + rtt / 1000) * 1e6), 'type': 'ping', 'link': 'wan',
+              'reflector': 'r%d' % refl, 'rtt_us': int(rtt * 1000)}
+        # Some replies have no one-way delays: they must not make steps.
+        if i % 7:
+            ev['dl_owd_us'], ev['ul_owd_us'] = int(dl * 1000), int(ul * 1000)
+        lines.append(json.dumps(ev))
     with tempfile.NamedTemporaryFile('w', suffix='.jsonl') as f:
         f.write('\n'.join(lines) + '\n')
         f.flush()
-        pings = excess(read_pings([f.name]))
+        pings = excess(read_pings([f.name])[0])
     on = boundary_steps(pings, 15, 12, 3, 0.2)
     off = boundary_steps(pings, 15, 19.5, 3, 0.2)
     mean_on = statistics.mean(abs(s[3]) for s in on)
     mean_off = statistics.mean(abs(s[3]) for s in off)
     best = max(((statistics.mean(abs(x[3]) for x in boundary_steps(pings, 15, o / 2, 3, 0.2)), o / 2)
                 for o in range(30)))
-    ok = mean_on > 3 * mean_off and best[1] == 12 % 15
+    ok = mean_on > 3 * mean_off and best[1] == 12 % 15 and max(abs(x[1]) for x in off) < 5
     print('self-test: mean |rtt step| %.1f ms at the boundaries, %.1f ms in the middle, best offset %.1f s: %s'
           % (mean_on, mean_off, best[1], 'ok' if ok else 'FAILED'))
     return 0 if ok else 1
@@ -241,11 +256,23 @@ def main():
         return self_test()
     if not a.recordings:
         ap.error('no recording')
-    pings = excess(read_pings(a.recordings, a.link))
+    for name in ('period', 'window'):
+        v = getattr(a, name)
+        if not math.isfinite(v) or v <= 0:
+            ap.error('--%s must be a number above 0' % name)
+    if not math.isfinite(a.offset):
+        ap.error('--offset must be a number')
+    if not math.isfinite(a.guard) or a.guard < 0 or a.guard >= a.window:
+        ap.error('--guard must be 0 or more and less than --window')
+    raw, links = read_pings(a.recordings, a.link)
+    # The pings of different links have different delays: do not mix them.
+    if len(links) > 1:
+        ap.error('the recordings have more than one link (%s): select one with --link' % ', '.join(sorted(map(str, links))))
+    pings = excess(raw)
     if not pings:
         print('no ping replies', file=sys.stderr)
         return 1
-    print('%d ping replies, %d reflectors, %.0f s' % (len(pings), len({p[1] for p in pings}), pings[-1][0] - pings[0][0]))
+    print('%d ping replies, %d reflectors, %.0f s' % (len(pings), len({p[1][0] for p in pings}), pings[-1][0] - pings[0][0]))
     print()
     profile(pings)
     print()
