@@ -160,6 +160,15 @@ a=$(rpc unshape '{"link":"wan","seconds":0}')
 case $a in *'Invalid time'*) ok "rpc unshape: invalid time" ;; *) fail "rpc unshape: invalid time (answer: $a)" ;; esac
 a=$(rpc unshape '{"link":"wan\nunshape wan"}')
 case $a in *'Invalid link name'*) ok "rpc unshape: invalid link name" ;; *) fail "rpc unshape: invalid link name (answer: $a)" ;; esac
+check "status file shows the mode of the config" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].config_mode" | grep -qx balanced'
+a=$(rpc mode '{"link":"wan","mode":"bandwidth","seconds":6}')
+case $a in *'"result": "ok"'*) ok "rpc mode with a time" ;; *) fail "rpc mode with a time (answer: $a)" ;; esac
+wait_for "status file shows the mode" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].mode" | grep -qx bandwidth'
+wait_for "the mode of the config comes back after the time" 'jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].mode" | grep -qx balanced'
+a=$(rpc mode '{"link":"wan","mode":"fast"}')
+case $a in *'Invalid mode'*) ok "rpc mode: invalid mode" ;; *) fail "rpc mode: invalid mode (answer: $a)" ;; esac
+a=$(rpc mode '{"link":"wan","mode":"latency","seconds":86401}')
+case $a in *'Invalid time'*) ok "rpc mode: invalid time" ;; *) fail "rpc mode: invalid time (answer: $a)" ;; esac
 a=$(rpc pause '{"link":"wan","dir":"both"}')
 case $a in *'Invalid direction'*) ok "rpc invalid direction" ;; *) fail "rpc invalid direction (answer: $a)" ;; esac
 # A stopped process does not answer. The plugin must stop after its

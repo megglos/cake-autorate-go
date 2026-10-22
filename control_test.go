@@ -19,7 +19,13 @@ type fakeLinkControl struct {
 	paused   bool
 	unshaped []bool // the arguments of SetUnshaped
 	unshapeD time.Duration
+	modes    []string // the arguments of SetMode
 	err      error
+}
+
+func (f *fakeLinkControl) SetMode(m LinkMode, d time.Duration) error {
+	f.modes = append(f.modes, fmt.Sprintf("%s %v", m, d))
+	return f.err
 }
 
 func (f *fakeLinkControl) SetUnshaped(on bool, d time.Duration) error {

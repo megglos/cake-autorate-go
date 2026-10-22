@@ -18,6 +18,15 @@ const ERROR_FILE = '/var/run/cake-autorate/config-error';
 const IFNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,14}$/;
 const LINK_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
+// The link modes (mode.go) and the options that they set.
+const MODES = [
+	[ 'latency', _('Latency: the lowest delay') ],
+	[ 'balanced', _('Balanced: refractory period after a decrease (ICMP timestamps only)') ],
+	[ 'bandwidth', _('Bandwidth: the most throughput') ],
+	[ 'custom', _('Custom: the options below') ]
+];
+const MODE_OPTIONS = [ 'refractory_on_decrease', 'increase_to_delay_thr', 'auto_max_rate' ];
+
 // The default reflectors for ICMP echo. They do not reply to ICMP
 // timestamp requests (config.go, noTimestampReply).
 const ECHO_REFLECTORS = [
@@ -41,6 +50,23 @@ function formNumber(section, sid, name, def) {
 function isEmpty(value) {
 	return value == null || value === '';
 }
+
+// inferredLinkMode returns the mode that the program uses for the link
+// sid without a mode while the global section has no mode (config.go,
+// setDefaultModes): custom if an option of the modes is on for the link,
+// else '' (the global value).
+function inferredLinkMode(sid) {
+	const g = uci.sections('cake-autorate', 'global')[0];
+	if (!g || !isEmpty(g.mode))
+		return '';
+	return MODE_OPTIONS.some((k) => {
+		const v = uci.get('cake-autorate', sid, k);
+		return isEmpty(v) ? g[k] == '1' : v == '1';
+	}) ? 'custom' : '';
+}
+
+// The links for which the user selected the global value of the mode.
+const globalModeLinks = new Set();
 
 // Returns a validate function for the half-open range (lo, hi].
 function rangeOpenClosed(lo, hi) {
@@ -310,12 +336,50 @@ function globalSection(m, sid) {
 		_('Learn the upload delay that download traffic causes (for example on 5G). A link can set a different value.'));
 	flag(s, 'general', 'status_history', _('Graph history'), false,
 		_('Keep the samples of the last 15 minutes in the memory of the router (approximately 36 kB for each link). Then the graphs on the status page also show the time before you opened the page.'));
-	flag(s, 'general', 'refractory_on_decrease', _('Refractory period after a decrease'), false);
+	o = s.taboption('general', form.ListValue, 'mode', _('Mode'),
+		_('The trade-off between delay and throughput after a start. A link can set a different mode. The status page can change the mode while the service runs. Latency: all three options below are off. Balanced: only the refractory period after a decrease, and only with ICMP timestamps (on a 5G link: more throughput for approximately 1 ms more delay); with ICMP echo, as Latency. Bandwidth: all three options are on (more throughput, more delay, mostly on a busy link). Custom: set the options yourself.'));
+	for (const [ mode, title ] of MODES)
+		o.value(mode, title);
+	// Without the option, the program uses custom if one of the options is
+	// on (a configuration from before the modes), else balanced.
+	o.cfgvalue = function(sid) {
+		const v = uci.get('cake-autorate', sid, 'mode');
+		if (!isEmpty(v))
+			return v;
+		return MODE_OPTIONS.some((k) => uci.get('cake-autorate', sid, k) == '1') ? 'custom' : 'balanced';
+	};
+	o.rmempty = false;
+	// Write the shown mode also when it is not in the configuration: else
+	// the program finds balanced when all options are off.
+	o.forcewrite = true;
+	// With a global mode, the program does not find the mode custom for a
+	// link. Thus write it for the links that have it now.
+	o.write = function(sid, value) {
+		if (isEmpty(uci.get('cake-autorate', sid, 'mode')))
+			for (const l of uci.sections('cake-autorate', 'link'))
+				if (isEmpty(l.mode) && !globalModeLinks.has(l['.name']) && inferredLinkMode(l['.name']) == 'custom')
+					uci.set('cake-autorate', l['.name'], 'mode', 'custom');
+		return form.ListValue.prototype.write.call(this, sid, value);
+	};
+
+	// The options apply only in the mode custom. A hidden option keeps its
+	// value (retain): the mode custom of a link or of the status page uses
+	// it.
+	const modeOption = (o) => {
+		o.depends('mode', 'custom');
+		o.retain = true;
+	};
+
+	o = flag(s, 'general', 'refractory_on_decrease', _('Refractory period after a decrease'), false,
+		_('Only one rate decrease in each refractory period.'));
+	modeOption(o);
 	flag(s, 'general', 'repeat_decrease_on_rise', _('Decrease again when the delay increases'), false);
-	flag(s, 'general', 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold'), false,
+	o = flag(s, 'general', 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold'), false,
 		_('At high load, increase the rate also when the delay is above the maximum increase threshold, until the bufferbloat threshold (as the original cake-autorate). For a link with a delay under load that the shaper cannot remove, for example 5G.'));
-	flag(s, 'general', 'auto_max_rate', _('Learn the maximum rate'), false,
+	modeOption(o);
+	o = flag(s, 'general', 'auto_max_rate', _('Learn the maximum rate'), false,
 		_('The maximum rate can increase above the maximum rate of the link while the link has more capacity (for example a 5G cell at night). It decreases slowly to the configured maximum.'));
+	modeOption(o);
 
 	flag(s, 'idle', 'enable_sleep_function', _('Sleep when idle'), true,
 		_('Stop the pings when the link is idle for some time.'));
@@ -607,6 +671,36 @@ function linkSection(m) {
 			o.default = String(def);
 			o.rmempty = false;
 		}
+	}
+
+	o = s.taboption('rates', form.ListValue, 'mode', _('Mode'));
+	o.value('', _('Global value'));
+	for (const [ mode, title ] of MODES)
+		o.value(mode, title);
+	o.modalonly = true;
+	o.cfgvalue = function(sid) {
+		const v = uci.get('cake-autorate', sid, 'mode');
+		return isEmpty(v) ? inferredLinkMode(sid) : v;
+	};
+	o.remove = function(sid) {
+		globalModeLinks.add(sid);
+		return form.ListValue.prototype.remove.call(this, sid);
+	};
+
+	// The options of the modes apply only in the mode custom of the link.
+	// A hidden option keeps its value (retain).
+	for (const [ key, title ] of [
+		[ 'refractory_on_decrease', _('Refractory period after a decrease') ],
+		[ 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold') ],
+		[ 'auto_max_rate', _('Learn the maximum rate') ]
+	]) {
+		o = s.taboption('rates', form.ListValue, key, title);
+		o.value('', _('Global value'));
+		o.value('1', _('On'));
+		o.value('0', _('Off'));
+		o.depends('mode', 'custom');
+		o.retain = true;
+		o.modalonly = true;
 	}
 
 	o = s.option(form.DummyValue, '_dl_rates', _('Download base / max (Mbit/s)'));

@@ -21,6 +21,7 @@
 		"log_file_path": "string",
 		"log_to_file": "bool",
 		"min_shaper_rates_enforcement": "bool",
+		"mode": "string",
 		"monitor_interval_ms": "int",
 		"ping_interface": "string",
 		"ping_interval_ms": "int",
@@ -51,14 +52,18 @@
 		"owd_delta_delay_thr_ms": "float"
 	},
 	"link": {
+		"auto_max_rate": "bool",
+		"increase_to_delay_thr": "bool",
 		"learn_cross_delay": "bool",
+		"mode": "string",
 		"name": "string",
 		"ping_interface": "string",
 		"ping_interval_ms": "int",
 		"ping_method": "string",
 		"ping_source_addr": "string",
 		"pinger_count": "int",
-		"reflectors": "list"
+		"reflectors": "list",
+		"refractory_on_decrease": "bool"
 	},
 	"direction": {
 		"adjust": "bool",

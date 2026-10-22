@@ -37,6 +37,9 @@ type LinkController struct {
 	// calPaused are the pause states of the directions before a
 	// calibration session. Only the goroutine of Run uses it.
 	calPaused map[Direction]bool
+	// calMode is the mode of the link at the start of a calibration (a
+	// live mode can be different from the mode of the config).
+	calMode LinkMode
 	// unshapePaused are the pause states of the directions before the
 	// command "unshape". Only the goroutine of Run uses it.
 	unshapePaused map[Direction]bool
@@ -45,6 +48,11 @@ type LinkController struct {
 	// goroutine of Run uses them.
 	unshapeUntil time.Time
 	unshapeTimer *time.Timer
+	// modeUntil is the end of the time of "mode LINK MODE SECONDS", or zero
+	// (no time limit). modeTimer fires at this time. Only the goroutine of
+	// Run uses them.
+	modeUntil time.Time
+	modeTimer *time.Timer
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
 	// goroutine of Run.
@@ -152,6 +160,9 @@ func (c *LinkController) loop(ctx context.Context, healthC, statusC <-chan time.
 		case <-c.unshapeTimerC():
 			c.checkUnshapeTime(time.Now())
 
+		case <-timerC(c.modeTimer):
+			c.checkModeTime(time.Now())
+
 		case <-healthC:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
@@ -170,6 +181,9 @@ func (c *LinkController) publishStatus() {
 	st := c.core.Core().Snapshot()
 	if st.Unshaped && !c.unshapeUntil.IsZero() {
 		st.UnshapedLeftS = math.Max(0, math.Round(time.Until(c.unshapeUntil).Seconds()))
+	}
+	if !c.modeUntil.IsZero() {
+		st.ModeLeftS = math.Max(0, math.Round(time.Until(c.modeUntil).Seconds()))
 	}
 	baselines := c.core.Core().ReflectorBaselinesUs()
 	for _, r := range c.pingerMgr.Snapshot() {
@@ -340,6 +354,78 @@ func (c *LinkController) unshapeTimerC() <-chan time.Time {
 	return c.unshapeTimer.C
 }
 
+// SetMode sets the link mode. With a duration d > 0, the link goes back to
+// the mode of the config after d (also when the program that sent the
+// command stops); a new "mode" sets a new time. The mode is not kept: the
+// program starts with the mode of the config.
+func (c *LinkController) SetMode(m LinkMode, d time.Duration) error {
+	return c.call(func(now time.Time) error {
+		// A mode change changes the rate control of a calibration block.
+		if c.core.Core().Calibrating() {
+			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		c.setModeTime(now, d)
+		c.rateErr = nil
+		if m != c.core.Core().Mode() {
+			c.logger.Infof("[%s] mode %s", c.name, m)
+		}
+		// Also with the current mode: then Core sends the rates again,
+		// for example after a failed rate change.
+		c.core.SetMode(m, now)
+		return c.rateErr
+	})
+}
+
+// setModeTime sets the time limit of the mode: d from now, or no limit for
+// d == 0.
+func (c *LinkController) setModeTime(now time.Time, d time.Duration) {
+	if c.modeTimer != nil {
+		c.modeTimer.Stop()
+		c.modeTimer = nil
+	}
+	c.modeUntil = time.Time{}
+	if d > 0 {
+		c.modeUntil = now.Add(d)
+		c.modeTimer = time.NewTimer(d)
+	}
+}
+
+// checkModeTime sets the mode of the config at the end of the time of
+// "mode LINK MODE SECONDS". Only the goroutine of Run calls it.
+func (c *LinkController) checkModeTime(now time.Time) {
+	if c.modeUntil.IsZero() || now.Before(c.modeUntil) {
+		return
+	}
+	// A mode change changes the rate control of a calibration block: try
+	// again after the calibration.
+	if c.core.Core().Calibrating() {
+		c.modeTimer = time.NewTimer(unshapeRetry)
+		return
+	}
+	m := linkModeOf(c.cfg, c.link)
+	if c.core.Core().Mode() != m {
+		c.logger.Infof("[%s] the time of the mode ended, mode %s", c.name, m)
+	}
+	c.rateErr = nil
+	c.core.SetMode(m, now)
+	if c.rateErr != nil {
+		// Try again later: the rate can be above the maximum of the mode.
+		c.logger.Errorf("[%s] setting the mode %s (again in %v): %v", c.name, m, unshapeRetry, c.rateErr)
+		c.modeTimer = time.NewTimer(unshapeRetry)
+		return
+	}
+	c.setModeTime(now, 0)
+}
+
+// timerC returns the channel of t, or nil for a nil timer (a nil channel
+// never receives).
+func timerC(t *time.Timer) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
+}
+
 // unshapeRetry is the time until the next try to shape the link again
 // after a failed try at the end of the time of "unshape". Tests change it.
 var unshapeRetry = 5 * time.Second
@@ -458,10 +544,15 @@ func readInterfaceMTU(iface string, logger *Logger) int {
 }
 
 // CalConfig implements CalTarget: the config of the link with only this
-// link.
+// link, in the mode of the link at the start of the calibration. A mode
+// command cannot change the mode during a calibration.
 func (c *LinkController) CalConfig() *Config {
 	cfg := *c.cfg
 	cfg.Links = []LinkConfig{*c.link}
+	if c.calMode != "" {
+		m := string(c.calMode)
+		cfg.Links[0].Mode = &m
+	}
 	return &cfg
 }
 
@@ -477,6 +568,7 @@ func (c *LinkController) CalStart() error {
 		}
 		core := c.core.Core()
 		c.calPaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		c.calMode = core.Mode()
 		c.core.SetCalibrating(true, now)
 		return nil
 	}, calDispatchTimeout)

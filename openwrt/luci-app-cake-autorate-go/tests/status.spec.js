@@ -148,6 +148,32 @@ test('pause and resume one direction', async ({ page }) => {
 	expect(pausedInFile('download')).toBe('false');
 });
 
+test('the mode dialog sets the mode for a time, then the status shows it', async ({ page }) => {
+	await page.goto(PAGE);
+	const link = page.locator('.cbi-section[data-link="wan"]');
+	await expect(link.locator('[data-mode]')).toHaveText('Mode: Balanced');
+	await link.locator('button.cake-autorate-mode').click();
+	const modal = page.locator('.modal');
+	await expect(modal.locator('#cake-autorate-mode')).toHaveValue('balanced');
+	await modal.locator('#cake-autorate-mode').selectOption('bandwidth');
+	await modal.locator('#cake-autorate-mode-time').selectOption('3600');
+	await modal.locator('[data-mode-set]').click();
+	await expect(modal).toBeHidden();
+	await expect(link.locator('[data-mode]')).toHaveText('Mode: Bandwidth (Balanced in 60 min)', { timeout: 10000 });
+	expect(vm('jsonfilter -i /var/run/cake-autorate/status.json -e "@.links[0].mode"').trim()).toBe('bandwidth');
+
+	// Without a time, the mode stays until a change.
+	await link.locator('button.cake-autorate-mode').click();
+	await modal.locator('#cake-autorate-mode').selectOption('latency');
+	await modal.locator('[data-mode-set]').click();
+	await expect(link.locator('[data-mode]')).toHaveText('Mode: Latency (configuration: Balanced)', { timeout: 10000 });
+
+	// A restart sets the mode of the configuration.
+	resetConfig();
+	await waitForStatus();
+	await expect(link.locator('[data-mode]')).toHaveText('Mode: Balanced', { timeout: 15000 });
+});
+
 test('a refresh keeps the keyboard focus on the button', async ({ page }) => {
 	await page.goto(PAGE);
 	const ul = page.locator('tr[data-dir="ul"] button');
@@ -335,6 +361,7 @@ test('a user with only read permission sees no buttons, but the CAKE warning', a
 		const dl = page.locator('tr[data-dir="dl"]');
 		await expect(dl.locator('.label')).toHaveText('Active');
 		await expect(page.locator('.cbi-section[data-link="wan"] button')).toHaveCount(0);
+		await expect(page.locator('.cbi-section[data-link="wan"] [data-mode]')).toHaveText('Mode: Balanced');
 		await expect(page.locator('[data-cake-warning="ul"]')).toContainText('has no CAKE');
 	}
 	finally {

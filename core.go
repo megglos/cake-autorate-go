@@ -135,6 +135,8 @@ type Core struct {
 	// rateSeen is true after the first throughput sample (HandleRate).
 	// Before it, the load is not known.
 	rateSeen bool
+	// mode is the current link mode (see LinkMode).
+	mode LinkMode
 }
 
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
@@ -146,6 +148,7 @@ func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logg
 		cfg:        cfg,
 		act:        act,
 		logger:     logger,
+		mode:       linkModeOf(cfg, link),
 		state:      StateRunning,
 		reflectors: make(map[string]*reflectorDelay),
 		dl: dirState{
@@ -602,7 +605,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		// With RepeatDecreaseOnRise, decrease the rate again in the
 		// refractory period only while the delay increases.
 		inRefractory := ds.bbDetected && now.Sub(ds.lastBBTime) <= bbRefractoryDur
-		if c.cfg.RefractoryOnDecrease && inRefractory {
+		if c.refractoryOnDecrease() && inRefractory {
 			return
 		}
 		if c.cfg.RepeatDecreaseOnRise && inRefractory && deltaUs <= ds.lastBBDeltaUs {
@@ -703,7 +706,7 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	// The factor shows the remaining headroom below the delay threshold
 	maxUpThrUs := dc.AvgOWDDeltaMaxAdjUpThrMs * 1000.0
 	var factor float64
-	if c.cfg.IncreaseToDelayThr {
+	if c.increaseToDelayThr() {
 		// As in the original: the factor is 1 up to maxUpThrUs and 0 at
 		// the delay threshold. A delay at or above the delay threshold
 		// gives no increase, also when maxUpThrUs is not below it.
@@ -903,7 +906,7 @@ const (
 // the learned maximum with AutoMaxRate.
 func (c *Core) maxRateKbps(dir Direction) float64 {
 	m := float64(c.link.DirConfig(dir).MaxRateKbps)
-	if c.cfg.AutoMaxRate {
+	if c.autoMaxRate() {
 		m = math.Max(m, c.getDirState(dir).autoMaxKbps)
 	}
 	return m
@@ -927,7 +930,7 @@ func (ds *dirState) autoMaxBreak() {
 // stay above max_rate_kbps. A slow decrease keeps the maximum through these
 // stalls, and sets it back when the capacity stays lower.
 func (c *Core) updateAutoMax(dir Direction, now time.Time) {
-	if !c.cfg.AutoMaxRate {
+	if !c.autoMaxRate() {
 		return
 	}
 	ds := c.getDirState(dir)

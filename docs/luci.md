@@ -77,6 +77,8 @@ Each link has two graphs for the last 1, 5 or 15 minutes. One graph shows the sh
 
 The button **Pause** sets the shaper of a direction to the base rate and stops the rate changes. **Resume** starts the control again. The pause stops at a restart of the service. Only a user with write permission for the app sees the buttons.
 
+The label **Mode** shows the mode of the link (see [configuration.md](configuration.md#link-modes)). The button **Mode…** changes it while the service runs, without a restart: until a change, or for 1, 2 or 8 hours. After the time, or after a restart of the service, the link uses the mode of the configuration. For example, select **Bandwidth** for 1 hour for a large download, then the link goes back to **Balanced**. Only a user with write permission sees the button.
+
 If an interface of a direction with rate control has no CAKE as root qdisc, the program cannot change the rate. Then the page shows a warning. Set up CAKE on the interface, for example with SQM QoS (`luci-app-sqm`). The page checks the interfaces each 10 seconds.
 
 ![The section of the app on the Overview page](images/luci-overview.png)
@@ -97,8 +99,8 @@ The button **Bufferbloat test…** of a link (only with write permission) is a q
 
 The tab **Configuration** has:
 
-- The section **Service**: the global settings in the tabs General, Idle and stall, Delay thresholds, Advanced and Logging.
-- The section **Links**: a table with one row for each link. Use **Add link** to add a link. Use the edit button to change the interfaces, the rates, the delay thresholds and the ping settings of a link. The **Enabled** box in the row turns the control of the link on or off.
+- The section **Service**: the global settings in the tabs General, Idle and stall, Delay thresholds, Advanced and Logging. The field **Mode** in the tab General sets the mode of all links after a start. The options that the modes set (refractory period after a decrease, increase up to the bufferbloat threshold, learned maximum rate) show only in the mode **Custom**. In the other modes, they keep their values: a link in the mode Custom with "Global value" uses them.
+- The section **Links**: a table with one row for each link. Use **Add link** to add a link. Use the edit button to change the interfaces, the rates, the delay thresholds and the ping settings of a link. The **Enabled** box in the row turns the control of the link on or off. The field **Mode** in the tab Rates of the link dialog sets a different mode for one link. In the mode Custom, the tab also shows the three options for the link (Global value, On or Off).
 
 An empty field uses the default value of the program. The field shows this value in grey. The page checks the values before the save, for example the rates (minimum ≤ base ≤ maximum) and the interface names. Two links must not use the same interface. After **Save & Apply**, the service starts again with the new configuration. If the configuration is not valid, the page shows the errors of the service.
 
@@ -157,4 +159,4 @@ Do not use the package and the service of `setup.sh` at the same time: both chan
 
 ## ubus methods
 
-The LuCI app also installs an rpcd plugin, `/usr/share/rpcd/ucode/cake-autorate.uc`. It gives the ubus methods `cake-autorate pause` and `cake-autorate resume` (arguments `link` and optional `dir`, `dl` or `ul`) and sends them to the control socket. The method `cake-autorate history` gives the answer of the control command `history` as a JSON text in the field `data`. The method `cake-autorate qdisc` (argument `interface`) gives the kind of the root qdisc of an interface, for example `cake` or `fq_codel`. The methods `cake-autorate calibrate_start` (arguments `link` and optional `load_s`), `calibrate_status` and `calibrate_stop` control a calibration session (control command `calibrate`); only users with write permission have them.
+The LuCI app also installs an rpcd plugin, `/usr/share/rpcd/ucode/cake-autorate.uc`. It gives the ubus methods `cake-autorate pause` and `cake-autorate resume` (arguments `link` and optional `dir`, `dl` or `ul`) and sends them to the control socket. The method `cake-autorate history` gives the answer of the control command `history` as a JSON text in the field `data`. The method `cake-autorate qdisc` (argument `interface`) gives the kind of the root qdisc of an interface, for example `cake` or `fq_codel`. The methods `cake-autorate calibrate_start` (arguments `link` and optional `load_s`), `calibrate_status` and `calibrate_stop` control a calibration session (control command `calibrate`); only users with write permission have them. The method `cake-autorate mode` (arguments `link`, `mode` and optional `seconds`, 1 to 86400) sends the control command `mode`; only users with write permission have it.

@@ -115,6 +115,22 @@ function shaping(verb, args) {
 	return command(verb + ' ' + link + ((verb == 'unshape' && seconds != null) ? ' ' + seconds : ''));
 }
 
+// The link modes of the program (mode.go).
+const MODES = [ 'latency', 'balanced', 'bandwidth', 'custom' ];
+
+// Checks the arguments and sends "mode LINK MODE [SECONDS]". With seconds,
+// the program sets the mode of the config again after this time.
+function set_mode(args) {
+	const link = args?.link, mode = args?.mode, seconds = args?.seconds;
+	if (type(link) != 'string' || !match(link, LINK_NAME_RE))
+		return { error: 'Invalid link name' };
+	if (!(mode in MODES))
+		return { error: 'Invalid mode' };
+	if (seconds != null && (type(seconds) != 'int' || seconds < 1 || seconds > 86400))
+		return { error: 'Invalid time' };
+	return command('mode ' + link + ' ' + mode + (seconds != null ? ' ' + seconds : ''));
+}
+
 // Sends "pin LINK SECONDS" (answer: the ID of the pin in "id") or
 // "unpin LINK ID". The program sends the traffic to the load hosts through
 // the link (the program checks the range of the time).
@@ -204,6 +220,12 @@ return {
 			args: { link: 'link' },
 			call: function(req) {
 				return shaping('shape', req.args);
+			}
+		},
+		mode: {
+			args: { link: 'link', mode: 'mode', seconds: 0 },
+			call: function(req) {
+				return set_mode(req.args);
 			}
 		},
 		pin: {

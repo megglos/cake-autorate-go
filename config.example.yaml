@@ -125,6 +125,9 @@ high_load_thr: 0.75               # Load threshold considered "high" (0.0-1.0)
 
 monitor_interval_ms: 200                  # How often to check interface throughput
 bufferbloat_refractory_period_ms: 300     # Minimum time between rate increases after BB
+mode: balanced                            # latency, balanced, bandwidth or custom (docs/configuration.md#link-modes)
+# The modes except custom set refractory_on_decrease (balanced: only with icmp-timestamp),
+# increase_to_delay_thr and auto_max_rate. A link can set mode and these three options.
 refractory_on_decrease: false             # true: also only one rate decrease in each refractory period
 repeat_decrease_on_rise: false            # true: a second decrease in the refractory period only when the delay increases
 learn_cross_delay: false                  # true: ignore the upload delay from download activity (icmp-timestamp only)
