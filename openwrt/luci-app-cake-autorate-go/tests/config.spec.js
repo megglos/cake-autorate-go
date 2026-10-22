@@ -601,14 +601,17 @@ test('a configuration from before the modes shows the mode custom', async ({ pag
 });
 
 test('a hidden option of the modes keeps its value', async ({ page }) => {
-	await input(page, 'global', 'mode').selectOption('custom');
-	await modeOption(page, 'refractory_on_decrease').check();
-	await saveApply(page);
-	expect(vm('uci -q get cake-autorate.global.refractory_on_decrease').trim()).toBe('1');
-	await input(page, 'global', 'mode').selectOption('balanced');
-	await expect(modeOption(page, 'refractory_on_decrease')).toBeHidden();
-	await saveApply(page);
-	expect(vm('uci -q get cake-autorate.global.refractory_on_decrease').trim()).toBe('1');
-	expect(vm('uci -q get cake-autorate.global.mode').trim()).toBe('balanced');
-	resetConfig();
+	vm('uci set cake-autorate.global.mode=custom && uci set cake-autorate.global.refractory_on_decrease=1 && uci commit cake-autorate');
+	try {
+		await page.reload();
+		await expect(modeOption(page, 'refractory_on_decrease')).toBeChecked();
+		await input(page, 'global', 'mode').selectOption('balanced');
+		await expect(modeOption(page, 'refractory_on_decrease')).toBeHidden();
+		await saveApply(page);
+		expect(vm('uci -q get cake-autorate.global.mode').trim()).toBe('balanced');
+		expect(vm('uci -q get cake-autorate.global.refractory_on_decrease').trim()).toBe('1');
+	}
+	finally {
+		resetConfig();
+	}
 });
