@@ -93,7 +93,7 @@ On a router with more than one WAN (for example with mwan3), set `ping_interface
 
 ## Link overrides
 
-A link can override these top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay`, `mode`, `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
+A link can override these top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay`, `starlink_reconfiguration`, `mode`, `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
 
 ```yaml
 ping_method: icmp
@@ -312,6 +312,7 @@ bufferbloat_refractory_period_ms: 300   # Time after a bufferbloat decrease with
 refractory_on_decrease: false           # true: also only one rate decrease in each refractory period
 repeat_decrease_on_rise: false          # true: a second decrease in the refractory period only when the delay increases
 learn_cross_delay: false                # true: ignore the upload delay from download activity (icmp-timestamp only)
+starlink_reconfiguration: false         # true: follow the delay floor changes of Starlink (icmp-timestamp only)
 decay_refractory_period_ms: 1000        # Time between two adjustments for low load
 stall_recovery_ms: 500                  # icmp-timestamp only: set the rate back if the delay is low again in this time after the first decrease (0 = off)
 ```
@@ -445,6 +446,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
 | `repeat_decrease_on_rise` | `false` | In the refractory period after a decrease, decrease the rate again only when the delay is higher than at the last decrease. After a decrease, the queue empties only slowly, and each delayed ping decreases the rate again. This option prevents these extra decreases. Use it with `icmp-timestamp` (see [5G links](#5g-links)). `refractory_on_decrease` has priority |
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |
+| `starlink_reconfiguration` | `false` | With `icmp-timestamp` on Starlink: after each reconfiguration (every 15 s, at the seconds 12, 27, 42 and 57 of each minute, UTC), measure the change of the delay floor and change the baselines by it. Without it, a higher floor looks like bufferbloat for a long time. The host clock must be synchronized (NTP). Experimental: not yet tested on a real Starlink link |
 | `decay_refractory_period_ms` | `1000` | Time between two adjustments for low load (ms) |
 | `stall_recovery_ms` | `500` | With `icmp-timestamp` only: set the rate back after a short capacity stall (ms). 0 disables it. If the delay is low again in this time after the first decrease of a bufferbloat episode, the rate goes to `shaper_rate_max_adjust_down_bufferbloat` times the rate before the episode (the highest achieved rate in the last `stall_recovery_ms`, not more than the shaper rate). See [5G links](#5g-links) |
 | `reflector_response_deadline_s` | `1.0` | Time in which a reflector must reply (s) |

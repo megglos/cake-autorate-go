@@ -58,6 +58,8 @@ type LinkConfig struct {
 	PingIntervalMs  *int    `yaml:"ping_interval_ms"`
 	PingMethod      *string `yaml:"ping_method"`
 	LearnCrossDelay *bool   `yaml:"learn_cross_delay"`
+	// StarlinkReconfiguration overrides the top-level value for this link.
+	StarlinkReconfiguration *bool `yaml:"starlink_reconfiguration"`
 
 	// Mode overrides the top-level mode for this link. The next three
 	// keys override the top-level keys of the same name. They apply only
@@ -142,6 +144,10 @@ type Config struct {
 	// LearnCrossDelay makes Core learn the upload delay that download
 	// activity causes, and ignore it. Only with one-way delays.
 	LearnCrossDelay bool `yaml:"learn_cross_delay"`
+	// StarlinkReconfiguration: after each Starlink reconfiguration (every
+	// 15 s), change the baselines by the change of the delay floor. Only
+	// with one-way delays. Off by default.
+	StarlinkReconfiguration bool `yaml:"starlink_reconfiguration"`
 	// IncreaseToDelayThr changes the increase at high load (as in the
 	// original): the increase is at its maximum while the delay is at or
 	// below avg_owd_delta_max_adjust_up_thr_ms, and decreases linearly to
@@ -213,7 +219,8 @@ type Config struct {
 }
 
 // ForLink returns a copy of the config in which the link overrides of
-// pinger_count, ping_interval_ms, ping_method, learn_cross_delay, mode,
+// pinger_count, ping_interval_ms, ping_method, learn_cross_delay,
+// starlink_reconfiguration, mode,
 // refractory_on_decrease, increase_to_delay_thr and auto_max_rate
 // apply. The controller of a link uses this copy.
 func (c *Config) ForLink(l *LinkConfig) *Config {
@@ -229,6 +236,9 @@ func (c *Config) ForLink(l *LinkConfig) *Config {
 	}
 	if l.LearnCrossDelay != nil {
 		cp.LearnCrossDelay = *l.LearnCrossDelay
+	}
+	if l.StarlinkReconfiguration != nil {
+		cp.StarlinkReconfiguration = *l.StarlinkReconfiguration
 	}
 	if l.Mode != nil {
 		cp.Mode = *l.Mode

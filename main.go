@@ -287,6 +287,7 @@ func printDefaults() {
 	fmt.Printf("decay_refractory_period_ms: %d\n", cfg.DecayRefractoryPeriodMs)
 	fmt.Printf("stall_recovery_ms: %d\n", cfg.StallRecoveryMs)
 	fmt.Printf("learn_cross_delay: %v\n", cfg.LearnCrossDelay)
+	fmt.Printf("starlink_reconfiguration: %v\n", cfg.StarlinkReconfiguration)
 	fmt.Printf("increase_to_delay_thr: %v\n", cfg.IncreaseToDelayThr)
 	fmt.Printf("auto_max_rate: %v\n", cfg.AutoMaxRate)
 	fmt.Printf("auto_max_rate_limit_factor: %g\n", cfg.AutoMaxRateLimitFactor)
