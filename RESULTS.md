@@ -325,6 +325,12 @@ Raw data: branch `recordings`, directory `2026-10-21-5g-daypass` (README with al
 | dp5 | default, rod, rdr | dl both | 120 s | 8 |
 | dp6 | default, rod, inc, inc+rod, original (build with `increase_to_delay_thr`) | dl | 120 s | 12 |
 | dp7 | default, rod, inc+rod, rod+lcd, original | both | 120 s | 12 |
+| dp8 | default, rod, inc+rod, original (max 245, see below) | dl ul both | 120 s | 5 |
+| dp11, dp11b | default, ping interval 200 ms, base rate 180 Mbit/s | dl both | 120 s | 3 + 3 |
+| dp12 | default (max 245), learned max (prototype), max 500, inc+rod+learned max | dl both | 120 s | 3 |
+| dp10 | default, rod, inc+rod, original | dl both | 120 s | 5 |
+| dp9 | default, stall recovery off, rod, rod+stall recovery off | dl both | 120 s | 5 |
+| dp13 | default (max 245), `auto_max_rate` (main build), max 500 | dl both | 120 s | 2 |
 
 rod = `refractory_on_decrease`, rdr = `repeat_decrease_on_rise`, lcd = `learn_cross_delay`, inc = `increase_to_delay_thr` (new option, branch `feat/increase-to-threshold`). All sessions have an unshaped block in each round.
 
@@ -384,6 +390,52 @@ Means (p50/p95/p99 ms, DL % of unshaped, UL Mbit/s): default 26/55/88, 63 %, 106
 - All shaped policies get about 106 Mbit/s UL, 1.75 times the unshaped UL (the unshaped DL queue delays the UL ACKs).
 - In dp7 (night), the delay cost of the original is much lower than in dp2-dp5 (+2 ms p50 against +16 ms).
 
+### Sessions dp8 to dp13 (2026-10-22, 01:30 to 12:10)
+
+From dp9 on, the configs have maximum rates 500/160 Mbit/s (`5g.yaml`); `5g-max245.yaml` keeps the calibrated maximum 245/110.
+
+dp8 (night, 01:30 to 05:00): at night the cell gave more than 245 Mbit/s. All shaped policies stayed at the maximum rate most of the time, thus all differences are 0 ± 3 Mbit/s. The calibrated maximum limits the throughput at night. dp8 is not in the pooled values below. (The VM root file system became full at block 77; the session stopped there.)
+
+dp12 (night, 3 rounds): fixed maximum 500 against 245: DL +55 ± 114 (dl), +69 ± 104 (both) Mbit/s, p50 +3 / +7 ms. The learned-max prototype (maximum increases when the shaper is at the maximum and the link uses it): +22 / +15 Mbit/s. The prototype reset the hold at each delayed ping and thus stayed above 245 for only 5-30 % of the time (max 500: 60-90 %). n = 3, no value is significant, but the direction is the same in all rounds with a free cell. After a fix of the hold (the hold continues through delayed pings), the simulator (night capacity 380-450 Mbit/s with radio stalls, 4 seeds) gives: default 49.3 %, learned max 53.6 %, max 500 58.1 %, inc+rod 52.4 %, inc+rod+learned max 64.1 %, inc+rod+max 500 66.1 % of capacity. This is `auto_max_rate` (PR #109, opt-in).
+
+dp11 and dp11b (6 rounds): ping interval 200 ms (default 300) and base rate 180 Mbit/s (default 130) give no gain. Ping interval 200 ms in both: p99 +11 ± 9 ms *. Both are not candidates.
+
+dp10 (morning, 07:30 to 09:30, 5 rounds):
+
+| Variant - default | DL only: DL Mbit/s, p50, p99 | Both: DL Mbit/s, p50, p99 |
+|---|---|---|
+| rod | +14 ± 18, +0.4, -22 | +1 ± 30, +2.1, +14 |
+| inc + rod | +20 ± 20, +4.4 *, +31 * | +5 ± 32, +16.5 *, +37 * |
+| original | +29 ± 34, +7.4 *, +47 * | +9 ± 20, +16.9 *, +115 |
+
+On the busy morning cell (unshaped p50 450-510 ms, at night about 350 ms), inc+rod costs as much delay as the original with both directions loaded. At night (dp7) the cost was +2 ms.
+
+dp9 (09:30 to 11:30, 5 rounds), `stall_recovery_ms` 0 (srm0):
+
+| Variant - default | DL only: DL Mbit/s, p50, p99 | Both: DL Mbit/s, p50, p99 |
+|---|---|---|
+| srm0 | -25 ± 5 *, -2.7 *, -2 | -14 ± 31, -4.0 *, -15 |
+| rod | -11 ± 31, +0.9, +16 | +4 ± 22, +1.4 *, +15 |
+| rod + srm0 | +6 ± 9, +0.4, -29 | -21 ± 22, -2.0 *, +48 |
+
+Stall recovery gives +25 Mbit/s DL for about 3 ms p50. Keep it on by default.
+
+dp13 (11:30 to 12:10, main build c822120, 2 rounds): the cell was weak at noon (unshaped 172-224 Mbit/s). `auto_max_rate` learned only in one block (both, round 2): the maximum went from 245 to 269.5 Mbit/s (one step) and the shaper was above 245 in 24 samples. In the other blocks the shaper was below the maximum, and `auto_max_rate` did not change it. DL against default: +34 (dl), +27 (both) Mbit/s, n = 2, mostly cell noise; p50 +1 to +3 ms. This confirms the live function of the merged build (config read, learning step, no cost on a weak cell), but not the gain.
+
+Pooled pairs dp2-dp10 without dp8:
+
+| Variant - default | Mode | n | DL Mbit/s | p50 ms | p99 ms |
+|---|---|---|---|---|---|
+| rod | dl | 32 | +9 ± 9 | +0.8 ± 0.6 * | -13 ± 25 |
+| rod | both | 32 | +5 ± 7 | +1.6 ± 0.6 * | +8 ± 11 |
+| rod + lcd | both | 14 | +8 ± 5 * | +1.7 ± 1.8 | -6 ± 15 |
+| inc + rod | dl | 17 | +21 ± 15 * | +4.1 ± 1.4 * | +33 ± 42 |
+| inc + rod | both | 17 | +13 ± 8 * | +6.4 ± 3.7 * | +15 ± 18 |
+| original | dl | 23 | +26 ± 13 * | +7.0 ± 1.3 * | +29 ± 32 |
+| original | both | 23 | +19 ± 9 * | +9.1 ± 3.5 * | +41 ± 29 * |
+
+With more sessions, the gain of rod is smaller than in dp2-dp6 and not significant. Its cost is also small (about 1 ms p50, p99 equal or lower).
+
 ### Conclusions
 
 - Delay: the default has the lowest p50 in all modes. Against the original: DL only -7 ms, UL only -8 ms, both -16 ms (all significant).
@@ -391,3 +443,7 @@ Means (p50/p95/p99 ms, DL % of unshaped, UL Mbit/s): default 26/55/88, 63 %, 106
 - The modes latency / balanced / bandwidth can be option sets (default / rod / inc+rod) instead of threshold factors: on this cell, higher thresholds (up20, up30; 36 -> 54 ms on 2026-10-18) gave no gain.
 - rdr: no gain, remove it from the candidates for 5G.
 - The A/B of rod on 2026-10-18 (LuCI test, 2 runs each, "mixed") was too small: with 22 pairs, rod is significant.
+- Maximum rate: the calibrated maximum (day) limits the throughput at night (dp8, dp12). `auto_max_rate` (opt-in, PR #109) increases the maximum when the link uses it; a high fixed maximum gave more in dp12. Test on 5G and Starlink planned.
+- Stall recovery: keep `stall_recovery_ms` 500 (dp9: -25 Mbit/s DL without it).
+- The delay cost of inc+rod and of the original depends on the load of the cell: small at night (dp7), large in the morning (dp10). Thus: balanced = rod (or rod+lcd), bandwidth = inc+rod with `auto_max_rate`.
+- Ping interval 200 ms and base rate 180 Mbit/s: no gain.
