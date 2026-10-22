@@ -528,6 +528,27 @@ func TestAutoMaxRate_IncreasesToLimit(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_LowLoadStopsHold checks that a time at low load stops
+// the hold time: the 2 s at the maximum must be at high load without a
+// break.
+func TestAutoMaxRate_LowLoadStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 500*time.Millisecond)
+	for end := now.Add(3 * time.Second); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = 0.1 * cfgMax
+		c.dl.loadPercent = 0.1
+		c.processDelay(DL, 0, now)
+		c.dl.shaperRateKbps = cfgMax
+	}
+	runAtMax(c, now, time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s at high load with a break)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
 // TestAutoMaxRate_NoIncreaseWithoutCapacity checks that the maximum does
 // not increase when the achieved rate is below 90 % of it.
 func TestAutoMaxRate_NoIncreaseWithoutCapacity(t *testing.T) {

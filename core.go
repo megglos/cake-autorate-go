@@ -609,6 +609,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		ds.bbDetected = true
 		ds.lastBBTime = now
 		ds.lastBBDeltaUs = deltaUs
+		ds.atMaxSince = time.Time{}
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
 	} else if !exceeded && c.stallRecovered(dir, now) {
 		// The delay is low again soon after the first decrease: a short
@@ -621,7 +622,9 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 			c.adjustRateHighLoad(dir, deltaUs, thresholdUs)
 		}
 	} else {
-		// Low load: move the rate toward the base rate
+		// Low load: move the rate toward the base rate. The time at the
+		// maximum (AutoMaxRate) must be at high load without a break.
+		ds.atMaxSince = time.Time{}
 		refractoryDur := time.Duration(c.cfg.DecayRefractoryPeriodMs) * time.Millisecond
 		if now.Sub(ds.lastDecayTime) > refractoryDur {
 			ds.lastDecayTime = now

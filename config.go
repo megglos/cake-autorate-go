@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -690,8 +691,8 @@ func (c *Config) Validate() error {
 	if c.StallRecoveryMs < 0 {
 		return fmt.Errorf("stall_recovery_ms must be 0 (off) or positive")
 	}
-	if c.AutoMaxRateLimitFactor < 1 {
-		return fmt.Errorf("auto_max_rate_limit_factor must be 1 or more")
+	if !(c.AutoMaxRateLimitFactor >= 1) || math.IsInf(c.AutoMaxRateLimitFactor, 1) {
+		return fmt.Errorf("auto_max_rate_limit_factor must be a finite number, 1 or more")
 	}
 	if c.PingMethod != PingMethodEcho && c.PingMethod != PingMethodTimestamp {
 		return fmt.Errorf("ping_method must be %q or %q", PingMethodEcho, PingMethodTimestamp)
