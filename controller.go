@@ -37,6 +37,9 @@ type LinkController struct {
 	// calPaused are the pause states of the directions before a
 	// calibration session. Only the goroutine of Run uses it.
 	calPaused map[Direction]bool
+	// calMode is the mode of the link at the start of a calibration (a
+	// live mode can be different from the mode of the config).
+	calMode LinkMode
 	// unshapePaused are the pause states of the directions before the
 	// command "unshape". Only the goroutine of Run uses it.
 	unshapePaused map[Direction]bool
@@ -541,10 +544,15 @@ func readInterfaceMTU(iface string, logger *Logger) int {
 }
 
 // CalConfig implements CalTarget: the config of the link with only this
-// link.
+// link, in the mode of the link at the start of the calibration. A mode
+// command cannot change the mode during a calibration.
 func (c *LinkController) CalConfig() *Config {
 	cfg := *c.cfg
 	cfg.Links = []LinkConfig{*c.link}
+	if c.calMode != "" {
+		m := string(c.calMode)
+		cfg.Links[0].Mode = &m
+	}
 	return &cfg
 }
 
@@ -560,6 +568,7 @@ func (c *LinkController) CalStart() error {
 		}
 		core := c.core.Core()
 		c.calPaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		c.calMode = core.Mode()
 		c.core.SetCalibrating(true, now)
 		return nil
 	}, calDispatchTimeout)

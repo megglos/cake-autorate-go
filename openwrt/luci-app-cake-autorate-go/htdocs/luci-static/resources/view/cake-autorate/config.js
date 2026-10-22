@@ -51,6 +51,23 @@ function isEmpty(value) {
 	return value == null || value === '';
 }
 
+// inferredLinkMode returns the mode that the program uses for the link
+// sid without a mode while the global section has no mode (config.go,
+// setDefaultModes): custom if an option of the modes is on for the link,
+// else '' (the global value).
+function inferredLinkMode(sid) {
+	const g = uci.sections('cake-autorate', 'global')[0];
+	if (!g || !isEmpty(g.mode))
+		return '';
+	return MODE_OPTIONS.some((k) => {
+		const v = uci.get('cake-autorate', sid, k);
+		return isEmpty(v) ? g[k] == '1' : v == '1';
+	}) ? 'custom' : '';
+}
+
+// The links for which the user selected the global value of the mode.
+const globalModeLinks = new Set();
+
 // Returns a validate function for the half-open range (lo, hi].
 function rangeOpenClosed(lo, hi) {
 	return function(sid, value) {
@@ -335,6 +352,15 @@ function globalSection(m, sid) {
 	// Write the shown mode also when it is not in the configuration: else
 	// the program finds balanced when all options are off.
 	o.forcewrite = true;
+	// With a global mode, the program does not find the mode custom for a
+	// link. Thus write it for the links that have it now.
+	o.write = function(sid, value) {
+		if (isEmpty(uci.get('cake-autorate', sid, 'mode')))
+			for (const l of uci.sections('cake-autorate', 'link'))
+				if (isEmpty(l.mode) && !globalModeLinks.has(l['.name']) && inferredLinkMode(l['.name']) == 'custom')
+					uci.set('cake-autorate', l['.name'], 'mode', 'custom');
+		return form.ListValue.prototype.write.call(this, sid, value);
+	};
 
 	// The options apply only in the mode custom. A hidden option keeps its
 	// value (retain): the mode custom of a link or of the status page uses
@@ -652,6 +678,14 @@ function linkSection(m) {
 	for (const [ mode, title ] of MODES)
 		o.value(mode, title);
 	o.modalonly = true;
+	o.cfgvalue = function(sid) {
+		const v = uci.get('cake-autorate', sid, 'mode');
+		return isEmpty(v) ? inferredLinkMode(sid) : v;
+	};
+	o.remove = function(sid) {
+		globalModeLinks.add(sid);
+		return form.ListValue.prototype.remove.call(this, sid);
+	};
 
 	// The options of the modes apply only in the mode custom of the link.
 	// A hidden option keeps its value (retain).

@@ -456,3 +456,24 @@ func TestModeOtherModeAfterRateError(t *testing.T) {
 		t.Errorf("rate %d after latency, want %d", got, maxKbps)
 	}
 }
+
+// The recordings of a calibration have the live mode of the link, and the
+// config of the link stays the same.
+func TestCalConfig_LiveMode(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	c.cfg.Mode = string(ModeBalanced)
+	c.core.Core().SetMode(ModeBalanced)
+	if err := c.SetMode(ModeBandwidth, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CalStart(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := c.CalConfig()
+	if m := linkModeOf(cfg, &cfg.Links[0]); m != ModeBandwidth {
+		t.Errorf("mode %s in the recording config, want bandwidth", m)
+	}
+	if c.link.Mode != nil || linkModeOf(c.cfg, c.link) != ModeBalanced {
+		t.Errorf("the config of the link changed")
+	}
+}

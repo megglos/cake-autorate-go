@@ -605,6 +605,22 @@ test('a configuration from before the modes shows the mode custom', async ({ pag
 	}
 });
 
+test('a link from before the global mode keeps the mode custom', async ({ page }) => {
+	vm('uci set cake-autorate.wan.auto_max_rate=1 && uci commit cake-autorate');
+	try {
+		await page.reload();
+		await saveApply(page);
+		expect(vm('uci -q get cake-autorate.global.mode').trim()).toBe('balanced');
+		expect(vm('uci -q get cake-autorate.wan.mode').trim()).toBe('custom');
+		await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+		await openTab(page.locator('.modal'), 'rates');
+		await expect(input(page, 'wan', 'mode')).toHaveValue('custom');
+	}
+	finally {
+		resetConfig();
+	}
+});
+
 test('a hidden option of the modes keeps its value', async ({ page }) => {
 	vm('uci set cake-autorate.global.mode=custom && uci set cake-autorate.global.refractory_on_decrease=1 && uci commit cake-autorate');
 	try {
