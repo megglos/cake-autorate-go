@@ -66,12 +66,13 @@ from datetime import datetime
 def read_pings(paths, link=None):
     """Returns a list of (send time in s since the epoch, series, dl ms,
     ul ms, rtt ms) of the replies, and the set of the links. dl and ul are
-    RTT/2 without one-way delays. The series is the reflector and the kind
-    of the measurement: a one-way delay contains the clock offset of the
-    reflector, RTT/2 does not. Thus, the two kinds are different series."""
+    RTT/2 without one-way delays. The series is the recording, the
+    reflector and the kind of the measurement: a one-way delay contains the
+    clock offset of the reflector, RTT/2 does not, and the clock offset can
+    be different in each recording. Thus, these are different series."""
     out = []
     links = set()
-    for path in paths:
+    for n, path in enumerate(paths):
         opener = gzip.open if path.endswith('.gz') else open
         start = None
         with opener(path, 'rt') as f:
@@ -96,7 +97,7 @@ def read_pings(paths, link=None):
                 if dl is None or ul is None:
                     dl = ul = rtt * 1000 / 2
                     kind = 'rtt'
-                out.append((sent, (ev['reflector'], kind), dl / 1000, ul / 1000, rtt))
+                out.append((sent, (n, ev['reflector'], kind), dl / 1000, ul / 1000, rtt))
     out.sort()
     return out, links
 
@@ -147,18 +148,19 @@ def boundary_steps(pings, period, offset, window, guard):
     out = []
     b = first
     while b <= t1:
-        # One estimate for each reflector: from the one-way delays if they
-        # have samples before and after the boundary, else from RTT/2.
+        # One estimate for each reflector (in each recording): from the
+        # one-way delays if they have samples before and after the
+        # boundary, else from RTT/2.
         est = {}
-        for (refl, kind), samples in by_refl.items():
-            if refl in est and kind != 'owd':
+        for (rec, refl, kind), samples in by_refl.items():
+            if (rec, refl) in est and kind != 'owd':
                 continue
-            ts = times[(refl, kind)]
+            ts = times[(rec, refl, kind)]
             before = samples[bisect.bisect_left(ts, b - window):bisect.bisect_left(ts, b - guard)]
             after = samples[bisect.bisect_left(ts, b + guard):bisect.bisect_left(ts, b + window)]
             if not before or not after:
                 continue
-            est[refl] = [min(s[i + 1] for s in after) - min(s[i + 1] for s in before) for i in range(3)]
+            est[(rec, refl)] = [min(s[i + 1] for s in after) - min(s[i + 1] for s in before) for i in range(3)]
         steps = [[e[i] for e in est.values()] for i in range(3)]
         if len(est) >= 2:
             out.append((b, *(statistics.median(s) for s in steps)))
@@ -208,7 +210,7 @@ def self_test():
     """A recording of 10 minutes: 6 reflectors with clock offsets, a floor
     that changes at the seconds 12, 27, 42 and 57 by up to +-15 ms (the
     same in the two directions), a random jitter, and some replies without
-    one-way delays."""
+    one-way delays. Then a second recording with other clock offsets."""
     rng = random.Random(1)
     start = 1798761600.0  # 2027-01-01T00:00:00Z
     lines = [json.dumps({'type': 'header', 'start': '2027-01-01T00:00:00Z'})]
@@ -230,10 +232,23 @@ def self_test():
         if i % 7:
             ev['dl_owd_us'], ev['ul_owd_us'] = int(dl * 1000), int(ul * 1000)
         lines.append(json.dumps(ev))
-    with tempfile.NamedTemporaryFile('w', suffix='.jsonl') as f:
+    # A second recording 10 minutes later, with other clock offsets: the
+    # offsets must not make an excess delay.
+    lines2 = [json.dumps({'type': 'header', 'start': '2027-01-01T00:10:00Z'})]
+    for line in lines[1:]:
+        ev = json.loads(line)
+        if 'dl_owd_us' in ev:
+            ev['dl_owd_us'] += 1000000
+            ev['ul_owd_us'] -= 1000000
+        lines2.append(json.dumps(ev))
+    with tempfile.NamedTemporaryFile('w', suffix='.jsonl') as f, \
+            tempfile.NamedTemporaryFile('w', suffix='.jsonl') as f2:
         f.write('\n'.join(lines) + '\n')
         f.flush()
-        pings = excess(read_pings([f.name])[0])
+        f2.write('\n'.join(lines2) + '\n')
+        f2.flush()
+        both = excess(read_pings([f.name, f2.name])[0])
+        pings = [p for p in both if p[1][0] == 0]
     on = boundary_steps(pings, 15, 12, 3, 0.2)
     off = boundary_steps(pings, 15, 19.5, 3, 0.2)
     mean_on = statistics.mean(abs(s[3]) for s in on)
@@ -242,9 +257,10 @@ def self_test():
                 for o in range(30)))
     # One reflector with the two kinds of replies is one reflector: no
     # boundary has 2 or more reflectors.
-    single = [p for p in pings if p[1][0] == 'r0']
+    single = [p for p in pings if p[1][1] == 'r0']
     ok = (mean_on > 3 * mean_off and best[1] == 12 % 15 and max(abs(x[1]) for x in off) < 5
-          and not boundary_steps(single, 15, 12, 3, 0.2))
+          and not boundary_steps(single, 15, 12, 3, 0.2)
+          and max(max(p[2], p[3]) for p in both) < 100)
     print('self-test: mean |rtt step| %.1f ms at the boundaries, %.1f ms in the middle, best offset %.1f s: %s'
           % (mean_on, mean_off, best[1], 'ok' if ok else 'FAILED'))
     return 0 if ok else 1
@@ -280,7 +296,7 @@ def main():
     if not pings:
         print('no ping replies', file=sys.stderr)
         return 1
-    print('%d ping replies, %d reflectors, %.0f s' % (len(pings), len({p[1][0] for p in pings}), pings[-1][0] - pings[0][0]))
+    print('%d ping replies, %d reflectors, %.0f s' % (len(pings), len({p[1][1] for p in pings}), pings[-1][0] - pings[0][0]))
     print()
     profile(pings)
     print()
