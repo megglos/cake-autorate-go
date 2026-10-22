@@ -25,7 +25,7 @@ These functions are only in cake-autorate-go:
 - **One process for all links.** The original starts one instance with its own processes for each link.
 - **ICMP timestamps in the program.** `icmp-timestamp` needs no external pinger. The original needs tsping, irtt or fping 5.3 or later for one-way delays.
 - **Netlink** sets the CAKE bandwidth. The original starts `tc` for each change.
-- **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise`, `refractory_on_decrease`, `increase_to_delay_thr` (default off) and `stall_recovery_ms` (default on, only with `icmp-timestamp`) (see [5G links](configuration.md#5g-links)). With the default `ping_method` (`icmp`), the behavior stays near the original.
+- **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise`, `refractory_on_decrease`, `increase_to_delay_thr`, `auto_max_rate` (default off) and `stall_recovery_ms` (default on, only with `icmp-timestamp`) (see [5G links](configuration.md#5g-links)). With the default `ping_method` (`icmp`), the behavior stays near the original.
 - **`calibrate`** makes a proposed config from a test session on your link.
 - **Config checks:** a warning for each unknown key (with a similar known key). Also a warning for each reflector that is known to not reply to ICMP timestamp requests. If all reflectors of a link are known to not reply, the program does not start.
 - **Recording and replay** (`--record`, `--no-adjust`): the same events always give the same decisions. A simulator, emulations and session scripts use this to compare configs and versions, also with the original (see [Tests and tools](development.md#tests-and-tools)).

@@ -529,3 +529,20 @@ test('enabling a link in its dialog uses the changed interfaces', async ({ page 
 	expect(vm('uci get cake-autorate.old.ul_interface').trim()).toBe('eth0');
 	resetConfig();
 });
+
+test('5G options reach the configuration of the program', async ({ page }) => {
+	for (const name of [ 'increase_to_delay_thr', 'auto_max_rate' ])
+		await page.locator(`input[data-widget-id="widget.cbid.cake-autorate.global.${name}"]`).check();
+	await openTab(page, 'advanced');
+	await setValue(page, 'global', 'auto_max_rate_limit_factor', '0.5');
+	await expect(input(page, 'global', 'auto_max_rate_limit_factor')).toHaveClass(INVALID);
+	await setValue(page, 'global', 'auto_max_rate_limit_factor', '2.5');
+	await expect(input(page, 'global', 'auto_max_rate_limit_factor')).not.toHaveClass(INVALID);
+	await saveApply(page);
+	await expect.poll(() => vm('cat /var/etc/cake-autorate.yaml 2>/dev/null || true'), { timeout: 30000 })
+		.toContain('"auto_max_rate_limit_factor": 2.5');
+	const yaml = vm('cat /var/etc/cake-autorate.yaml');
+	expect(yaml).toContain('"auto_max_rate": true');
+	expect(yaml).toContain('"increase_to_delay_thr": true');
+	resetConfig();
+});

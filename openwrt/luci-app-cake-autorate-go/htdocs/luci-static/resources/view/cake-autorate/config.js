@@ -312,6 +312,10 @@ function globalSection(m, sid) {
 		_('Keep the samples of the last 15 minutes in the memory of the router (approximately 36 kB for each link). Then the graphs on the status page also show the time before you opened the page.'));
 	flag(s, 'general', 'refractory_on_decrease', _('Refractory period after a decrease'), false);
 	flag(s, 'general', 'repeat_decrease_on_rise', _('Decrease again when the delay increases'), false);
+	flag(s, 'general', 'increase_to_delay_thr', _('Increase up to the bufferbloat threshold'), false,
+		_('At high load, increase the rate also when the delay is above the maximum increase threshold, until the bufferbloat threshold (as the original cake-autorate). For a link with a delay under load that the shaper cannot remove, for example 5G.'));
+	flag(s, 'general', 'auto_max_rate', _('Learn the maximum rate'), false,
+		_('The maximum rate can increase above the maximum rate of the link while the link has more capacity (for example a 5G cell at night). It decreases slowly to the configured maximum.'));
 
 	flag(s, 'idle', 'enable_sleep_function', _('Sleep when idle'), true,
 		_('Stop the pings when the link is idle for some time.'));
@@ -370,6 +374,10 @@ function globalSection(m, sid) {
 	number(s, 'advanced', 'monitor_interval_ms', _('Load monitor interval (ms)'), 200, 'and(uinteger,min(1))');
 	number(s, 'advanced', 'bufferbloat_refractory_period_ms', _('Bufferbloat refractory period (ms)'), 300, 'uinteger');
 	number(s, 'advanced', 'decay_refractory_period_ms', _('Decay refractory period (ms)'), 1000, 'uinteger');
+	number(s, 'advanced', 'stall_recovery_ms', _('Stall recovery time (ms)'), 500, 'uinteger',
+		_('With ICMP timestamps: if the delay is low again in this time after the first decrease, set the rate back. 0: off.'));
+	number(s, 'advanced', 'auto_max_rate_limit_factor', _('Learned maximum rate limit (factor)'), 3, 'and(ufloat,min(1))',
+		_('With "Learn the maximum rate": the learned maximum stays at or below this factor times the maximum rate of the link.'));
 	o = number(s, 'advanced', 'reflector_response_deadline_s', _('Reflector response deadline (s)'), 1, 'ufloat');
 	o.validate = positive;
 	number(s, 'advanced', 'reflector_misbehaving_detection_window', _('Reflector check window (samples)'), 60, 'and(uinteger,min(1))');

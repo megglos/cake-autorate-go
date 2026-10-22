@@ -108,7 +108,7 @@ func (c *Core) Snapshot() LinkStatus {
 			LoadPercent:      ds.loadPercent * 100,
 			MinKbps:          dc.MinRateKbps,
 			BaseKbps:         dc.BaseRateKbps,
-			MaxKbps:          dc.MaxRateKbps,
+			MaxKbps:          int(math.Round(c.maxRateKbps(dir))),
 			DeltaMs:          roundMs(ds.lastDeltaUs),
 			ThresholdMs:      dc.OWDDeltaDelayThrMs,
 			HighDelay:        ds.lastHighDelay,

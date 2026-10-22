@@ -211,6 +211,24 @@ At high load, the increase for each step is between the minimum and the maximum.
 
 On a link that adds a delay under load that the shaper cannot remove (for example, a 5G cell), the delay is often above `avg_owd_delta_max_adjust_up_thr_ms`. With the default, the rate then increases only slowly. See [5G links](#5g-links).
 
+### Learned maximum rate
+
+```yaml
+auto_max_rate: false              # true: the maximum rate can increase above max_rate_kbps
+auto_max_rate_limit_factor: 3.0   # the maximum rate stays at or below 3 × max_rate_kbps
+```
+
+`max_rate_kbps` is usually the result of a calibration at one time of the day. On a cellular link, the capacity at a different time can be much higher. Then the rate stays at `max_rate_kbps`, also when the link has more capacity.
+
+With `auto_max_rate: true`, each direction has a learned maximum rate:
+
+- It starts at `max_rate_kbps`.
+- If the rate stays at the maximum for 2 s at high load without bufferbloat, and the achieved rate is at least 90 % of it, the maximum increases by 10 %. It does not go above `auto_max_rate_limit_factor` × `max_rate_kbps`.
+- While the load is high and the rate stays below 80 % of the maximum, the maximum decreases slowly (by approximately 1 % each second), to 1.25 × the rate and not below `max_rate_kbps`. A bufferbloat decrease does not set it back: short radio stalls give a decrease every few seconds. At low load, it does not change.
+- The status (`max_kbps`) shows the learned maximum.
+
+The delay control stays the same: a higher maximum only removes a limit. The limit factor is a safety limit for a fault of the delay measurement (for example, a link that drops packets and does not queue them).
+
 ## EWMA parameters
 
 The algorithm uses exponentially weighted moving averages (EWMA) for the delay baselines:
@@ -347,6 +365,7 @@ learn_cross_delay: true
 - The results change much from one test to the next (the 5G capacity changes). Make a test on your link before you change the defaults.
 - `stall_recovery_ms` (default 500, only with `icmp-timestamp`) is for short capacity stalls of the 5G link. In a stall, the achieved rate decreases, and with one-way delays each ping in the stall decreases the rate again from the achieved rate. On a 5G link (2026-10-18), most download episodes set the rate to the minimum, and the delay was low again after 200 to 300 ms. Then the rate needed 3 to 16 s to increase again. With the option (2026-10-21, same link): 0.2 to 0.5 s. 15 of 19 recoveries kept the rate, 4 got a new decrease in 1.5 s, and the bufferbloat test showed no higher delay. In the simulator, the download utilization on the 5G scenarios increased by 4 to 13 points, and the delay (p95) by 3 to 27 ms. Set 0 to disable it.
 - `repeat_decrease_on_rise` (with `icmp-timestamp`) prevents the extra decreases while the queue empties after a decrease. In a fiber emulation with a 5G capacity trace (download load, 2 rounds), it gave 93 % of the capacity. Without it: 87 to 88 %. The cost was approximately 2 ms more delay (p95). Under load in the two directions: 2 to 4 % more throughput, approximately 6 ms more delay (p95). In the simulator, it increased the delay much with RTT/2 (`icmp`, `fping`). Thus, use it only with one-way delays. It has no effect when `refractory_on_decrease` is `true`. The tests on the 5G link used `refractory_on_decrease` and not this option. On the 5G link of 2026-10-21 (10 pairs of blocks in each mode), it gave no gain.
+- `auto_max_rate` (see [Learned maximum rate](#learned-maximum-rate)): on the 5G link of 2026-10-21, the unshaped download was 140 to 250 Mbit/s in the day and 350 to 420 Mbit/s at night. With `max_rate_kbps` from the day calibration (245000), the night download was approximately 56 to 61 % of the unshaped download. With 500000: 71 to 80 % (3 rounds). A first version that set the maximum back at each decrease gave only half of the gain: the radio stalls set it back too frequently. In the simulator (capacity 380 to 450 Mbit/s with radio stalls, maximum 245 Mbit/s), the current version gave 53 % download utilization (default: 49 %, maximum 500 Mbit/s: 58 %), and a p99 delay of 210 ms (default: 173 ms, maximum 500 Mbit/s: 224 ms). With `increase_to_delay_thr` and `refractory_on_decrease`: 64 % (without `auto_max_rate`: 52 %, maximum 500 Mbit/s: 66 %). Not tested on a live link yet.
 - `increase_to_delay_thr` (see [Rate adjustment](#rate-adjustment)): on the 5G link of 2026-10-21, the download delay under load was 14 to 17 ms, also without a queue. With the default scale, the increase is zero at this delay. Live test (download load, 12 pairs of 120 s blocks, against the default): alone, +16 Mbit/s download (not significant), +1.7 ms delay (p50), and approximately 2 times more decreases. With `refractory_on_decrease`: +22 Mbit/s (approximately +19 %), +3.9 ms (p50). The original cake-autorate: +28 Mbit/s, +7 ms. Use it with `refractory_on_decrease`.
 
 ## Configuration reference
@@ -377,6 +396,8 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `alpha_delta_ewma` | `0.095` | Not used. The original uses it to compare reflectors. Kept for config compatibility |
 | `high_load_thr` | `0.75` | High-load threshold (0.0 to 1.0) |
 | `increase_to_delay_thr` | `false` | At high load, increase at the maximum up to `avg_owd_delta_max_adjust_up_thr_ms`, and less up to the delay threshold (as the original). If `false`, the increase is zero at `avg_owd_delta_max_adjust_up_thr_ms`. See [Rate adjustment](#rate-adjustment) |
+| `auto_max_rate` | `false` | The maximum rate can increase above `max_rate_kbps` while the link has more capacity. See [Learned maximum rate](#learned-maximum-rate) |
+| `auto_max_rate_limit_factor` | `3.0` | With `auto_max_rate`: the maximum rate stays at or below this factor × `max_rate_kbps` (1.0 or more) |
 | `monitor_interval_ms` | `200` | Time between two throughput samples (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Time after a bufferbloat decrease without a rate increase (ms) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |

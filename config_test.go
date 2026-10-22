@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,6 +38,18 @@ func TestValidate_EmptyInterface(t *testing.T) {
 	}
 }
 
+func TestValidate_AutoMaxRateLimitFactor(t *testing.T) {
+	for _, f := range []float64{0.5, math.NaN(), math.Inf(1)} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.AutoMaxRateLimitFactor = f
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "auto_max_rate_limit_factor") {
+			t.Errorf("%v: expected auto_max_rate_limit_factor error, got: %v", f, err)
+		}
+	}
+}
+
 func TestValidateIfname(t *testing.T) {
 	valid := []string{"eth0", "br-lan", "ifb4eth0", "wlan0.1", "a", "abcdefghijklmno"}
 	for _, name := range valid {
@@ -46,14 +59,14 @@ func TestValidateIfname(t *testing.T) {
 	}
 
 	invalid := []string{
-		"",                  // empty
-		"../../etc/passwd",  // path traversal
-		"eth 0",             // whitespace
-		"eth0\n",            // newline
-		".eth0",             // starts with dot
-		"-eth0",             // starts with hyphen
-		"abcdefghijklmnop",  // 16 chars (exceeds IFNAMSIZ-1)
-		"eth0/sub",          // path separator
+		"",                 // empty
+		"../../etc/passwd", // path traversal
+		"eth 0",            // whitespace
+		"eth0\n",           // newline
+		".eth0",            // starts with dot
+		"-eth0",            // starts with hyphen
+		"abcdefghijklmnop", // 16 chars (exceeds IFNAMSIZ-1)
+		"eth0/sub",         // path separator
 	}
 	for _, name := range invalid {
 		if err := validateIfname(name); err == nil {

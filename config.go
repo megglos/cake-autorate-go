@@ -9,6 +9,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -143,6 +144,17 @@ type Config struct {
 	// scheduler of a 5G cell). Then the rate can increase also with this
 	// delay.
 	IncreaseToDelayThr bool `yaml:"increase_to_delay_thr"`
+	// AutoMaxRate lets the maximum rate increase above max_rate_kbps. If
+	// the rate stays at the maximum for 2 s at high load without
+	// bufferbloat, and the achieved rate is at least 90 % of it, the
+	// configured maximum is not a limit of the link: the maximum increases
+	// by 10 %, up to AutoMaxRateLimitFactor times max_rate_kbps. While the
+	// load is high and the rate stays below 80 % of the maximum, the maximum
+	// decreases slowly (time constant 100 s), not below max_rate_kbps. Use
+	// it on a link with a capacity that changes much, for example a 5G cell
+	// at night.
+	AutoMaxRate            bool    `yaml:"auto_max_rate"`
+	AutoMaxRateLimitFactor float64 `yaml:"auto_max_rate_limit_factor"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`
@@ -332,6 +344,7 @@ func DefaultConfig() *Config {
 		BufferbloatRefractoryPeriodMs: 300,
 		DecayRefractoryPeriodMs:       1000,
 		StallRecoveryMs:               500,
+		AutoMaxRateLimitFactor:        3,
 
 		ReflectorResponseDeadlineS:          1.0,
 		ReflectorMisbehavingDetectionWindow: 60,
@@ -677,6 +690,9 @@ func (c *Config) Validate() error {
 	}
 	if c.StallRecoveryMs < 0 {
 		return fmt.Errorf("stall_recovery_ms must be 0 (off) or positive")
+	}
+	if !(c.AutoMaxRateLimitFactor >= 1) || math.IsInf(c.AutoMaxRateLimitFactor, 1) {
+		return fmt.Errorf("auto_max_rate_limit_factor must be a finite number, 1 or more")
 	}
 	if c.PingMethod != PingMethodEcho && c.PingMethod != PingMethodTimestamp {
 		return fmt.Errorf("ping_method must be %q or %q", PingMethodEcho, PingMethodTimestamp)

@@ -74,6 +74,11 @@ type dirState struct {
 	stallStart   time.Time        // first decrease of the bufferbloat episode, or zero
 	stallRefKbps float64          // rate before the episode
 	recoveredAt  time.Time        // time of the last recovery
+
+	// Learned maximum rate (AutoMaxRate)
+	autoMaxKbps    float64   // 0: max_rate_kbps
+	atMaxSince     time.Time // start of the time at the maximum, or zero
+	autoMaxUpdated time.Time // last update of the decrease
 }
 
 // achievedSample is an achieved rate at a time.
@@ -177,6 +182,7 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
+	ds.autoMaxBreak()
 	c.applyRate(dir)
 	ds.paused = paused
 }
@@ -204,6 +210,9 @@ func (c *Core) SetUnshaped(on bool, now time.Time) {
 	c.idleSince = time.Time{}
 	// The low upload load of the unshaped time is not a low load.
 	c.ul.lowLoadSince = time.Time{}
+	// The time at the maximum (AutoMaxRate) starts again after the change.
+	c.dl.autoMaxBreak()
+	c.ul.autoMaxBreak()
 	if on {
 		c.wake(now)
 	}
@@ -224,6 +233,8 @@ func (c *Core) wake(now time.Time) {
 	c.transitionTo(StateRunning)
 	c.consecutiveTimeouts = 0
 	c.lastPingTime = now
+	c.dl.autoMaxBreak()
+	c.ul.autoMaxBreak()
 	c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
 	c.act.StartPingers()
 }
@@ -238,6 +249,7 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(rateKbps)
+	ds.autoMaxBreak()
 	c.applyRate(dir)
 	ds.paused = true
 }
@@ -286,6 +298,14 @@ func (c *Core) HandleRate(stats RateStats) {
 	}
 	if c.ul.shaperRateKbps > 0 {
 		c.ul.loadPercent = stats.UlRateKbps / c.ul.shaperRateKbps
+	}
+	// A throughput sample at low load between two ping replies is also a
+	// break of the time at the maximum (AutoMaxRate). So is a sample in
+	// IDLE or STALL: the recovery below goes to RUNNING without wake().
+	for _, ds := range []*dirState{&c.dl, &c.ul} {
+		if ds.loadPercent < c.cfg.HighLoadThr || c.state != StateRunning {
+			ds.autoMaxBreak()
+		}
 	}
 	if c.ul.achievedKbps >= crossDelayMaxLoad*c.ul.shaperRateKbps {
 		c.ul.lowLoadSince = time.Time{}
@@ -604,6 +624,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		ds.bbDetected = true
 		ds.lastBBTime = now
 		ds.lastBBDeltaUs = deltaUs
+		ds.atMaxSince = time.Time{}
 		c.adjustRateBufferbloat(dir, deltaUs, thresholdUs)
 	} else if !exceeded && c.stallRecovered(dir, now) {
 		// The delay is low again soon after the first decrease: a short
@@ -612,10 +633,13 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 		// High load and no bufferbloat: increase the rate
 		if !ds.bbDetected || now.Sub(ds.lastBBTime) > bbRefractoryDur {
 			ds.bbDetected = false
+			c.updateAutoMax(dir, now)
 			c.adjustRateHighLoad(dir, deltaUs, thresholdUs)
 		}
 	} else {
-		// Low load: move the rate toward the base rate
+		// Low load: move the rate toward the base rate. The time at the
+		// maximum (AutoMaxRate) must be at high load without a break.
+		ds.autoMaxBreak()
 		refractoryDur := time.Duration(c.cfg.DecayRefractoryPeriodMs) * time.Millisecond
 		if now.Sub(ds.lastDecayTime) > refractoryDur {
 			ds.lastDecayTime = now
@@ -661,7 +685,7 @@ func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64
 	}
 	newRate := fromRate * adjustment
 
-	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+	newRate = clamp(newRate, float64(dc.MinRateKbps), c.maxRateKbps(dir))
 
 	if newRate != ds.shaperRateKbps {
 		c.logger.Debugf("[%s] [%s] bufferbloat: rate %.0f -> %.0f kbps (achieved=%.0f delta=%.0fus thr=%.0fus factor=%.2f)",
@@ -704,7 +728,7 @@ func (c *Core) adjustRateHighLoad(dir Direction, deltaUs, thresholdUs float64) {
 	adjustment := minAdj + factor*(maxAdj-minAdj)
 	newRate := ds.shaperRateKbps * adjustment
 
-	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+	newRate = clamp(newRate, float64(dc.MinRateKbps), c.maxRateKbps(dir))
 
 	if newRate != ds.shaperRateKbps {
 		c.logger.Debugf("[%s] [%s] high load: rate %.0f -> %.0f kbps (factor=%.2f)",
@@ -732,7 +756,7 @@ func (c *Core) adjustRateDecay(dir Direction) {
 		return
 	}
 
-	newRate = clamp(newRate, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+	newRate = clamp(newRate, float64(dc.MinRateKbps), c.maxRateKbps(dir))
 
 	if newRate != ds.shaperRateKbps {
 		c.logger.Debugf("[%s] [%s] decay: rate %.0f -> %.0f kbps (base=%.0f)",
@@ -847,7 +871,7 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 		return false
 	}
 	dc := c.link.DirConfig(dir)
-	newRate := clamp(ds.stallRefKbps*c.cfg.ShaperRateMaxAdjustDownBufferbloat, float64(dc.MinRateKbps), float64(dc.MaxRateKbps))
+	newRate := clamp(ds.stallRefKbps*c.cfg.ShaperRateMaxAdjustDownBufferbloat, float64(dc.MinRateKbps), c.maxRateKbps(dir))
 	if newRate <= ds.shaperRateKbps {
 		return false
 	}
@@ -864,4 +888,85 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 	ds.bbDetected = false
 	c.applyRate(dir)
 	return true
+}
+
+// Constants of AutoMaxRate.
+const (
+	autoMaxRateHold       = 2 * time.Second
+	autoMaxRateStep       = 1.1
+	autoMaxRateUse        = 0.9   // achieved rate at the maximum, relative to the maximum
+	autoMaxRateDecayBelow = 0.8   // the maximum decreases while the rate is below this part of it
+	autoMaxRateDecayS     = 100.0 // time constant of the decrease
+)
+
+// maxRateKbps returns the maximum rate of a direction: max_rate_kbps, or
+// the learned maximum with AutoMaxRate.
+func (c *Core) maxRateKbps(dir Direction) float64 {
+	m := float64(c.link.DirConfig(dir).MaxRateKbps)
+	if c.cfg.AutoMaxRate {
+		m = math.Max(m, c.getDirState(dir).autoMaxKbps)
+	}
+	return m
+}
+
+// autoMaxBreak marks a break of the use of the link (low load, pause,
+// fixed rate, unshaped, wake): the hold time starts again, and the time of
+// the break does not decrease the maximum. The learned maximum stays.
+func (ds *dirState) autoMaxBreak() {
+	ds.atMaxSince = time.Time{}
+	ds.autoMaxUpdated = time.Time{}
+}
+
+// updateAutoMax changes the learned maximum rate (AutoMaxRate). Core calls
+// it at high load without bufferbloat. One ping above the delay threshold
+// does not stop the time at the maximum: on a 5G link, the jitter gives
+// such pings frequently, also without a queue.
+//
+// Each decrease does not set the maximum back: on a 5G link, short radio
+// stalls give a decrease every few seconds, and then the maximum does not
+// stay above max_rate_kbps. A slow decrease keeps the maximum through these
+// stalls, and sets it back when the capacity stays lower.
+func (c *Core) updateAutoMax(dir Direction, now time.Time) {
+	if !c.cfg.AutoMaxRate {
+		return
+	}
+	ds := c.getDirState(dir)
+	cfgMax := float64(c.link.DirConfig(dir).MaxRateKbps)
+	maxKbps := c.maxRateKbps(dir)
+	// The pingers can deliver replies out of order. An older reply does
+	// not move the time back: the next reply would count a time again.
+	if !now.After(ds.autoMaxUpdated) {
+		return
+	}
+	var dt time.Duration
+	if !ds.autoMaxUpdated.IsZero() {
+		dt = now.Sub(ds.autoMaxUpdated)
+	}
+	ds.autoMaxUpdated = now
+	// A longer time without an update is a break: 3 ping intervals (one
+	// reply can be lost or late), and at least 1 s.
+	gap := max(time.Second, 3*time.Duration(c.cfg.PingIntervalMs)*time.Millisecond)
+	if dt > gap {
+		// A break without an update (low load, bufferbloat, pause, stall)
+		// is not time in use: start the hold time again, and do not
+		// decrease the maximum for the break.
+		ds.atMaxSince = time.Time{}
+		dt = 0
+	}
+	if ds.shaperRateKbps >= maxKbps && ds.achievedKbps >= autoMaxRateUse*maxKbps {
+		if ds.atMaxSince.IsZero() {
+			ds.atMaxSince = now
+		} else if now.Sub(ds.atMaxSince) >= autoMaxRateHold {
+			ds.autoMaxKbps = math.Min(maxKbps*autoMaxRateStep, c.cfg.AutoMaxRateLimitFactor*cfgMax)
+			ds.atMaxSince = time.Time{}
+			c.logger.Debugf("[%s] [%s] auto max rate: %.0f -> %.0f kbps", c.name, dir, maxKbps, ds.autoMaxKbps)
+		}
+		return
+	}
+	ds.atMaxSince = time.Time{}
+	if dt > 0 && ds.shaperRateKbps < autoMaxRateDecayBelow*maxKbps {
+		// Not below the rate / autoMaxRateDecayBelow: one long interval
+		// (slow pings) must not decrease the maximum below the rate.
+		ds.autoMaxKbps = max(cfgMax, ds.shaperRateKbps/autoMaxRateDecayBelow, maxKbps*math.Exp(-dt.Seconds()/autoMaxRateDecayS))
+	}
 }

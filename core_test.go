@@ -484,6 +484,310 @@ func TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr(t *testing.T) {
 	}
 }
 
+// runAtMax gives the download pings with a low delay for d at high load.
+// The achieved rate follows the shaper rate (the link has more capacity).
+func runAtMax(c *Core, start time.Time, d time.Duration) time.Time {
+	now := start
+	for end := start.Add(d); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = c.dl.shaperRateKbps
+		c.dl.loadPercent = 1
+		c.processDelay(DL, 0, now)
+	}
+	return now
+}
+
+func TestAutoMaxRate_Off(t *testing.T) {
+	c, _ := newTestCore(t)
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	runAtMax(c, time.Now(), 30*time.Second)
+	if c.dl.shaperRateKbps > cfgMax {
+		t.Errorf("rate %.0f, want at most max_rate_kbps %.0f", c.dl.shaperRateKbps, cfgMax)
+	}
+}
+
+// TestAutoMaxRate_IncreasesToLimit checks that the maximum increases while
+// the rate stays at it, and stops at auto_max_rate_limit_factor.
+func TestAutoMaxRate_IncreasesToLimit(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.AutoMaxRateLimitFactor = 2
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 1500*time.Millisecond)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Fatalf("max %.0f after 1.5 s, want %.0f (the hold time is 2 s)", c.maxRateKbps(DL), cfgMax)
+	}
+	now = runAtMax(c, now, time.Second)
+	if want := cfgMax * 1.1; math.Abs(c.maxRateKbps(DL)-want) > 1 {
+		t.Fatalf("max %.0f after 2.5 s, want %.0f", c.maxRateKbps(DL), want)
+	}
+	runAtMax(c, now, 60*time.Second)
+	if want := 2 * cfgMax; c.maxRateKbps(DL) != want || c.dl.shaperRateKbps != want {
+		t.Errorf("max %.0f, rate %.0f, want both at the limit %.0f", c.maxRateKbps(DL), c.dl.shaperRateKbps, want)
+	}
+}
+
+// TestAutoMaxRate_LowLoadStopsHold checks that a time at low load stops
+// the hold time: the 2 s at the maximum must be at high load without a
+// break.
+func TestAutoMaxRate_LowLoadStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 500*time.Millisecond)
+	for end := now.Add(3 * time.Second); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = 0.1 * cfgMax
+		c.dl.loadPercent = 0.1
+		c.processDelay(DL, 0, now)
+		c.dl.shaperRateKbps = cfgMax
+	}
+	runAtMax(c, now, time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s at high load with a break)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_PauseStopsHold checks that a pause of the rate control
+// stops the hold time.
+func TestAutoMaxRate_PauseStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 500*time.Millisecond)
+	c.dl.paused = true
+	now = runAtMax(c, now, 3*time.Second)
+	c.dl.paused = false
+	runAtMax(c, now, time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s at high load with a pause)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_SlowPings checks the increase and the decrease when the
+// replies come 1.5 s apart (ping_interval_ms 1500, one pinger): this is
+// not a break.
+func TestAutoMaxRate_SlowPings(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 1500
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		c.dl.achievedKbps = c.dl.shaperRateKbps
+		c.dl.loadPercent = 1
+		c.processDelay(DL, 0, now)
+		now = now.Add(1500 * time.Millisecond)
+	}
+	if c.maxRateKbps(DL) <= cfgMax {
+		t.Fatalf("max %.0f, want above %.0f after 3 s at the maximum", c.maxRateKbps(DL), cfgMax)
+	}
+
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	c.updateAutoMax(DL, now)
+	c.updateAutoMax(DL, now.Add(1500*time.Millisecond))
+	// The last update of the loop was 1.5 s before now: 3 s of decrease.
+	if want := 2 * cfgMax * math.Exp(-3/autoMaxRateDecayS); math.Abs(c.maxRateKbps(DL)-want) > 0.01 {
+		t.Errorf("max %.2f, want %.2f (3 s of decrease)", c.maxRateKbps(DL), want)
+	}
+}
+
+// TestAutoMaxRate_ShortPauseStopsHold checks that a pause shorter than the
+// break time also stops the hold time.
+func TestAutoMaxRate_ShortPauseStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.link.Download.BaseRateKbps = c.link.Download.MaxRateKbps
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 1500*time.Millisecond)
+	c.SetPaused(DL, true)
+	now = now.Add(500 * time.Millisecond)
+	c.SetPaused(DL, false)
+	runAtMax(c, now, time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s and 1 s at the maximum with a pause)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_DecreaseNotBelowRate checks that one long interval
+// (ping_interval_ms 30000) does not decrease the maximum below the rate.
+func TestAutoMaxRate_DecreaseNotBelowRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 30000
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = 0.79 * 2 * cfgMax
+	now := time.Now()
+	c.updateAutoMax(DL, now)
+	c.updateAutoMax(DL, now.Add(30*time.Second))
+	if want := c.dl.shaperRateKbps / autoMaxRateDecayBelow; math.Abs(c.maxRateKbps(DL)-want) > 0.01 {
+		t.Errorf("max %.2f, want %.2f (rate / 0.8)", c.maxRateKbps(DL), want)
+	}
+}
+
+// TestAutoMaxRate_BreakNoDecrease checks that the time of a pause or of
+// low load does not decrease the maximum, also when it is shorter than the
+// break time (ping_interval_ms 30000: 90 s).
+func TestAutoMaxRate_BreakNoDecrease(t *testing.T) {
+	for _, name := range []string{"pause", "low load"} {
+		c, _ := newTestCore(t)
+		c.cfg.AutoMaxRate = true
+		c.cfg.PingIntervalMs = 30000
+		cfgMax := float64(c.link.Download.MaxRateKbps)
+		c.dl.autoMaxKbps = 2 * cfgMax
+		c.dl.shaperRateKbps = cfgMax
+		now := time.Now()
+		c.updateAutoMax(DL, now)
+		if name == "pause" {
+			c.SetPaused(DL, true)
+			c.SetPaused(DL, false)
+		} else {
+			c.dl.loadPercent = 0.1
+			c.processDelay(DL, 0, now.Add(time.Second))
+		}
+		c.dl.shaperRateKbps = cfgMax
+		c.updateAutoMax(DL, now.Add(60*time.Second))
+		if c.maxRateKbps(DL) != 2*cfgMax {
+			t.Errorf("%s: max %.0f, want %.0f", name, c.maxRateKbps(DL), 2*cfgMax)
+		}
+	}
+}
+
+// TestAutoMaxRate_LowLoadSampleStopsHold checks that a throughput sample
+// at low load between two ping replies stops the hold time (one pinger,
+// ping_interval_ms 1500, a sample each 200 ms).
+func TestAutoMaxRate_LowLoadSampleStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 1500
+	c.state = StateRunning
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		c.HandleRate(RateStats{Timestamp: now.Add(-700 * time.Millisecond), DlRateKbps: 0.1 * cfgMax, UlRateKbps: 0})
+		c.HandleRate(RateStats{Timestamp: now.Add(-100 * time.Millisecond), DlRateKbps: cfgMax, UlRateKbps: 0})
+		c.processDelay(DL, 0, now)
+		c.dl.shaperRateKbps = cfgMax
+		now = now.Add(1500 * time.Millisecond)
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (low load between the replies)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_StallStopsHold checks that a STALL stops the hold time,
+// also when the throughput samples show high load (ping_interval_ms 5000).
+func TestAutoMaxRate_StallStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 5000
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.link.Download.BaseRateKbps = c.link.Download.MaxRateKbps
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 1500*time.Millisecond)
+	c.state = StateStall
+	c.HandleRate(RateStats{Timestamp: now, DlRateKbps: cfgMax, UlRateKbps: 0})
+	c.state = StateRunning
+	c.dl.shaperRateKbps = cfgMax
+	runAtMax(c, now.Add(time.Second), time.Second)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (1.5 s and 1 s at the maximum with a STALL)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
+// does not move the time of the decrease back.
+func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	t0 := time.Now()
+	c.updateAutoMax(DL, t0)
+	c.updateAutoMax(DL, t0.Add(1000*time.Millisecond))
+	c.updateAutoMax(DL, t0.Add(950*time.Millisecond))
+	c.updateAutoMax(DL, t0.Add(1050*time.Millisecond))
+	if want := 2 * cfgMax * math.Exp(-1.05/autoMaxRateDecayS); math.Abs(c.maxRateKbps(DL)-want) > 0.01 {
+		t.Errorf("max %.2f, want %.2f (1.05 s of decrease)", c.maxRateKbps(DL), want)
+	}
+}
+
+// TestAutoMaxRate_NoIncreaseWithoutCapacity checks that the maximum does
+// not increase when the achieved rate is below 90 % of it.
+func TestAutoMaxRate_NoIncreaseWithoutCapacity(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for end := now.Add(10 * time.Second); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = 0.85 * cfgMax
+		c.dl.loadPercent = 0.85
+		c.processDelay(DL, 0, now)
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_DecreaseKeepsLearnedMax checks that a bufferbloat
+// decrease does not set the learned maximum back, and that the maximum
+// decreases slowly at high load below 80 % of it.
+func TestAutoMaxRate_DecreaseKeepsLearnedMax(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = 2 * cfgMax
+	c.dl.achievedKbps = 0.5 * cfgMax
+	c.adjustRateBufferbloat(DL, 100000, 30000)
+	if c.maxRateKbps(DL) != 2*cfgMax {
+		t.Fatalf("max %.0f after a decrease, want %.0f", c.maxRateKbps(DL), 2*cfgMax)
+	}
+
+	// The maximum decreases only while the rate is below 80 % of it.
+	c.dl.shaperRateKbps = 1.2 * cfgMax
+	now := time.Now()
+	for i := 0; i <= 300; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if m := c.maxRateKbps(DL); m < 1.2*cfgMax/0.8*0.99 || m > 1.2*cfgMax/0.8 {
+		t.Errorf("max %.0f, want approximately %.0f (rate / 0.8)", m, 1.2*cfgMax/0.8)
+	}
+
+	// Not below max_rate_kbps.
+	c.dl.shaperRateKbps = 0.5 * cfgMax
+	for i := 301; i <= 600; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want max_rate_kbps %.0f", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+func TestAutoMaxRate_DecreaseRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i <= 10; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if want := 2 * cfgMax * math.Exp(-0.1); math.Abs(c.maxRateKbps(DL)-want) > 1 {
+		t.Errorf("max %.0f after 10 s, want %.0f", c.maxRateKbps(DL), want)
+	}
+}
+
 func TestAdjustRateHighLoad_ClampsToMax(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)

@@ -3,6 +3,8 @@
 		"alpha_baseline_decrease": "float",
 		"alpha_baseline_increase": "float",
 		"alpha_delta_ewma": "float",
+		"auto_max_rate": "bool",
+		"auto_max_rate_limit_factor": "float",
 		"bufferbloat_detection_thr": "int",
 		"bufferbloat_detection_window": "int",
 		"bufferbloat_refractory_period_ms": "int",
