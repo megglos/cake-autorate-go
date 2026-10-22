@@ -31,7 +31,7 @@ cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of
 - **Config checks:** a warning for each unknown key, and for each reflector that is known to not reply to ICMP timestamp requests.
 - **Recording and replay** of the controller inputs and decisions, a link simulator, and link emulations for the tests.
 
-On a real 5G link (24 h, 13 sessions), the delay under load (p50) of cake-autorate-go is 7 to 9 ms lower than with the original, and the p99 is up to 41 ms lower. The original gets approximately 20 % more download. With the options `increase_to_delay_thr` and `refractory_on_decrease`, cake-autorate-go gets most of this download for approximately half of the delay. On an emulated 5G link, the p95 is approximately 30 to 50 % lower. For the details, the differences from the original and the resource use on a router, see [docs/comparison.md](docs/comparison.md).
+On a real 5G link (24 h, 14 sessions), the delay under load (p50) of cake-autorate-go is 7 to 9 ms lower than with the original, and the p99 is up to 41 ms lower. The original gets approximately 20 % more download. With the options `increase_to_delay_thr` and `refractory_on_decrease`, cake-autorate-go gets most of this download, with less delay than the original (p50 +4 to +6 ms, against +7 to +9 ms). On an emulated 5G link, the p95 is approximately 30 to 50 % lower. For the details, the differences from the original and the resource use on a router, see [docs/comparison.md](docs/comparison.md).
 
 ## Installation on OpenWrt
 

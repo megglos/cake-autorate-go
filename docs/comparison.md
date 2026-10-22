@@ -63,15 +63,15 @@ Results:
 - Under load in the two directions, the p99 of cake-autorate-go is higher. The cause is the deep fades of the trace (for example, the upload capacity decreases from 50 to 5 Mbit/s for 1.6 s). The two controllers have their delay peaks in the same seconds. cake-autorate-go keeps the rate nearer to the capacity, thus the modem queue fills a little more before the first decrease has an effect.
 - These results are from emulations. The next section shows the results on a real 5G link.
 
-**Real 5G link** (Telekom, 2026-10-21 and 2026-10-22, 24 h, 13 sessions). An OpenWrt VM on the 5G modem makes the load (8 curl workers for each direction) and shapes with CAKE. Calibrated rates: download 34/130/245 Mbit/s, upload 19/94.5/110 Mbit/s (min/base/max), delay thresholds 36 ms. cake-autorate-go uses `icmp-timestamp` and `stall_recovery_ms` 500, the original uses `fping-ts`. Each round has one 120 s block of each controller and an unshaped block. Without shaping, the excess RTT under load is 350 to 790 ms (p50).
+**Real 5G link** (Telekom, 2026-10-21 and 2026-10-22, 24 h, 14 sessions). An OpenWrt VM on the 5G modem makes the load (8 curl workers for each direction) and shapes with CAKE. Calibrated rates: download 34/130/245 Mbit/s, upload 19/94.5/110 Mbit/s (min/base/max), delay thresholds 36 ms. At night, the cell gave more than the calibrated maximum. Thus, from the ninth session, the two controllers used maximum rates of 500/160 Mbit/s; all other values stayed the same. cake-autorate-go uses `icmp-timestamp` and `stall_recovery_ms` 500, the original uses `fping-ts`. Each round has one block of each controller and an unshaped block. The blocks are 120 s, only the first two sessions used 60 s. Without shaping, the excess RTT under load is 350 to 790 ms (p50).
 
 The capacity of the cell changes much between blocks. Thus, the table compares pairs: the original minus cake-autorate-go in the same round, with a t-test (95 %, * = significant).
 
-| Load | Pairs | Download | Delay p50 | Delay p99 |
+| Load | Pairs | Throughput | Delay p50 | Delay p99 |
 |---|---|---|---|---|
-| Download | 23 | +26 ± 13 Mbit/s * | +7.0 ± 1.3 ms * | +29 ± 32 ms |
-| Two directions | 23 | +19 ± 9 Mbit/s * | +9.1 ± 3.5 ms * | +41 ± 29 ms * |
-| Upload | 4 | -3 Mbit/s | +7.6 ms * | +24 ms * |
+| Download | 23 | DL +26 ± 13 Mbit/s * | +7.0 ± 1.3 ms * | +29 ± 32 ms |
+| Two directions | 23 | DL +19 ± 9 Mbit/s * | +9.1 ± 3.5 ms * | +41 ± 29 ms * |
+| Upload | 4 | UL -3 Mbit/s | +7.6 ms * | +24 ms * |
 
 Means of the first sessions (excess RTT p50 / p95 / p99, download as a percentage of the unshaped block of the round):
 
@@ -97,7 +97,7 @@ Results on the real 5G link:
 
 - cake-autorate-go has a lower delay in all load types: p50 7 to 9 ms lower, p99 up to 41 ms lower.
 - cake-autorate gets more download: approximately +20 % (19 to 26 Mbit/s). The upload is equal.
-- With `increase_to_delay_thr` and `refractory_on_decrease`, cake-autorate-go gets most of this download for approximately half of the delay. The delay cost of these options and of the original depends on the load of the cell: at night +2 ms p50, in the morning +16 ms p50 (two directions).
+- With `increase_to_delay_thr` and `refractory_on_decrease`, cake-autorate-go gets most of this download, with less delay than the original: p50 +4.1 and +6.4 ms, against +7.0 and +9.1 ms (60 to 70 % of the delay cost). The delay cost of these options and of the original depends on the load of the cell: at night +2 ms p50, in the morning +16 ms p50 (two directions).
 - At night, the cell gave up to 420 Mbit/s download, more than the calibrated maximum (245 Mbit/s). With a fixed maximum, all controllers then stay at the maximum. `auto_max_rate` increases the maximum when the link uses it (see [5G links](configuration.md#5g-links)).
 - These results are from one 5G cell. Starlink is not tested yet.
 
