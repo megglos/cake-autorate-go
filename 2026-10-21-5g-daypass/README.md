@@ -21,6 +21,7 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp11` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (3) |
 | `dp12` | unshaped, autorate (max 245), amax, max500, incrodamax | dl both | 120 s | 3 (4) |
 | `dp11b` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (5) |
+| `dp10` | unshaped, autorate, rod, incrod, upstream-fts | dl both | 120 s | 5 (4) |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
