@@ -21,11 +21,11 @@ The questions:
   - `reconfig.yaml`: `balanced` plus `starlink_reconfiguration` (binary from the rebased branch).
   - `upstream-starlink.sh`: the original cake-autorate with `fping` and ICMP timestamps, with its Starlink settings.
 - [ ] Host setup script for Starlink on `enp8s0`, as for 5G: table 55 with the default route through the Starlink gateway, NAT on `enp8s0`, ufw route rules for `cavtap0`. Starlink gives the address with DHCP. Thus, read the gateway from the lease.
-- [ ] Ask the user: the Starlink router (bypass mode, or a second NAT), and the location of the dish (obstructions).
+- Setup (user, 2026-10-22): the Starlink router runs in bypass mode, and the dish has a clear view of the sky.
 
 ## B. Day 1: first look (approximately 2 hours)
 
-1. Connect the Starlink router (in bypass mode if possible) to `enp8s0`. Run the host setup. Check from cav1: the public address, the RTT to `100.64.0.1` and to `fra-de-ping.vultr.com`.
+1. Connect the Starlink router (bypass mode) to `enp8s0`. Run the host setup. Check from cav1: the public address, the RTT to `100.64.0.1` and to `fra-de-ping.vultr.com`.
 2. Idle recording, 30 minutes, without load, `ping_method: icmp-timestamp`, all candidate reflectors. Use the analysis script: answers question 1 (the floor steps without a queue).
 3. Live calibration from LuCI (normal mode). Record the proposal: ping method, reflectors, rates, thresholds, `learn_cross_delay`. Answers question 2 and a part of question 5.
 4. One unshaped block per direction (dl, ul, both, 120 s): the capacity and the bufferbloat without a shaper.
@@ -64,6 +64,5 @@ Question 6: when a block has an outage, examine the recording. Does the rate com
 
 ## Risks
 
-- **Obstructions.** Outages make blocks not comparable. Mark the blocks with an outage, and leave them out of the paired comparison.
-- **Second NAT in the Starlink router.** It adds a queue that CAKE does not control. Use the bypass mode if possible.
+- **Outages.** The dish has a clear view, but satellite handovers and weather can still cause short outages. They make blocks not comparable. Mark the blocks with an outage, and leave them out of the paired comparison.
 - **ICMP timestamps blocked.** Then use `icmp` with `latency` (`balanced` is equal to `latency` with `icmp`). `starlink_reconfiguration` needs one-way delays, thus it cannot be used then.
