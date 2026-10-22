@@ -38,6 +38,12 @@ Before the A/B sessions, change in all files:
         -A latency=starlink-latency.yaml -A bandwidth=starlink-bandwidth.yaml \
         -U fts=upstream-starlink-fts.sh -m "dl ul both" -b 120 -r 3 -s
 
+## Host setup
+
+`host-setup.sh up` sends the traffic of the cav1 VM through the Starlink
+router on enp8s0 (run as root, after each reboot of the host and after
+the start of the VM taps). `host-setup.sh down` removes it.
+
 ## Delay floor
 
 To examine the 15 s floor changes in a recording, use
