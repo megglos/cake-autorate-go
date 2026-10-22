@@ -631,6 +631,34 @@ func TestAutoMaxRate_DecreaseNotBelowRate(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_BreakNoDecrease checks that the time of a pause or of
+// low load does not decrease the maximum, also when it is shorter than the
+// break time (ping_interval_ms 30000: 90 s).
+func TestAutoMaxRate_BreakNoDecrease(t *testing.T) {
+	for _, name := range []string{"pause", "low load"} {
+		c, _ := newTestCore(t)
+		c.cfg.AutoMaxRate = true
+		c.cfg.PingIntervalMs = 30000
+		cfgMax := float64(c.link.Download.MaxRateKbps)
+		c.dl.autoMaxKbps = 2 * cfgMax
+		c.dl.shaperRateKbps = cfgMax
+		now := time.Now()
+		c.updateAutoMax(DL, now)
+		if name == "pause" {
+			c.SetPaused(DL, true)
+			c.SetPaused(DL, false)
+		} else {
+			c.dl.loadPercent = 0.1
+			c.processDelay(DL, 0, now.Add(time.Second))
+		}
+		c.dl.shaperRateKbps = cfgMax
+		c.updateAutoMax(DL, now.Add(60*time.Second))
+		if c.maxRateKbps(DL) != 2*cfgMax {
+			t.Errorf("%s: max %.0f, want %.0f", name, c.maxRateKbps(DL), 2*cfgMax)
+		}
+	}
+}
+
 // TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
 // does not move the time of the decrease back.
 func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {

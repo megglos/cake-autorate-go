@@ -182,7 +182,7 @@ func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
-	ds.atMaxSince = time.Time{}
+	ds.autoMaxBreak()
 	c.applyRate(dir)
 	ds.paused = paused
 }
@@ -211,7 +211,8 @@ func (c *Core) SetUnshaped(on bool, now time.Time) {
 	// The low upload load of the unshaped time is not a low load.
 	c.ul.lowLoadSince = time.Time{}
 	// The time at the maximum (AutoMaxRate) starts again after the change.
-	c.dl.atMaxSince, c.ul.atMaxSince = time.Time{}, time.Time{}
+	c.dl.autoMaxBreak()
+	c.ul.autoMaxBreak()
 	if on {
 		c.wake(now)
 	}
@@ -232,7 +233,8 @@ func (c *Core) wake(now time.Time) {
 	c.transitionTo(StateRunning)
 	c.consecutiveTimeouts = 0
 	c.lastPingTime = now
-	c.dl.atMaxSince, c.ul.atMaxSince = time.Time{}, time.Time{}
+	c.dl.autoMaxBreak()
+	c.ul.autoMaxBreak()
 	c.setRates(c.link.Download.BaseRateKbps, c.link.Upload.BaseRateKbps)
 	c.act.StartPingers()
 }
@@ -247,7 +249,7 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 	ds := c.getDirState(dir)
 	ds.paused = false
 	ds.shaperRateKbps = float64(rateKbps)
-	ds.atMaxSince = time.Time{}
+	ds.autoMaxBreak()
 	c.applyRate(dir)
 	ds.paused = true
 }
@@ -629,7 +631,7 @@ func (c *Core) processDelay(dir Direction, deltaUs float64, now time.Time) {
 	} else {
 		// Low load: move the rate toward the base rate. The time at the
 		// maximum (AutoMaxRate) must be at high load without a break.
-		ds.atMaxSince = time.Time{}
+		ds.autoMaxBreak()
 		refractoryDur := time.Duration(c.cfg.DecayRefractoryPeriodMs) * time.Millisecond
 		if now.Sub(ds.lastDecayTime) > refractoryDur {
 			ds.lastDecayTime = now
@@ -897,6 +899,14 @@ func (c *Core) maxRateKbps(dir Direction) float64 {
 		m = math.Max(m, c.getDirState(dir).autoMaxKbps)
 	}
 	return m
+}
+
+// autoMaxBreak marks a break of the use of the link (low load, pause,
+// fixed rate, unshaped, wake): the hold time starts again, and the time of
+// the break does not decrease the maximum. The learned maximum stays.
+func (ds *dirState) autoMaxBreak() {
+	ds.atMaxSince = time.Time{}
+	ds.autoMaxUpdated = time.Time{}
 }
 
 // updateAutoMax changes the learned maximum rate (AutoMaxRate). Core calls
