@@ -659,6 +659,29 @@ func TestAutoMaxRate_BreakNoDecrease(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_LowLoadSampleStopsHold checks that a throughput sample
+// at low load between two ping replies stops the hold time (one pinger,
+// ping_interval_ms 1500, a sample each 200 ms).
+func TestAutoMaxRate_LowLoadSampleStopsHold(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 1500
+	c.state = StateRunning
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		c.HandleRate(RateStats{Timestamp: now.Add(-700 * time.Millisecond), DlRateKbps: 0.1 * cfgMax, UlRateKbps: 0})
+		c.HandleRate(RateStats{Timestamp: now.Add(-100 * time.Millisecond), DlRateKbps: cfgMax, UlRateKbps: 0})
+		c.processDelay(DL, 0, now)
+		c.dl.shaperRateKbps = cfgMax
+		now = now.Add(1500 * time.Millisecond)
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f (low load between the replies)", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
 // TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
 // does not move the time of the decrease back.
 func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {

@@ -299,6 +299,13 @@ func (c *Core) HandleRate(stats RateStats) {
 	if c.ul.shaperRateKbps > 0 {
 		c.ul.loadPercent = stats.UlRateKbps / c.ul.shaperRateKbps
 	}
+	// A throughput sample at low load between two ping replies is also a
+	// break of the time at the maximum (AutoMaxRate).
+	for _, ds := range []*dirState{&c.dl, &c.ul} {
+		if ds.loadPercent < c.cfg.HighLoadThr {
+			ds.autoMaxBreak()
+		}
+	}
 	if c.ul.achievedKbps >= crossDelayMaxLoad*c.ul.shaperRateKbps {
 		c.ul.lowLoadSince = time.Time{}
 	} else if c.ul.lowLoadSince.IsZero() {
