@@ -87,6 +87,20 @@ const callShaping = {
 	shape: rpc.declare({ object: 'cake-autorate', method: 'shape', params: [ 'link' ] })
 };
 
+const callMode = rpc.declare({
+	object: 'cake-autorate',
+	method: 'mode',
+	params: [ 'link', 'mode', 'seconds' ]
+});
+
+// The times of the dialog "Mode": in seconds, 0 is until a change.
+const MODE_TIMES = [
+	[ 0, _('Until a change or a restart') ],
+	[ 3600, _('For 1 hour') ],
+	[ 7200, _('For 2 hours') ],
+	[ 28800, _('For 8 hours') ]
+];
+
 const callResume = rpc.declare({
 	object: 'cake-autorate',
 	method: 'resume',
@@ -636,6 +650,57 @@ return view.extend({
 		}).then(L.bind(this.refresh, this));
 	},
 
+	// Returns the label of the mode of a link: the mode, and the time until
+	// the link goes back to the mode of the configuration.
+	renderMode: function(ls) {
+		let t = _('Mode: %s').format(common.modeTitle(ls.mode));
+		if (ls.mode != ls.config_mode && ls.config_mode) {
+			t += (+ls.mode_left_s > 0)
+				? ' ' + _('(%s in %d min)').format(common.modeTitle(ls.config_mode), Math.ceil(+ls.mode_left_s / 60))
+				: ' ' + _('(configuration: %s)').format(common.modeTitle(ls.config_mode));
+		}
+		return E('span', { 'class': 'label', 'data-mode': ls.mode }, text(t));
+	},
+
+	// Opens the dialog to set the mode of a link.
+	openMode: function(ls) {
+		const select = E('select', { 'class': 'cbi-input-select', 'id': 'cake-autorate-mode' },
+			common.MODES.map(([ mode, title ]) =>
+				E('option', { 'value': mode, 'selected': (mode == ls.mode) ? '' : null }, title)));
+		const time = E('select', { 'class': 'cbi-input-select', 'id': 'cake-autorate-mode-time' },
+			MODE_TIMES.map(([ seconds, title ]) => E('option', { 'value': seconds }, title)));
+		const descr = E('ul', {}, common.MODES.map(([ mode, title, d ]) =>
+			E('li', {}, [ E('strong', {}, title), ': ', d ])));
+		ui.showModal(_('Mode of the link %s').format(ls.name), [
+			E('p', {}, _('The mode changes the trade-off between delay and throughput at once, without a restart of the service. After the time, or after a restart, the link uses the mode of the configuration (%s).').format(common.modeTitle(ls.config_mode))),
+			descr,
+			E('p', {}, [ E('label', { 'for': 'cake-autorate-mode' }, _('Mode')), ' ', select ]),
+			E('p', {}, [ E('label', { 'for': 'cake-autorate-mode-time' }, _('Time')), ' ', time ]),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': ui.hideModal }, _('Cancel')), ' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'data-mode-set': '',
+					'click': ui.createHandlerFn(this, 'handleMode', ls.name, select, time)
+				}, _('Set mode'))
+			])
+		]);
+	},
+
+	// Sets the mode of the dialog and shows the answer of the program.
+	handleMode: function(link, select, time) {
+		const seconds = +time.value;
+		return callMode(link, select.value, seconds > 0 ? seconds : undefined).then(function(res) {
+			if (res && res.error)
+				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
+		}).then(L.bind(function() {
+			ui.hideModal();
+			return this.refresh();
+		}, this));
+	},
+
 	renderControl: function(link, dir, st, unshaped) {
 		if (!st.adjust)
 			return E('em', {}, _('Off (adjust)'));
@@ -686,6 +751,18 @@ return view.extend({
 		const nodes = [ text(ls.name), ' ', common.stateLabel(ls.state, ls.unshaped) ];
 		if (ls.calibrating)
 			nodes.push(' ', E('span', { 'class': 'label notice', 'data-calibrating': '' }, _('Calibration')));
+		// An older program has no modes.
+		if (ls.mode)
+			nodes.push(' ', this.renderMode(ls));
+		if (this.canControl && ls.mode)
+			nodes.push(' ', E('button', {
+				'class': 'cbi-button cbi-button-action cake-autorate-mode',
+				'style': 'font-size:small; vertical-align:middle',
+				'disabled': ls.calibrating ? '' : null,
+				'title': _('Change the trade-off between delay and throughput now, for some time or until a change.'),
+				'data-focus': focusKey(ls.name, 'mode', ''),
+				'click': ui.createHandlerFn(this, 'openMode', ls)
+			}, _('Mode…')));
 		if (this.canControl) {
 			// A calibration changes the shaper: the shaping button waits
 			// for its end. Without shaping, a calibration cannot start.
@@ -872,7 +949,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

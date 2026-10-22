@@ -78,10 +78,17 @@ type LinkStatus struct {
 	Unshaped bool `json:"unshaped"`
 	// UnshapedLeftS is the time until the shaping comes back, for
 	// "unshape LINK SECONDS". It is 0 without a time limit.
-	UnshapedLeftS float64                `json:"unshaped_left_s,omitempty"`
-	Download      DirStatus              `json:"download"`
-	Upload        DirStatus              `json:"upload"`
-	Reflectors    []ReflectorDelayStatus `json:"reflectors"`
+	UnshapedLeftS float64 `json:"unshaped_left_s,omitempty"`
+	// Mode is the current link mode, and ConfigMode the mode of the
+	// config. They are different after the command "mode".
+	Mode       LinkMode `json:"mode"`
+	ConfigMode LinkMode `json:"config_mode"`
+	// ModeLeftS is the time until the link goes back to ConfigMode, for
+	// "mode LINK MODE SECONDS". It is 0 without a time limit.
+	ModeLeftS  float64                `json:"mode_left_s,omitempty"`
+	Download   DirStatus              `json:"download"`
+	Upload     DirStatus              `json:"upload"`
+	Reflectors []ReflectorDelayStatus `json:"reflectors"`
 }
 
 // StatusFile is the content of the status file.
@@ -96,7 +103,8 @@ type StatusFile struct {
 // Snapshot returns the status of a link. Call it from the goroutine that
 // uses the Core. It does not change the Core.
 func (c *Core) Snapshot() LinkStatus {
-	st := LinkStatus{Name: c.name, State: c.state.String(), Replies: c.replies, Calibrating: c.calibrating, Unshaped: c.unshaped}
+	st := LinkStatus{Name: c.name, State: c.state.String(), Replies: c.replies, Calibrating: c.calibrating, Unshaped: c.unshaped,
+		Mode: c.mode, ConfigMode: linkModeOf(c.cfg, c.link)}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
 		out := DirStatus{

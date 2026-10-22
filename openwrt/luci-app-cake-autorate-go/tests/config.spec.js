@@ -531,6 +531,7 @@ test('enabling a link in its dialog uses the changed interfaces', async ({ page 
 });
 
 test('5G options reach the configuration of the program', async ({ page }) => {
+	await input(page, 'global', 'mode').selectOption('custom');
 	for (const name of [ 'increase_to_delay_thr', 'auto_max_rate' ])
 		await page.locator(`input[data-widget-id="widget.cbid.cake-autorate.global.${name}"]`).check();
 	await openTab(page, 'advanced');
@@ -544,5 +545,50 @@ test('5G options reach the configuration of the program', async ({ page }) => {
 	const yaml = vm('cat /var/etc/cake-autorate.yaml');
 	expect(yaml).toContain('"auto_max_rate": true');
 	expect(yaml).toContain('"increase_to_delay_thr": true');
+	expect(yaml).toContain('"mode": "custom"');
 	resetConfig();
+});
+
+// The checkbox of an option of the modes.
+function modeOption(page, name) {
+	return page.locator(`input[data-widget-id="widget.cbid.cake-autorate.global.${name}"]`);
+}
+
+test('only the mode custom shows the options of the modes', async ({ page }) => {
+	await expect(input(page, 'global', 'mode')).toHaveValue('balanced');
+	for (const name of [ 'refractory_on_decrease', 'increase_to_delay_thr', 'auto_max_rate' ])
+		await expect(modeOption(page, name)).toBeHidden();
+	await input(page, 'global', 'mode').selectOption('custom');
+	for (const name of [ 'refractory_on_decrease', 'increase_to_delay_thr', 'auto_max_rate' ])
+		await expect(modeOption(page, name)).toBeVisible();
+	await input(page, 'global', 'mode').selectOption('bandwidth');
+	await expect(modeOption(page, 'auto_max_rate')).toBeHidden();
+	await saveApply(page);
+	await expect.poll(() => vm('cat /var/etc/cake-autorate.yaml 2>/dev/null || true'), { timeout: 30000 })
+		.toContain('"mode": "bandwidth"');
+	resetConfig();
+});
+
+test('a configuration from before the modes shows the mode custom', async ({ page }) => {
+	vm('uci set cake-autorate.global.refractory_on_decrease=1 && uci commit cake-autorate');
+	try {
+		await page.reload();
+		await expect(input(page, 'global', 'mode')).toHaveValue('custom');
+		await expect(modeOption(page, 'refractory_on_decrease')).toBeChecked();
+	}
+	finally {
+		resetConfig();
+	}
+});
+
+test('a link in the mode custom shows the options in all modes', async ({ page }) => {
+	vm('uci set cake-autorate.wan.mode=custom && uci commit cake-autorate');
+	try {
+		await page.reload();
+		await expect(input(page, 'global', 'mode')).toHaveValue('balanced');
+		await expect(modeOption(page, 'refractory_on_decrease')).toBeVisible();
+	}
+	finally {
+		resetConfig();
+	}
 });

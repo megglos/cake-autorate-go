@@ -45,6 +45,11 @@ type LinkController struct {
 	// goroutine of Run uses them.
 	unshapeUntil time.Time
 	unshapeTimer *time.Timer
+	// modeUntil is the end of the time of "mode LINK MODE SECONDS", or zero
+	// (no time limit). modeTimer fires at this time. Only the goroutine of
+	// Run uses them.
+	modeUntil time.Time
+	modeTimer *time.Timer
 
 	// ctrlCh carries the commands (pause, resume, calibration) to the
 	// goroutine of Run.
@@ -152,6 +157,9 @@ func (c *LinkController) loop(ctx context.Context, healthC, statusC <-chan time.
 		case <-c.unshapeTimerC():
 			c.checkUnshapeTime(time.Now())
 
+		case <-timerC(c.modeTimer):
+			c.checkModeTime(time.Now())
+
 		case <-healthC:
 			if promoted := c.pingerMgr.ReplaceUnhealthy(); len(promoted) > 0 {
 				now := time.Now()
@@ -170,6 +178,9 @@ func (c *LinkController) publishStatus() {
 	st := c.core.Core().Snapshot()
 	if st.Unshaped && !c.unshapeUntil.IsZero() {
 		st.UnshapedLeftS = math.Max(0, math.Round(time.Until(c.unshapeUntil).Seconds()))
+	}
+	if !c.modeUntil.IsZero() {
+		st.ModeLeftS = math.Max(0, math.Round(time.Until(c.modeUntil).Seconds()))
 	}
 	baselines := c.core.Core().ReflectorBaselinesUs()
 	for _, r := range c.pingerMgr.Snapshot() {
@@ -338,6 +349,61 @@ func (c *LinkController) unshapeTimerC() <-chan time.Time {
 		return nil
 	}
 	return c.unshapeTimer.C
+}
+
+// SetMode sets the link mode. With a duration d > 0, the link goes back to
+// the mode of the config after d (also when the program that sent the
+// command stops); a new "mode" sets a new time. The mode is not kept: the
+// program starts with the mode of the config.
+func (c *LinkController) SetMode(m LinkMode, d time.Duration) error {
+	return c.call(func(now time.Time) error {
+		// A mode change changes the rate control of a calibration block.
+		if c.core.Core().Calibrating() {
+			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		c.setModeTime(now, d)
+		c.rateErr = nil
+		if m != c.core.Core().Mode() {
+			c.core.SetMode(m, now)
+			c.logger.Infof("[%s] mode %s", c.name, m)
+		}
+		return c.rateErr
+	})
+}
+
+// setModeTime sets the time limit of the mode: d from now, or no limit for
+// d == 0.
+func (c *LinkController) setModeTime(now time.Time, d time.Duration) {
+	if c.modeTimer != nil {
+		c.modeTimer.Stop()
+		c.modeTimer = nil
+	}
+	c.modeUntil = time.Time{}
+	if d > 0 {
+		c.modeUntil = now.Add(d)
+		c.modeTimer = time.NewTimer(d)
+	}
+}
+
+// checkModeTime sets the mode of the config at the end of the time of
+// "mode LINK MODE SECONDS". Only the goroutine of Run calls it.
+func (c *LinkController) checkModeTime(now time.Time) {
+	if c.modeUntil.IsZero() || now.Before(c.modeUntil) {
+		return
+	}
+	c.setModeTime(now, 0)
+	m := linkModeOf(c.cfg, c.link)
+	c.logger.Infof("[%s] the time of the mode ended, mode %s", c.name, m)
+	c.core.SetMode(m, now)
+}
+
+// timerC returns the channel of t, or nil for a nil timer (a nil channel
+// never receives).
+func timerC(t *time.Timer) <-chan time.Time {
+	if t == nil {
+		return nil
+	}
+	return t.C
 }
 
 // unshapeRetry is the time until the next try to shape the link again

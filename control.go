@@ -31,6 +31,9 @@ import (
 //	unshape LINK [SECONDS] turn the shaping of the link off (for SECONDS,
 //	                      1 to 3600; without SECONDS until "shape")
 //	shape LINK            turn the shaping of the link on again
+//	mode LINK MODE [SECONDS] set the link mode (latency, balanced,
+//	                      bandwidth or custom; for SECONDS, 1 to 86400,
+//	                      then back to the mode of the config)
 //	list                  answer: the link names, separated by spaces
 //	history               answer: the samples of the last 15 minutes of
 //	                      each link as one line of JSON (see History)
@@ -70,6 +73,7 @@ var oneLine = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 type LinkControl interface {
 	SetPaused(dirs []Direction, paused bool) error
 	SetUnshaped(on bool, d time.Duration) error
+	SetMode(m LinkMode, d time.Duration) error
 }
 
 // PinControl is the part of the Pinner that the control socket and the
@@ -168,6 +172,31 @@ func handleControlCommand(line string, h *ControlHandler) string {
 			return fmt.Sprintf("error: unknown link %q", f[1])
 		}
 		if err := lc.SetUnshaped(f[0] == "unshape", d); err != nil {
+			return "error: " + oneLine.Replace(err.Error())
+		}
+		return "ok"
+	case "mode":
+		if len(f) < 3 || len(f) > 4 {
+			return "error: usage: mode LINK latency|balanced|bandwidth|custom [SECONDS]"
+		}
+		m, err := parseLinkMode(f[2])
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		var d time.Duration
+		if len(f) == 4 {
+			// Check the range before the conversion to a duration.
+			s, err := strconv.Atoi(f[3])
+			if err != nil || s < 1 || s > maxModeSeconds {
+				return fmt.Sprintf("error: SECONDS must be 1 to %d", maxModeSeconds)
+			}
+			d = time.Duration(s) * time.Second
+		}
+		lc, ok := links[f[1]]
+		if !ok {
+			return fmt.Sprintf("error: unknown link %q", f[1])
+		}
+		if err := lc.SetMode(m, d); err != nil {
 			return "error: " + oneLine.Replace(err.Error())
 		}
 		return "ok"

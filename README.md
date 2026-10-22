@@ -25,7 +25,8 @@ cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of
 - **The algorithm of the original:** delay baselines with EWMA, bufferbloat detection, and the states Running, Idle and Stall. Also the replacement of a reflector that misses too many replies, and the compensation for the serialization delay.
 - **One process for all links**, in one static binary. Netlink sets the CAKE bandwidth: no new process for each change.
 - **One-way delays with ICMP timestamps** in the program (`ping_method: icmp-timestamp`), without an external pinger. A queue in one direction decreases only the rate of that direction.
-- **Options for 5G links:** `learn_cross_delay`, `repeat_decrease_on_rise`, `refractory_on_decrease`, `increase_to_delay_thr`, `auto_max_rate` (default off) and `stall_recovery_ms` (default on, only with `icmp-timestamp`). With the default `ping_method` (`icmp`), the behavior stays near the original.
+- **Link modes** `latency`, `balanced` (default), `bandwidth` and `custom`: the trade-off between delay and throughput for each link. The LuCI status page changes the mode while the service runs, for some time or until a change.
+- **Options for 5G links:** `learn_cross_delay` and `repeat_decrease_on_rise` (default off), `stall_recovery_ms` (default on, only with `icmp-timestamp`), and `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate` (set by the link mode). In the mode `latency`, with the default `ping_method` (`icmp`), the behavior stays near the original.
 - **OpenWrt package with a LuCI app:** configuration of all settings and links, and a status page with graphs. From the browser, you can pause the rate control, turn the shaping off, calibrate a link and do a bufferbloat test.
 - **`calibrate`** makes a proposed config from a test session on your link.
 - **Config checks:** a warning for each unknown key, and for each reflector that is known to not reply to ICMP timestamp requests.
@@ -114,7 +115,7 @@ For **5G and Starlink**, use `ping_method: icmp-timestamp`. The settings that ga
 
 ## Status
 
-This is an **experimental** project. The core algorithm comes from the original cake-autorate, with some changes. The larger changes for 5G links (see [5G links](docs/configuration.md#5g-links)) are options, and their default is off. The tests are emulations, a simulator and test sessions on one 5G link. The program is not yet tested much in daily use. Use it at your own risk and report problems as issues.
+This is an **experimental** project. The core algorithm comes from the original cake-autorate, with some changes. The larger changes for 5G links (see [5G links](docs/configuration.md#5g-links)) are options. The default link mode `balanced` turns on only `refractory_on_decrease`; the mode `latency` turns it off. The tests are emulations, a simulator and test sessions on one 5G link. The program is not yet tested much in daily use. Use it at your own risk and report problems as issues.
 
 ## License
 

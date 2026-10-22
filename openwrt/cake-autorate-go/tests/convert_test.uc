@@ -59,6 +59,14 @@ check('full config', r, {
 	disabled: false, errors: [],
 });
 
+r = convert({
+	global: sec('global', 'global', 0, { mode: 'custom', refractory_on_decrease: '1' }),
+	a: sec('link', 'a', 1, { dl_interface: 'a', mode: 'bandwidth' }),
+	b: sec('link', 'b', 2, { dl_interface: 'b', mode: '' }),
+}, schema, null);
+check('modes', [ r.config.mode, r.config.refractory_on_decrease, r.config.links[0].mode, r.config.links[1].mode ],
+	[ 'custom', true, 'bandwidth', null ]);
+
 r = convert({ b: sec('link', 'b', 1, { dl_interface: 'b' }), a: sec('link', 'a', 0, { dl_interface: 'a' }) }, schema, null);
 check('link order and name from section', map(r.config.links, (l) => l.name), [ 'a', 'b' ]);
 

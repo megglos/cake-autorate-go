@@ -1,0 +1,277 @@
+package main
+
+import (
+	"context"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// The options of each mode. custom uses the config.
+func TestLinkMode_Options(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.RefractoryOnDecrease, c.cfg.IncreaseToDelayThr, c.cfg.AutoMaxRate = false, true, false
+	for _, tc := range []struct {
+		mode          LinkMode
+		rod, inc, max bool
+	}{
+		{ModeLatency, false, false, false},
+		{ModeBalanced, true, false, false},
+		{ModeBandwidth, true, true, true},
+		{ModeCustom, false, true, false},
+	} {
+		c.SetMode(tc.mode)
+		if c.refractoryOnDecrease() != tc.rod || c.increaseToDelayThr() != tc.inc || c.autoMaxRate() != tc.max {
+			t.Errorf("%s: refractory_on_decrease %v, increase_to_delay_thr %v, auto_max_rate %v; want %v %v %v",
+				tc.mode, c.refractoryOnDecrease(), c.increaseToDelayThr(), c.autoMaxRate(), tc.rod, tc.inc, tc.max)
+		}
+	}
+	// The mode of the config in latency also turns the options off.
+	c.cfg.RefractoryOnDecrease, c.cfg.AutoMaxRate = true, true
+	c.SetMode(ModeLatency)
+	if c.refractoryOnDecrease() || c.increaseToDelayThr() || c.autoMaxRate() {
+		t.Error("latency must turn all options off")
+	}
+}
+
+// A change from bandwidth to a mode without auto_max_rate removes the
+// learned maximum and decreases the rate to max_rate_kbps.
+func TestLinkMode_LeaveBandwidthRemovesLearnedMax(t *testing.T) {
+	c, act := newTestCore(t)
+	c.link.Download.Adjust = true
+	c.SetMode(ModeBandwidth)
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	runAtMax(c, time.Now(), 10*time.Second)
+	if c.maxRateKbps(DL) <= cfgMax || c.dl.shaperRateKbps <= cfgMax {
+		t.Fatalf("bandwidth: max %.0f, rate %.0f, want above %.0f", c.maxRateKbps(DL), c.dl.shaperRateKbps, cfgMax)
+	}
+	c.SetMode(ModeBalanced)
+	if c.maxRateKbps(DL) != cfgMax || c.dl.shaperRateKbps != cfgMax || lastRate(act, DL) != int(cfgMax) {
+		t.Errorf("balanced: max %.0f, rate %.0f, last rate %d, want %.0f", c.maxRateKbps(DL), c.dl.shaperRateKbps, lastRate(act, DL), cfgMax)
+	}
+}
+
+// With balanced (refractory_on_decrease), one decrease in each refractory
+// period; with latency, each delayed ping decreases the rate.
+func TestLinkMode_RefractoryOnDecrease(t *testing.T) {
+	decreases := func(m LinkMode) int {
+		c, act := newTestCore(t)
+		c.link.Download.Adjust = true
+		c.SetMode(m)
+		c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
+		thrUs := c.link.Download.OWDDeltaDelayThrMs * 1000
+		now := time.Now()
+		for i := 0; i < 20; i++ {
+			now = now.Add(50 * time.Millisecond)
+			c.dl.achievedKbps = c.dl.shaperRateKbps
+			c.dl.loadPercent = 1
+			c.processDelay(DL, 3*thrUs, now)
+		}
+		n := 0
+		r := act.rates[DL]
+		for i := 1; i < len(r); i++ {
+			if r[i] < r[i-1] {
+				n++
+			}
+		}
+		return n
+	}
+	lat, bal := decreases(ModeLatency), decreases(ModeBalanced)
+	if bal >= lat || bal > 2 {
+		t.Errorf("decreases in 1 s: latency %d, balanced %d; want fewer with balanced (at most 2)", lat, bal)
+	}
+}
+
+func TestLoadConfig_Mode(t *testing.T) {
+	load := func(t *testing.T, yaml string) *Config {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	cfg := load(t, linkOverrideYAML)
+	if cfg.Mode != string(ModeBalanced) || linkModeOf(cfg, &cfg.Links[0]) != ModeBalanced {
+		t.Errorf("default mode %q, want balanced", cfg.Mode)
+	}
+	// A config from before the modes keeps its options.
+	cfg = load(t, "refractory_on_decrease: true\n"+linkOverrideYAML)
+	if cfg.Mode != string(ModeCustom) {
+		t.Errorf("mode with refractory_on_decrease %q, want custom", cfg.Mode)
+	}
+	yaml := strings.Replace(linkOverrideYAML, "    learn_cross_delay: true\n", "    learn_cross_delay: true\n    mode: bandwidth\n", 1)
+	cfg = load(t, "mode: latency\n"+yaml)
+	if linkModeOf(cfg, &cfg.Links[0]) != ModeLatency || linkModeOf(cfg, &cfg.Links[1]) != ModeBandwidth {
+		t.Errorf("modes %s %s, want latency bandwidth", linkModeOf(cfg, &cfg.Links[0]), linkModeOf(cfg, &cfg.Links[1]))
+	}
+	if cfg.ForLink(&cfg.Links[1]).Mode != string(ModeBandwidth) {
+		t.Error("ForLink must apply the mode of the link")
+	}
+}
+
+func TestValidate_Mode(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.Mode = "fast"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Errorf("top-level mode: %v", err)
+	}
+	cfg.Mode = ""
+	bad := "fast"
+	cfg.Links[0].Mode = &bad
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Errorf("link mode: %v", err)
+	}
+}
+
+func TestHandleControlCommand_Mode(t *testing.T) {
+	a := &fakeLinkControl{}
+	h := &ControlHandler{Names: []string{"a"}, Links: map[string]LinkControl{"a": a}}
+	for _, tc := range []struct{ line, want string }{
+		{"mode a bandwidth", "ok"},
+		{"mode a latency 3600", "ok"},
+		{"mode a custom 86400", "ok"},
+		{"mode a", "error: usage: mode LINK"},
+		{"mode a balanced 1 2", "error: usage: mode LINK"},
+		{"mode a fast", `error: unknown mode "fast"`},
+		{"mode a balanced 0", "error: SECONDS must be 1 to 86400"},
+		{"mode a balanced 86401", "error: SECONDS must be 1 to 86400"},
+		{"mode a balanced x", "error: SECONDS must be 1 to 86400"},
+		{"mode x balanced", `error: unknown link "x"`},
+	} {
+		if got := handleControlCommand(tc.line, h); !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%q: got %q, want %q", tc.line, got, tc.want)
+		}
+	}
+	want := []string{"bandwidth 0s", "latency 1h0m0s", "custom 24h0m0s"}
+	if !slices.Equal(a.modes, want) {
+		t.Errorf("calls %v, want %v", a.modes, want)
+	}
+}
+
+// "mode LINK MODE SECONDS": the link goes back to the mode of the config
+// after the time. The status shows the mode and the time left.
+func TestModeTimeLimit(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	c.cfg.Mode = string(ModeBalanced)
+	c.core.Core().SetMode(ModeBalanced)
+	if err := c.SetMode(ModeBandwidth, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	c.publishStatus()
+	if st := boardStatus(c); st.Mode != ModeBandwidth || st.ConfigMode != ModeBalanced || st.ModeLeftS < 3590 || st.ModeLeftS > 3600 {
+		t.Errorf("status: mode %s, config mode %s, left %v s", st.Mode, st.ConfigMode, st.ModeLeftS)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkModeTime(now.Add(59 * time.Minute)) })
+	if m := c.core.Core().Mode(); m != ModeBandwidth {
+		t.Fatalf("mode %s before the end of the time", m)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkModeTime(now.Add(61 * time.Minute)) })
+	if m := c.core.Core().Mode(); m != ModeBalanced {
+		t.Errorf("mode %s after the time, want balanced", m)
+	}
+	c.publishStatus()
+	if st := boardStatus(c); st.Mode != ModeBalanced || st.ModeLeftS != 0 {
+		t.Errorf("status after the time: mode %s, left %v", st.Mode, st.ModeLeftS)
+	}
+	// Without a time, the mode stays.
+	if err := c.SetMode(ModeLatency, 0); err != nil {
+		t.Fatal(err)
+	}
+	runOnController(t, c, func(now time.Time) { c.checkModeTime(now.Add(48 * time.Hour)) })
+	if m := c.core.Core().Mode(); m != ModeLatency {
+		t.Errorf("mode %s, want latency without a time limit", m)
+	}
+}
+
+func TestModeRefusedInCalibration(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	runOnController(t, c, func(now time.Time) { c.core.SetCalibrating(true, now) })
+	if err := c.SetMode(ModeBandwidth, 0); err == nil || !strings.Contains(err.Error(), "calibration") {
+		t.Errorf("err %v, want a calibration error", err)
+	}
+}
+
+// The run loop sets the mode of the config at the end of the time, with
+// its own timer.
+func TestRunLoopEndsModeTime(t *testing.T) {
+	c := testPingerController(t)
+	act := &fakeActuator{}
+	c.cfg.Mode = string(ModeLatency)
+	c.core = NewRecordingCore(c.link, c.cfg, defaultMTU, defaultMTU, act, nil, testLogger(t))
+	c.ctrlCh = make(chan *ctrlCmd)
+	c.rateCh = make(chan RateStats)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error)
+	go func() { done <- c.loop(ctx, nil, nil) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	if err := c.SetMode(ModeBandwidth, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	mode := func() LinkMode {
+		var m LinkMode
+		if err := c.call(func(time.Time) error { m = c.core.Core().Mode(); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for mode() != ModeLatency {
+		if time.Now().After(deadline) {
+			t.Fatal("the mode did not go back after the time")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A replay with mode changes gives the same decisions.
+func TestRecording_ReplayMode(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust = true
+	cfg.Mode = string(ModeLatency)
+	path := filepath.Join(t.TempDir(), "rec.jsonl")
+	start := time.Now()
+	rec, err := newRecorderAt(path, 0, cfg, start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := NewRecordingCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, rec, testLogger(t))
+	rc.Start(start)
+	maxKbps := float64(cfg.Links[0].Download.MaxRateKbps)
+	now := start
+	step := func(n int, delayMs int64) {
+		for i := 0; i < n; i++ {
+			now = now.Add(50 * time.Millisecond)
+			rc.HandleRate(RateStats{DlRateKbps: math.Min(rc.Core().ShaperRateKbps(DL), 3*maxKbps), Timestamp: now})
+			owd := delayMs * 1000
+			rc.HandlePing(PingResult{Reflector: cfg.Links[0].Reflectors[0], RTT: time.Duration(2*owd+20000) * time.Microsecond,
+				OWD: true, DlOWD: time.Duration(owd+10000) * time.Microsecond, UlOWD: 10 * time.Millisecond, Timestamp: now})
+		}
+	}
+	step(40, 0)
+	rc.SetMode(ModeBandwidth, now)
+	step(200, 0)
+	step(20, 200)
+	rc.SetMode(ModeBalanced, now)
+	step(100, 0)
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recorded, replayed := replayRecording(t, path)
+	if len(recorded) == 0 || !slices.Equal(recorded, replayed) {
+		t.Errorf("recorded:\n%v\nreplay:\n%v", recorded, replayed)
+	}
+}

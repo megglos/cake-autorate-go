@@ -24,8 +24,24 @@ function text(v) {
 	return document.createTextNode(v == null ? '' : String(v));
 }
 
+// The link modes of the program: the name, the title and the description.
+const MODES = [
+	[ 'latency', _('Latency'), _('The lowest delay. All options of the modes are off.') ],
+	[ 'balanced', _('Balanced'), _('Only one rate decrease in each refractory period. On a 5G link: more throughput for approximately 1 ms more delay.') ],
+	[ 'bandwidth', _('Bandwidth'), _('The most throughput: also the increase up to the bufferbloat threshold and a learned maximum rate. More delay, mostly on a busy link.') ],
+	[ 'custom', _('Custom'), _('The options of the configuration page (Service, General).') ]
+];
+
 return baseclass.extend({
 	text: text,
+
+	MODES: MODES,
+
+	// Returns the title of a mode, or the mode for an unknown mode.
+	modeTitle: function(mode) {
+		const m = MODES.find((m) => m[0] == mode);
+		return m ? m[1] : String(mode);
+	},
 
 	// Returns the label of the state of a link. An unknown state shows as
 	// it is, without a color. A link without shaping (unshaped) shows

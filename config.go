@@ -51,13 +51,16 @@ type LinkConfig struct {
 	PingSourceAddr    string          `yaml:"ping_source_addr"`
 	PingInterfaceName string          `yaml:"ping_interface"`
 
-	// The next four keys override the top-level key of the same name for
+	// The next five keys override the top-level key of the same name for
 	// this link. A key that the link does not set (nil) uses the top-level
 	// value. Use ForLink to get the values that apply to a link.
 	PingerCount     *int    `yaml:"pinger_count"`
 	PingIntervalMs  *int    `yaml:"ping_interval_ms"`
 	PingMethod      *string `yaml:"ping_method"`
 	LearnCrossDelay *bool   `yaml:"learn_cross_delay"`
+
+	// Mode overrides the top-level mode for this link.
+	Mode *string `yaml:"mode"`
 }
 
 // DirConfig returns the DirectionConfig for the given direction.
@@ -155,6 +158,11 @@ type Config struct {
 	// at night.
 	AutoMaxRate            bool    `yaml:"auto_max_rate"`
 	AutoMaxRateLimitFactor float64 `yaml:"auto_max_rate_limit_factor"`
+	// Mode is the link mode after the start (latency, balanced, bandwidth
+	// or custom, see LinkMode). A link can override it. The control command
+	// "mode" changes it while the program runs. Without the key, LoadConfig
+	// sets it (see defaultMode).
+	Mode string `yaml:"mode"`
 
 	// Reflector health
 	ReflectorResponseDeadlineS          float64 `yaml:"reflector_response_deadline_s"`
@@ -200,7 +208,7 @@ type Config struct {
 }
 
 // ForLink returns a copy of the config in which the link overrides of
-// pinger_count, ping_interval_ms, ping_method and learn_cross_delay
+// pinger_count, ping_interval_ms, ping_method, learn_cross_delay and mode
 // apply. The controller of a link uses this copy.
 func (c *Config) ForLink(l *LinkConfig) *Config {
 	cp := *c
@@ -215,6 +223,9 @@ func (c *Config) ForLink(l *LinkConfig) *Config {
 	}
 	if l.LearnCrossDelay != nil {
 		cp.LearnCrossDelay = *l.LearnCrossDelay
+	}
+	if l.Mode != nil {
+		cp.Mode = *l.Mode
 	}
 	return &cp
 }
@@ -387,6 +398,10 @@ func LoadConfig(path string) (*Config, error) {
 	if len(cfg.Reflectors) == 0 {
 		cfg.Reflectors = defaultReflectors(cfg.PingMethod)
 		cfg.reflectorsDefault = true
+	}
+
+	if cfg.Mode == "" {
+		cfg.Mode = string(cfg.defaultMode())
 	}
 
 	// Migrate legacy single-link config to links list
@@ -658,6 +673,11 @@ func (c *Config) Validate() error {
 		if lc.PingIntervalMs <= 0 {
 			return fmt.Errorf("link %q: ping_interval_ms must be positive", link.Name)
 		}
+		if link.Mode != nil {
+			if _, err := parseLinkMode(*link.Mode); err != nil {
+				return fmt.Errorf("link %q: mode: %w", link.Name, err)
+			}
+		}
 		if lc.PingMethod != PingMethodEcho && lc.PingMethod != PingMethodTimestamp {
 			return fmt.Errorf("link %q: ping_method must be %q or %q", link.Name, PingMethodEcho, PingMethodTimestamp)
 		}
@@ -693,6 +713,11 @@ func (c *Config) Validate() error {
 	}
 	if !(c.AutoMaxRateLimitFactor >= 1) || math.IsInf(c.AutoMaxRateLimitFactor, 1) {
 		return fmt.Errorf("auto_max_rate_limit_factor must be a finite number, 1 or more")
+	}
+	if c.Mode != "" {
+		if _, err := parseLinkMode(c.Mode); err != nil {
+			return fmt.Errorf("mode: %w", err)
+		}
 	}
 	if c.PingMethod != PingMethodEcho && c.PingMethod != PingMethodTimestamp {
 		return fmt.Errorf("ping_method must be %q or %q", PingMethodEcho, PingMethodTimestamp)

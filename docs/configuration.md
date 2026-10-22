@@ -93,7 +93,7 @@ On a router with more than one WAN (for example with mwan3), set `ping_interface
 
 ## Link overrides
 
-A link can override four top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms` and `learn_cross_delay`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
+A link can override five top-level keys: `ping_method`, `pinger_count`, `ping_interval_ms`, `learn_cross_delay` and `mode`. Write the key inside the link. A key that the link does not set uses the top-level value. Use this on a router with different link types, for example a 5G link with `icmp-timestamp` and a fiber link with `icmp`. A link can set `ping_method` and no reflectors. If the config also sets no top-level reflectors, the link uses the default list for its own ping method.
 
 ```yaml
 ping_method: icmp
@@ -105,6 +105,42 @@ links:
     learn_cross_delay: true
     # ...
 ```
+
+## Link modes
+
+A mode sets the trade-off between delay and throughput of a link. It sets three options:
+
+| Mode | `refractory_on_decrease` | `increase_to_delay_thr` | `auto_max_rate` |
+|---|---|---|---|
+| `latency` | off | off | off |
+| `balanced` (default) | on | off | off |
+| `bandwidth` | on | on | on |
+| `custom` | config | config | config |
+
+```yaml
+mode: balanced          # latency, balanced, bandwidth or custom
+links:
+  - name: g5
+    mode: bandwidth     # this link only
+    # ...
+```
+
+- `mode` is the mode after a start. A link can set its own mode (see [Link overrides](#link-overrides)).
+- In the modes `latency`, `balanced` and `bandwidth`, the program ignores the three options in the config. In the mode `custom`, it uses them.
+- Without `mode`, the mode is `custom` if the config turns one of the three options on (a config from before the modes). Else it is `balanced`.
+- The control command `mode LINK MODE [SECONDS]` changes the mode while the program runs, without a restart (see [Control socket](#control-socket)). The LuCI status page has a button for it.
+
+On a 5G link (2026-10-21 and 2026-10-22, pairs of 120 s blocks against `latency`), the modes gave:
+
+| Mode | Load | Download | Delay p50 |
+|---|---|---|---|
+| `balanced` | Download | +9 Mbit/s | +0.8 ms |
+| `balanced` | Two directions | +5 Mbit/s | +1.6 ms |
+| `bandwidth` (without `auto_max_rate`) | Download | +21 Mbit/s | +4.1 ms |
+| `bandwidth` (without `auto_max_rate`) | Two directions | +13 Mbit/s | +6.4 ms |
+
+The original cake-autorate: +26 and +19 Mbit/s, +7.0 and +9.1 ms. The delay cost of `bandwidth` increases with the load of the cell: at night +2 ms (p50), in the morning +16.5 ms (two directions). See [comparison.md](comparison.md) and [5G links](#5g-links). These tests used `icmp-timestamp`; with `icmp`, the simulator shows a higher delay cost of `refractory_on_decrease` on variable links.
+
 
 ## Reflectors
 
@@ -296,6 +332,8 @@ The program writes the file each second. Thus, use a path on a RAM file system, 
 
 The file is JSON. The key `schema` is the version of the format. For each link, it shows the state and whether the shaping is off (`unshaped`). It also shows the number of ping replies since the start (`replies`): the delay deltas change only with a new reply. For each direction, it shows:
 
+Each link also shows its mode (`mode`), the mode of the config (`config_mode`) and, for `mode LINK MODE SECONDS`, the time until the mode of the config comes back (`mode_left_s`).
+
 - whether the rate control is paused
 - the shaper rate, the measured rate and the load
 - the last delay delta and its threshold (the threshold includes the time to send one packet at the shaper rate)
@@ -315,6 +353,7 @@ Set `control_socket` to a path, for example `/var/run/cake-autorate/control.sock
 | `resume LINK [dl\|ul]` | Start the rate control again from the base rate. |
 | `unshape LINK [SECONDS]` | Turn the shaping of the link off: the shaper rate of each direction with rate control is 10 Gbit/s (no useful limit), and the rate control stops. With `SECONDS` (1 to 3600), the shaping comes back after this time. |
 | `shape LINK` | Turn the shaping of the link on again. Each direction gets its pause state from before `unshape`: a paused direction stays paused at the base rate, the others start the rate control again from the base rate. |
+| `mode LINK MODE [SECONDS]` | Set the mode of the link: `latency`, `balanced`, `bandwidth` or `custom` (see [Link modes](#link-modes)). The new options apply at once. With `SECONDS` (1 to 86400), the link goes back to the mode of the config after this time. Not during a calibration. |
 | `list` | Answer with the link names. |
 | `calibrate start LINK [LOAD_S]` | Start a calibration session for the link (see [calibration.md](calibration.md#online-calibration)). `LOAD_S`: the load time of each block, 20 to 120 s (default 40). |
 | `calibrate status` | Answer with the status of the session as one line of JSON. Another program makes the load that the field `load` tells. |
@@ -356,7 +395,7 @@ links:
       owd_delta_delay_thr_ms: 20                # 20 to 25: above the grant delay
       avg_owd_delta_max_adjust_down_thr_ms: 40
 ping_method: icmp-timestamp                     # one-way delays: necessary for learn_cross_delay
-refractory_on_decrease: true
+mode: balanced                                  # refractory_on_decrease (see Link modes)
 learn_cross_delay: true
 ```
 
@@ -401,6 +440,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `auto_max_rate_limit_factor` | `3.0` | With `auto_max_rate`: the maximum rate stays at or below this factor × `max_rate_kbps` (1.0 or more) |
 | `monitor_interval_ms` | `200` | Time between two throughput samples (ms) |
 | `bufferbloat_refractory_period_ms` | `300` | Time after a bufferbloat decrease without a rate increase (ms) |
+| `mode` | `balanced` | The link mode after a start: `latency`, `balanced`, `bandwidth` or `custom`. All modes except `custom` set `refractory_on_decrease`, `increase_to_delay_thr` and `auto_max_rate`. Without the key: `custom` if the config turns one of these options on. See [Link modes](#link-modes) |
 | `refractory_on_decrease` | `false` | Apply the bufferbloat refractory period also to decreases (one decrease in each period) |
 | `repeat_decrease_on_rise` | `false` | In the refractory period after a decrease, decrease the rate again only when the delay is higher than at the last decrease. After a decrease, the queue empties only slowly, and each delayed ping decreases the rate again. This option prevents these extra decreases. Use it with `icmp-timestamp` (see [5G links](#5g-links)). `refractory_on_decrease` has priority |
 | `learn_cross_delay` | `false` | With `icmp-timestamp`: learn the upload delay that download activity causes (for example, the 5G scheduler), and ignore it. It learns while the download is active and the upload load was less than 50 % of the upload shaper rate for 2 s or more. The learned delay is not more than the upload delay threshold |

@@ -212,6 +212,7 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			State       string    `json:"state"`
 			Paused      bool      `json:"paused"`
 			On          bool      `json:"on"`
+			Mode        LinkMode  `json:"mode"`
 		}
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			t.Fatal(err)
@@ -252,6 +253,8 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 			core.SetFixedRate(ev.Dir, ev.RateKbps)
 		case recUnshaped:
 			core.SetUnshaped(ev.On, ts)
+		case recMode:
+			core.SetMode(ev.Mode)
 		case recShaper:
 			recorded = append(recorded, recDecision{ev.T, "shaper " + string(ev.Dir), fmt.Sprint(ev.RateKbps)})
 		case recState:
