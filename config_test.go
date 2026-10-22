@@ -37,6 +37,16 @@ func TestValidate_EmptyInterface(t *testing.T) {
 	}
 }
 
+func TestValidate_AutoMaxRateLimitFactor(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.migrateLinks()
+	cfg.AutoMaxRateLimitFactor = 0.5
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "auto_max_rate_limit_factor") {
+		t.Errorf("expected auto_max_rate_limit_factor error, got: %v", err)
+	}
+}
+
 func TestValidateIfname(t *testing.T) {
 	valid := []string{"eth0", "br-lan", "ifb4eth0", "wlan0.1", "a", "abcdefghijklmno"}
 	for _, name := range valid {

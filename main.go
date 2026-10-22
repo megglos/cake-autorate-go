@@ -287,6 +287,8 @@ func printDefaults() {
 	fmt.Printf("stall_recovery_ms: %d\n", cfg.StallRecoveryMs)
 	fmt.Printf("learn_cross_delay: %v\n", cfg.LearnCrossDelay)
 	fmt.Printf("increase_to_delay_thr: %v\n", cfg.IncreaseToDelayThr)
+	fmt.Printf("auto_max_rate: %v\n", cfg.AutoMaxRate)
+	fmt.Printf("auto_max_rate_limit_factor: %g\n", cfg.AutoMaxRateLimitFactor)
 	fmt.Printf("\nreflector_response_deadline_s: %g\n", cfg.ReflectorResponseDeadlineS)
 	fmt.Printf("reflector_misbehaving_detection_window: %d\n", cfg.ReflectorMisbehavingDetectionWindow)
 	fmt.Printf("reflector_misbehaving_detection_thr: %d\n", cfg.ReflectorMisbehavingDetectionThr)

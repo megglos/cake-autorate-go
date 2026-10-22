@@ -807,3 +807,37 @@ func TestSimOWD_IncreaseToDelayThr_DownloadDelay(t *testing.T) {
 		t.Errorf("DL utilization %.0f%%, want at least 5 points more than the default (%.0f%%)", 100*on.dlUtil, 100*off.dlUtil)
 	}
 }
+
+// TestSimOWD_AutoMaxRate_Night checks auto_max_rate on a 5G link at night:
+// the capacity (380 to 450 Mbit/s, with radio stalls) is above
+// max_rate_kbps (245 Mbit/s, from a calibration in the day). Download load
+// only. Mean of 4 seed variants: one run changes much with the stalls.
+func TestSimOWD_AutoMaxRate_Night(t *testing.T) {
+	run := func(on bool) (dl, p95 float64) {
+		const n = 4
+		for sv := uint64(0); sv < n; sv++ {
+			var sc simScenario
+			for _, s := range simScenariosVariant(sv) {
+				if s.name == "5g-stalls" {
+					sc = s
+				}
+			}
+			v, dur := 100*sv, 180*time.Second
+			sc.duration = dur
+			sc.dlCapacity = radioStalls(30+v, dur, randomWalk(31+v, dur, 200, 380000, 450000, 0.05, 0), 0.1)
+			sc.dlDemand, sc.ulDemand = between(2, 178), never
+			sc.dlGrantMs = 12
+			sc.tune = func(cfg *Config) { cfg.AutoMaxRate = on }
+			r := runSim(sc, policyAutorateOWD)
+			dl += r.dlUtil / n
+			p95 += r.latP95 / n
+		}
+		return dl, p95
+	}
+	offDl, offP95 := run(false)
+	onDl, onP95 := run(true)
+	t.Logf("default: DL %.1f %%, p95 %.1f ms; auto_max_rate: DL %.1f %%, p95 %.1f ms", 100*offDl, offP95, 100*onDl, onP95)
+	if onDl < offDl+0.02 {
+		t.Errorf("DL utilization %.1f%%, want at least 2 points above the default (%.1f%%)", 100*onDl, 100*offDl)
+	}
+}

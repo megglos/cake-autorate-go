@@ -484,6 +484,118 @@ func TestAdjustRateHighLoad_IncreaseToDelayThrUpNotBelowDelayThr(t *testing.T) {
 	}
 }
 
+// runAtMax gives the download pings with a low delay for d at high load.
+// The achieved rate follows the shaper rate (the link has more capacity).
+func runAtMax(c *Core, start time.Time, d time.Duration) time.Time {
+	now := start
+	for end := start.Add(d); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = c.dl.shaperRateKbps
+		c.dl.loadPercent = 1
+		c.processDelay(DL, 0, now)
+	}
+	return now
+}
+
+func TestAutoMaxRate_Off(t *testing.T) {
+	c, _ := newTestCore(t)
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	runAtMax(c, time.Now(), 30*time.Second)
+	if c.dl.shaperRateKbps > cfgMax {
+		t.Errorf("rate %.0f, want at most max_rate_kbps %.0f", c.dl.shaperRateKbps, cfgMax)
+	}
+}
+
+// TestAutoMaxRate_IncreasesToLimit checks that the maximum increases while
+// the rate stays at it, and stops at auto_max_rate_limit_factor.
+func TestAutoMaxRate_IncreasesToLimit(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.AutoMaxRateLimitFactor = 2
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := runAtMax(c, time.Now(), 1500*time.Millisecond)
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Fatalf("max %.0f after 1.5 s, want %.0f (the hold time is 2 s)", c.maxRateKbps(DL), cfgMax)
+	}
+	now = runAtMax(c, now, time.Second)
+	if want := cfgMax * 1.1; math.Abs(c.maxRateKbps(DL)-want) > 1 {
+		t.Fatalf("max %.0f after 2.5 s, want %.0f", c.maxRateKbps(DL), want)
+	}
+	runAtMax(c, now, 60*time.Second)
+	if want := 2 * cfgMax; c.maxRateKbps(DL) != want || c.dl.shaperRateKbps != want {
+		t.Errorf("max %.0f, rate %.0f, want both at the limit %.0f", c.maxRateKbps(DL), c.dl.shaperRateKbps, want)
+	}
+}
+
+// TestAutoMaxRate_NoIncreaseWithoutCapacity checks that the maximum does
+// not increase when the achieved rate is below 90 % of it.
+func TestAutoMaxRate_NoIncreaseWithoutCapacity(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for end := now.Add(10 * time.Second); now.Before(end); now = now.Add(50 * time.Millisecond) {
+		c.dl.achievedKbps = 0.85 * cfgMax
+		c.dl.loadPercent = 0.85
+		c.processDelay(DL, 0, now)
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want %.0f", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+// TestAutoMaxRate_DecreaseKeepsLearnedMax checks that a bufferbloat
+// decrease does not set the learned maximum back, and that the maximum
+// decreases slowly at high load below 80 % of it.
+func TestAutoMaxRate_DecreaseKeepsLearnedMax(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = 2 * cfgMax
+	c.dl.achievedKbps = 0.5 * cfgMax
+	c.adjustRateBufferbloat(DL, 100000, 30000)
+	if c.maxRateKbps(DL) != 2*cfgMax {
+		t.Fatalf("max %.0f after a decrease, want %.0f", c.maxRateKbps(DL), 2*cfgMax)
+	}
+
+	// The maximum decreases only while the rate is below 80 % of it.
+	c.dl.shaperRateKbps = 1.2 * cfgMax
+	now := time.Now()
+	for i := 0; i <= 300; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if m := c.maxRateKbps(DL); m < 1.2*cfgMax/0.8*0.99 || m > 1.2*cfgMax/0.8 {
+		t.Errorf("max %.0f, want approximately %.0f (rate / 0.8)", m, 1.2*cfgMax/0.8)
+	}
+
+	// Not below max_rate_kbps.
+	c.dl.shaperRateKbps = 0.5 * cfgMax
+	for i := 301; i <= 600; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if c.maxRateKbps(DL) != cfgMax {
+		t.Errorf("max %.0f, want max_rate_kbps %.0f", c.maxRateKbps(DL), cfgMax)
+	}
+}
+
+func TestAutoMaxRate_DecreaseRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i <= 10; i++ {
+		c.updateAutoMax(DL, now.Add(time.Duration(i)*time.Second))
+	}
+	if want := 2 * cfgMax * math.Exp(-0.1); math.Abs(c.maxRateKbps(DL)-want) > 1 {
+		t.Errorf("max %.0f after 10 s, want %.0f", c.maxRateKbps(DL), want)
+	}
+}
+
 func TestAdjustRateHighLoad_ClampsToMax(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.dl.shaperRateKbps = float64(c.link.Download.MaxRateKbps)
