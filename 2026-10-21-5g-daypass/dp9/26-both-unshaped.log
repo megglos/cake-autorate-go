@@ -1,0 +1,41 @@
+2026/10/22 08:28:57.461484 [INFO] cake-autorate-go 1.0.0-alpha.1-zzamax starting (1 link(s))
+2026/10/22 08:28:57.461800 [INFO] recording events to out/dp9/26-both-unshaped.jsonl.gz
+2026/10/22 08:28:57.461988 [INFO] [wan] controller started in RUNNING state
+2026/10/22 08:28:57.461993 [INFO] [wan] dl: ifb4eth1 34000/130000/500000 kbps, ul: eth1 19000/94500/160000 kbps
+2026/10/22 08:28:57.462014 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:29:46.462203 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 3/60)
+2026/10/22 08:29:46.462240 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/22 08:29:46.462243 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/22 08:29:46.462244 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/22 08:29:46.462776 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:29:50.462494 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/22 08:29:50.462507 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/22 08:29:50.462646 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:29:53.462849 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/22 08:29:53.463112 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:29:54.462526 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/22 08:29:54.462665 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:30:16.462836 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/22 08:30:16.462854 [INFO] [wan] replacing misbehaving reflector waw-pl-ping.vultr.com (missed 4/60)
+2026/10/22 08:30:16.462855 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 3/60)
+2026/10/22 08:30:16.462857 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 5/60)
+2026/10/22 08:30:16.462858 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 4/60)
+2026/10/22 08:30:16.462859 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/22 08:30:16.462940 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:30:33.462167 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 4/60)
+2026/10/22 08:30:33.462243 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 3/60)
+2026/10/22 08:30:33.462326 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:31:14.462264 [INFO] [wan] replacing misbehaving reflector ping.online.net (missed 3/60)
+2026/10/22 08:31:14.462268 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 3/60)
+2026/10/22 08:31:14.462330 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 08:31:17.636565 [INFO] received signal interrupt, shutting down
+2026/10/22 08:31:17.636646 [INFO] [wan] controller stopped
+2026/10/22 08:31:17.636653 [INFO] cake-autorate-go stopped
+d                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+[load-gen] Done.
