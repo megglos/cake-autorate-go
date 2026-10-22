@@ -878,7 +878,6 @@ func (c *Core) stallRecovered(dir Direction, now time.Time) bool {
 // Constants of AutoMaxRate.
 const (
 	autoMaxRateHold       = 2 * time.Second
-	autoMaxRateGap        = time.Second // a longer time without an update is a break
 	autoMaxRateStep       = 1.1
 	autoMaxRateUse        = 0.9   // achieved rate at the maximum, relative to the maximum
 	autoMaxRateDecayBelow = 0.8   // the maximum decreases while the rate is below this part of it
@@ -921,7 +920,10 @@ func (c *Core) updateAutoMax(dir Direction, now time.Time) {
 		dt = now.Sub(ds.autoMaxUpdated)
 	}
 	ds.autoMaxUpdated = now
-	if dt > autoMaxRateGap {
+	// A longer time without an update is a break: 3 ping intervals (one
+	// reply can be lost or late), and at least 1 s.
+	gap := max(time.Second, 3*time.Duration(c.cfg.PingIntervalMs)*time.Millisecond)
+	if dt > gap {
 		// A break without an update (low load, bufferbloat, pause, stall)
 		// is not time in use: start the hold time again, and do not
 		// decrease the maximum for the break.

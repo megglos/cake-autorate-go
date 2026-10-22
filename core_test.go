@@ -566,6 +566,36 @@ func TestAutoMaxRate_PauseStopsHold(t *testing.T) {
 	}
 }
 
+// TestAutoMaxRate_SlowPings checks the increase and the decrease when the
+// replies come 1.5 s apart (ping_interval_ms 1500, one pinger): this is
+// not a break.
+func TestAutoMaxRate_SlowPings(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.cfg.AutoMaxRate = true
+	c.cfg.PingIntervalMs = 1500
+	cfgMax := float64(c.link.Download.MaxRateKbps)
+	c.dl.shaperRateKbps = cfgMax
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		c.dl.achievedKbps = c.dl.shaperRateKbps
+		c.dl.loadPercent = 1
+		c.processDelay(DL, 0, now)
+		now = now.Add(1500 * time.Millisecond)
+	}
+	if c.maxRateKbps(DL) <= cfgMax {
+		t.Fatalf("max %.0f, want above %.0f after 3 s at the maximum", c.maxRateKbps(DL), cfgMax)
+	}
+
+	c.dl.autoMaxKbps = 2 * cfgMax
+	c.dl.shaperRateKbps = cfgMax
+	c.updateAutoMax(DL, now)
+	c.updateAutoMax(DL, now.Add(1500*time.Millisecond))
+	// The last update of the loop was 1.5 s before now: 3 s of decrease.
+	if want := 2 * cfgMax * math.Exp(-3/autoMaxRateDecayS); math.Abs(c.maxRateKbps(DL)-want) > 0.01 {
+		t.Errorf("max %.2f, want %.2f (3 s of decrease)", c.maxRateKbps(DL), want)
+	}
+}
+
 // TestAutoMaxRate_OlderReplyNoDoubleDecrease checks that an older reply
 // does not move the time of the decrease back.
 func TestAutoMaxRate_OlderReplyNoDoubleDecrease(t *testing.T) {
