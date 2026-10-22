@@ -81,11 +81,11 @@ type calProbe struct {
 type probeFunc func(ctx context.Context, cfg *Config, logger *Logger) ([]tsProbe, error)
 
 // probeCandidates returns the reflectors for the probe: the configured
-// reflectors of the link, the default reflectors for ICMP timestamps, then
-// the reflectors in other regions.
+// reflectors of the link, the default reflectors for ICMP timestamps, the
+// reflectors of access providers, then the reflectors in other regions.
 func probeCandidates(link *LinkConfig) []string {
 	var out []string
-	for _, r := range slices.Concat(link.Reflectors, defaultTimestampReflectors, worldTimestampReflectors) {
+	for _, r := range slices.Concat(link.Reflectors, defaultTimestampReflectors, accessTimestampReflectors, worldTimestampReflectors) {
 		if !slices.Contains(out, r) && len(out) < calProbeMaxReflectors {
 			out = append(out, r)
 		}
