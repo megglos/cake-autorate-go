@@ -23,6 +23,7 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp11b` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (5) |
 | `dp10` | unshaped, autorate, rod, incrod, upstream-fts | dl both | 120 s | 5 (4) |
 | `dp9` | unshaped, autorate, srm0, rod, rodsrm0 | dl both | 120 s | 5 (4) |
+| `dp13` | unshaped, autorate (max 245), automax, max500 | dl both | 120 s | 2 (6) |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
@@ -50,6 +51,10 @@ build is equal to the build of dp6 to dp11. Session `autorate` here uses
 (5) The rounds 4 to 6 of dp11, after dp12 (build of note 4, without
 `zz_auto_max`).
 
+(6) Build of main c822120 (with `auto_max_rate`, PR #109). `autorate` uses
+`5g-max245.yaml`, `automax` uses `5g-automax.yaml` (`auto_max_rate: true`,
+maximum 245000 kbit/s), `max500` uses `5g.yaml`.
+
 Policy names:
 
 - `autorate`: `5g.yaml` (defaults, `stall_recovery_ms` 500).
@@ -71,6 +76,7 @@ Policy names:
 - `amax`: `5g-max245.yaml` and `zz_auto_max: true`.
 - `incrodamax`: `incrod`, `amax`.
 - `max500`: `5g.yaml` (maximum rates 500000 and 160000 kbit/s).
+- `automax`: `5g-automax.yaml`, `auto_max_rate: true` (main build, note 6).
 - `upstream-fts`: the original cake-autorate.
 
 Saturation check (dp1): dl 169/234/248 Mbit/s with 4/8/16 workers, ul

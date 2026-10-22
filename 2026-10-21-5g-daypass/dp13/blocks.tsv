@@ -1,0 +1,17 @@
+block	round	mode	policy	start	load_start	load_end	end	cake_dl_kbps	cake_ul_kbps	recording
+1	1	dl	unshaped	1792661339	1792661354	1792661474	1792661479	unlimited	unlimited	01-dl-unshaped.jsonl.gz
+2	1	dl	autorate	1792661479	1792661494	1792661614	1792661619	autorate	autorate	02-dl-autorate.jsonl.gz
+3	1	dl	autorate-automax	1792661619	1792661634	1792661754	1792661759	autorate	autorate	03-dl-autorate-automax.jsonl.gz
+4	1	dl	autorate-max500	1792661759	1792661774	1792661894	1792661899	autorate	autorate	04-dl-autorate-max500.jsonl.gz
+5	1	both	unshaped	1792661899	1792661914	1792662034	1792662039	unlimited	unlimited	05-both-unshaped.jsonl.gz
+6	1	both	autorate	1792662039	1792662054	1792662174	1792662179	autorate	autorate	06-both-autorate.jsonl.gz
+7	1	both	autorate-automax	1792662179	1792662194	1792662314	1792662319	autorate	autorate	07-both-autorate-automax.jsonl.gz
+8	1	both	autorate-max500	1792662319	1792662334	1792662455	1792662460	autorate	autorate	08-both-autorate-max500.jsonl.gz
+9	2	dl	unshaped	1792662460	1792662475	1792662595	1792662600	unlimited	unlimited	09-dl-unshaped.jsonl.gz
+10	2	dl	autorate	1792662600	1792662615	1792662735	1792662740	autorate	autorate	10-dl-autorate.jsonl.gz
+11	2	dl	autorate-automax	1792662740	1792662755	1792662875	1792662880	autorate	autorate	11-dl-autorate-automax.jsonl.gz
+12	2	dl	autorate-max500	1792662880	1792662895	1792663015	1792663020	autorate	autorate	12-dl-autorate-max500.jsonl.gz
+13	2	both	unshaped	1792663020	1792663035	1792663155	1792663160	unlimited	unlimited	13-both-unshaped.jsonl.gz
+14	2	both	autorate	1792663160	1792663175	1792663295	1792663300	autorate	autorate	14-both-autorate.jsonl.gz
+15	2	both	autorate-automax	1792663300	1792663315	1792663435	1792663440	autorate	autorate	15-both-autorate-automax.jsonl.gz
+16	2	both	autorate-max500	1792663440	1792663455	1792663576	1792663581	autorate	autorate	16-both-autorate-max500.jsonl.gz

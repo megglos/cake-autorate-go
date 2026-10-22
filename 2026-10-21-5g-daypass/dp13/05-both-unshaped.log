@@ -1,0 +1,37 @@
+2026/10/22 09:38:19.328683 [INFO] cake-autorate-go main-c822120 starting (1 link(s))
+2026/10/22 09:38:19.328918 [INFO] recording events to out/dp13/05-both-unshaped.jsonl.gz
+2026/10/22 09:38:19.329162 [INFO] [wan] controller started in RUNNING state
+2026/10/22 09:38:19.329170 [INFO] [wan] dl: ifb4eth1 34000/130000/245000 kbps, ul: eth1 19000/94500/110000 kbps
+2026/10/22 09:38:19.329185 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 09:39:12.329189 [INFO] [wan] replacing misbehaving reflector 94.140.14.14 (missed 4/60)
+2026/10/22 09:39:12.329211 [INFO] [wan] replacing misbehaving reflector fra-de-ping.vultr.com (missed 4/60)
+2026/10/22 09:39:12.329213 [INFO] [wan] replacing misbehaving reflector ams-nl-ping.vultr.com (missed 4/60)
+2026/10/22 09:39:12.329215 [INFO] [wan] replacing misbehaving reflector 94.140.15.15 (missed 4/60)
+2026/10/22 09:39:12.329217 [INFO] [wan] replacing misbehaving reflector sto-se-ping.vultr.com (missed 3/60)
+2026/10/22 09:39:12.329219 [INFO] [wan] replacing misbehaving reflector lon-gb-ping.vultr.com (missed 3/60)
+2026/10/22 09:39:12.330024 [INFO] [wan] starting 6 pingers with 300ms interval
+2026/10/22 09:40:39.525262 [INFO] received signal interrupt, shutting down
+2026/10/22 09:40:39.525343 [INFO] [wan] controller stopped
+2026/10/22 09:40:39.525348 [INFO] cake-autorate-go stopped
+
+[load-gen] [09:38:44] 10/120s elapsed, 16 workers active, eth1: dl 167.9 Mbit/s, ul 63.2 Mbit/s
+[load-gen] [09:38:54] 20/120s elapsed, 16 workers active, eth1: dl 203.9 Mbit/s, ul 55.9 Mbit/s
+[load-gen] [09:39:04] 30/120s elapsed, 16 workers active, eth1: dl 195.3 Mbit/s, ul 47.4 Mbit/s
+[load-gen] [09:39:14] 40/120s elapsed, 16 workers active, eth1: dl 155.5 Mbit/s, ul 24.8 Mbit/s
+[load-gen] [09:39:24] 50/120s elapsed, 16 workers active, eth1: dl 175.2 Mbit/s, ul 54.5 Mbit/s
+[load-gen] [09:39:34] 60/120s elapsed, 16 workers active, eth1: dl 213.4 Mbit/s, ul 66.2 Mbit/s
+[load-gen] [09:39:44] 70/120s elapsed, 16 workers active, eth1: dl 177.1 Mbit/s, ul 49.5 Mbit/s
+[load-gen] [09:39:54] 80/120s elapsed, 16 workers active, eth1: dl 194.6 Mbit/s, ul 52.4 Mbit/s
+[load-gen] [09:40:04] 90/120s elapsed, 16 workers active, eth1: dl 191.8 Mbit/s, ul 59.0 Mbit/s
+[load-gen] [09:40:14] 100/120s elapsed, 16 workers active, eth1: dl 160.0 Mbit/s, ul 42.2 Mbit/s
+[load-gen] [09:40:24] 110/120s elapsed, 16 workers active, eth1: dl 198.9 Mbit/s, ul 45.9 Mbit/s
+[load-gen] [09:40:34] 120/120s elapsed, 16 workers active, eth1: dl 176.9 Mbit/s, ul 53.4 Mbit/s
+[load-gen] [09:40:34] Duration reached, stopping.
+
+[load-gen] Stopping all workers...
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -L -o /dev/null --max-time "$((DURATION + 30))" "$url" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+Terminated                 curl -s -o /dev/null --max-time "$((DURATION + 30))" -X POST -H "Content-Type: application/octet-stream" --data-binary "@${PAYLOAD_FILE}" "$UL_URL" 2> /dev/null
+[load-gen] Done.

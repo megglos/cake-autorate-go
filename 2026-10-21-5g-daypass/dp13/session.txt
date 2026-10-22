@@ -1,0 +1,18 @@
+date: 2026-10-22T09:28:59+00:00
+interface: eth1
+ifb: ifb4eth1
+config: /root/cav/conf/dp13-1.conf
+binary: cake-autorate-go main-c822120
+git: unknown
+kernel: 6.12.94
+link: -1 Mbit/s, mtu 1500
+route: 1.1.1.1 via 10.77.0.1 dev eth1 src 10.77.0.2 uid 0 
+modes: dl both
+policies: unshaped autorate autorate-automax autorate-max500
+variant automax: config /root/cav/conf/dp13-2.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go main-c822120)
+variant max500: config /root/cav/conf/dp13-3.conf, binary /usr/sbin/cake-autorate-go (cake-autorate-go main-c822120)
+rounds: 2
+block: idle 15s, load 120s, download warm-up in the mode both 0s
+workers: 8
+capacity_kbps: unknown
+data_mb: 44005
