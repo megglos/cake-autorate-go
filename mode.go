@@ -99,27 +99,24 @@ func (c *Core) Mode() LinkMode { return c.mode }
 // mode has no auto_max_rate, the learned maximum is removed, and a rate
 // above max_rate_kbps decreases to it.
 //
-// A call with the current mode sends the rates again (as SetPaused): after
-// a failed rate change, the user can send the command again.
+// Each call sends the rates again (as SetPaused), also with the current
+// mode: after a failed rate change, the next mode command sends the rate
+// again.
 func (c *Core) SetMode(m LinkMode) {
-	if m == c.mode {
-		for _, dir := range Directions() {
-			c.applyRate(dir)
-		}
-		return
-	}
+	changed := m != c.mode
 	c.mode = m
 	for _, dir := range Directions() {
 		ds := c.getDirState(dir)
-		ds.autoMaxBreak()
-		if c.autoMaxRate() {
-			continue
+		if changed {
+			ds.autoMaxBreak()
 		}
-		ds.autoMaxKbps = 0
-		if maxKbps := c.maxRateKbps(dir); ds.shaperRateKbps > maxKbps && !ds.paused {
-			ds.shaperRateKbps = maxKbps
-			c.applyRate(dir)
+		if !c.autoMaxRate() {
+			ds.autoMaxKbps = 0
+			if maxKbps := c.maxRateKbps(dir); ds.shaperRateKbps > maxKbps && !ds.paused {
+				ds.shaperRateKbps = maxKbps
+			}
 		}
+		c.applyRate(dir)
 	}
 }
 

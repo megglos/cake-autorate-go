@@ -440,3 +440,19 @@ func TestModeTimeRetryAfterRateError(t *testing.T) {
 		t.Errorf("rate %d, time %v; want %d and no time", got, c.modeUntil, maxKbps)
 	}
 }
+
+// A failed rate change at bandwidth -> balanced: a later change to latency
+// sends the capped rate again.
+func TestModeOtherModeAfterRateError(t *testing.T) {
+	c, act, maxKbps := testFailingModeController(t)
+	act.fails = 1
+	if err := c.SetMode(ModeBalanced, 0); err == nil {
+		t.Fatal("want the rate error")
+	}
+	if err := c.SetMode(ModeLatency, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := lastRate(&act.fakeActuator, DL); got != maxKbps {
+		t.Errorf("rate %d after latency, want %d", got, maxKbps)
+	}
+}
