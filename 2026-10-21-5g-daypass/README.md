@@ -20,6 +20,7 @@ used (`config*.yaml`, `upstream-*.sh`).
 | `dp8` | unshaped, autorate, rod, incrod, upstream-fts | dl ul both | 120 s | 5 (2) |
 | `dp11` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (3) |
 | `dp12` | unshaped, autorate (max 245), amax, max500, incrodamax | dl both | 120 s | 3 (4) |
+| `dp11b` | unshaped, autorate, pi200, base180 | dl both | 120 s | 3 (5) |
 
 (1) The config of the original had integer delay thresholds. The original
 accepts only float values (`36.0`).
@@ -43,6 +44,9 @@ rate of the decrease, not below the configured value. Without the key, the
 build is equal to the build of dp6 to dp11. Session `autorate` here uses
 `5g-max245.yaml` (maximum rates 245000 and 110000 kbit/s), `max500` uses
 `5g.yaml`. dp11b, dp10 and dp9 use this build too.
+
+(5) The rounds 4 to 6 of dp11, after dp12 (build of note 4, without
+`zz_auto_max`).
 
 Policy names:
 

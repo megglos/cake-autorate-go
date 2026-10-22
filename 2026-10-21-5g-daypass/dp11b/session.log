@@ -1,0 +1,77 @@
+[session] [04:36:48] Output directory: out/dp11b
+[session] [04:36:48] Workers: 8, capacity (dl,ul kbit/s): unknown
+[session] [04:36:48] Start of 24 blocks, approximately 58 minutes
+[session] [04:36:48] Block 1/24: round 1, dl, unshaped
+    [load-gen] [04:39:03] 120/120s elapsed, 8 workers active, eth1: dl 354.3 Mbit/s, ul 2.3 Mbit/s
+[session] [04:39:08]     data: 5195 MB in the block, 5195 MB in the session
+[session] [04:39:08] Block 2/24: round 1, dl, autorate
+    [load-gen] [04:41:23] 120/120s elapsed, 8 workers active, eth1: dl 178.9 Mbit/s, ul 3.7 Mbit/s
+[session] [04:41:28]     data: 3292 MB in the block, 8488 MB in the session
+[session] [04:41:28] Block 3/24: round 1, dl, autorate-pi200
+    [load-gen] [04:43:43] 120/120s elapsed, 8 workers active, eth1: dl 287.4 Mbit/s, ul 5.5 Mbit/s
+[session] [04:43:48]     data: 3894 MB in the block, 12382 MB in the session
+[session] [04:43:48] Block 4/24: round 1, dl, autorate-base180
+    [load-gen] [04:46:04] 120/120s elapsed, 8 workers active, eth1: dl 304.7 Mbit/s, ul 6.4 Mbit/s
+[session] [04:46:09]     data: 3330 MB in the block, 15712 MB in the session
+[session] [04:46:09] Block 5/24: round 1, both, unshaped
+    [load-gen] [04:48:24] 120/120s elapsed, 16 workers active, eth1: dl 270.5 Mbit/s, ul 64.2 Mbit/s
+[session] [04:48:29]     data: 5822 MB in the block, 21535 MB in the session
+[session] [04:48:29] Block 6/24: round 1, both, autorate
+    [load-gen] [04:50:44] 120/120s elapsed, 16 workers active, eth1: dl 165.2 Mbit/s, ul 112.1 Mbit/s
+[session] [04:50:49]     data: 5109 MB in the block, 26644 MB in the session
+[session] [04:50:49] Block 7/24: round 1, both, autorate-pi200
+    [load-gen] [04:53:04] 120/120s elapsed, 16 workers active, eth1: dl 233.6 Mbit/s, ul 117.2 Mbit/s
+[session] [04:53:09]     data: 5122 MB in the block, 31767 MB in the session
+[session] [04:53:09] Block 8/24: round 1, both, autorate-base180
+    [load-gen] [04:55:24] 120/120s elapsed, 16 workers active, eth1: dl 270.4 Mbit/s, ul 114.6 Mbit/s
+[session] [04:55:29]     data: 5129 MB in the block, 36896 MB in the session
+[session] [04:55:29] Block 9/24: round 2, dl, unshaped
+    [load-gen] [04:57:44] 120/120s elapsed, 8 workers active, eth1: dl 354.8 Mbit/s, ul 2.3 Mbit/s
+[session] [04:57:49]     data: 4959 MB in the block, 41855 MB in the session
+[session] [04:57:49] Block 10/24: round 2, dl, autorate
+    [load-gen] [05:00:04] 120/120s elapsed, 8 workers active, eth1: dl 237.6 Mbit/s, ul 4.7 Mbit/s
+[session] [05:00:09]     data: 3406 MB in the block, 45261 MB in the session
+[session] [05:00:09] Block 11/24: round 2, dl, autorate-pi200
+    [load-gen] [05:02:24] 120/120s elapsed, 8 workers active, eth1: dl 187.0 Mbit/s, ul 3.9 Mbit/s
+[session] [05:02:29]     data: 3425 MB in the block, 48686 MB in the session
+[session] [05:02:29] Block 12/24: round 2, dl, autorate-base180
+    [load-gen] [05:04:45] 120/120s elapsed, 8 workers active, eth1: dl 233.0 Mbit/s, ul 5.0 Mbit/s
+[session] [05:04:50]     data: 3259 MB in the block, 51946 MB in the session
+[session] [05:04:50] Block 13/24: round 2, both, unshaped
+    [load-gen] [05:07:05] 120/120s elapsed, 16 workers active, eth1: dl 298.9 Mbit/s, ul 57.4 Mbit/s
+[session] [05:07:10]     data: 5798 MB in the block, 57744 MB in the session
+[session] [05:07:10] Block 14/24: round 2, both, autorate
+    [load-gen] [05:09:25] 120/120s elapsed, 16 workers active, eth1: dl 139.2 Mbit/s, ul 104.3 Mbit/s
+[session] [05:09:30]     data: 4810 MB in the block, 62555 MB in the session
+[session] [05:09:30] Block 15/24: round 2, both, autorate-pi200
+    [load-gen] [05:11:45] 120/120s elapsed, 16 workers active, eth1: dl 176.1 Mbit/s, ul 104.5 Mbit/s
+[session] [05:11:50]     data: 4424 MB in the block, 66980 MB in the session
+[session] [05:11:50] Block 16/24: round 2, both, autorate-base180
+    [load-gen] [05:14:05] 120/120s elapsed, 16 workers active, eth1: dl 180.4 Mbit/s, ul 104.9 Mbit/s
+[session] [05:14:10]     data: 4380 MB in the block, 71361 MB in the session
+[session] [05:14:10] Block 17/24: round 3, dl, unshaped
+    [load-gen] [05:16:25] 120/120s elapsed, 8 workers active, eth1: dl 265.6 Mbit/s, ul 1.7 Mbit/s
+[session] [05:16:30]     data: 4412 MB in the block, 75773 MB in the session
+[session] [05:16:30] Block 18/24: round 3, dl, autorate
+    [load-gen] [05:18:45] 120/120s elapsed, 8 workers active, eth1: dl 174.2 Mbit/s, ul 3.5 Mbit/s
+[session] [05:18:50]     data: 2856 MB in the block, 78629 MB in the session
+[session] [05:18:50] Block 19/24: round 3, dl, autorate-pi200
+    [load-gen] [05:21:06] 120/120s elapsed, 8 workers active, eth1: dl 186.0 Mbit/s, ul 3.8 Mbit/s
+[session] [05:21:11]     data: 2444 MB in the block, 81074 MB in the session
+[session] [05:21:11] Block 20/24: round 3, dl, autorate-base180
+    [load-gen] [05:23:26] 120/120s elapsed, 8 workers active, eth1: dl 235.3 Mbit/s, ul 4.9 Mbit/s
+[session] [05:23:31]     data: 3004 MB in the block, 84078 MB in the session
+[session] [05:23:31] Block 21/24: round 3, both, unshaped
+    [load-gen] [05:25:46] 120/120s elapsed, 16 workers active, eth1: dl 268.4 Mbit/s, ul 37.3 Mbit/s
+[session] [05:25:51]     data: 5059 MB in the block, 89138 MB in the session
+[session] [05:25:51] Block 22/24: round 3, both, autorate
+    [load-gen] [05:28:06] 120/120s elapsed, 16 workers active, eth1: dl 251.8 Mbit/s, ul 103.6 Mbit/s
+[session] [05:28:11]     data: 4857 MB in the block, 93995 MB in the session
+[session] [05:28:11] Block 23/24: round 3, both, autorate-pi200
+    [load-gen] [05:30:26] 120/120s elapsed, 16 workers active, eth1: dl 251.1 Mbit/s, ul 95.9 Mbit/s
+[session] [05:30:31]     data: 4383 MB in the block, 98379 MB in the session
+[session] [05:30:31] Block 24/24: round 3, both, autorate-base180
+    [load-gen] [05:32:46] 120/120s elapsed, 16 workers active, eth1: dl 144.8 Mbit/s, ul 71.9 Mbit/s
+[session] [05:32:51]     data: 3927 MB in the block, 102307 MB in the session
+[session] [05:32:51] All 24 blocks are complete.
+[session] [05:32:52] CAKE is removed. Output: out/dp11b
