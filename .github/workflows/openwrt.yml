@@ -15,7 +15,7 @@ jobs:
   converter:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build ucode
         run: |
@@ -35,7 +35,7 @@ jobs:
         working-directory: openwrt/cake-autorate-go
         run: ucode -L "$PWD/files/*.uc" tests/convert_test.uc files
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -83,10 +83,10 @@ jobs:
   # VM (configuration, service, rpcd), thus they cannot share a VM. The
   # browser tests are split in shards; in a shard, they run one after the
   # other, as on a local run.
-  # Each VM job builds the x86_64 packages itself (the same script as the
-  # package job), in the background while it installs QEMU and the
-  # browser. Thus it does not wait for the package job.
+  # Each VM job tests the packages of the job package-x86, thus the tests
+  # use the same files as the release.
   vm:
+    needs: package-x86
     # Playwright 1.56 has no Chromium for Ubuntu 26.04 (ubuntu-latest).
     runs-on: ubuntu-24.04
     strategy:
@@ -95,24 +95,7 @@ jobs:
         part: [service, 1/8, 2/8, 3/8, 4/8, 5/8, 6/8, 7/8, 8/8]
     name: vm (${{ matrix.part }})
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Start the package build
-        run: |
-          # The step shell has "set -e": write the exit code also after an
-          # error, else the next step waits for its time limit.
-          (
-            set +e
-            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-              -ldflags="-s -w -X main.version=$(git describe --tags --always)" \
-              -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go . &&
-              scripts/openwrt-build.sh x86_64-25.12.5
-            echo $? > package-build.rc
-          ) > package-build.log 2>&1 &
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -120,38 +103,91 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The download of the QEMU packages from the Ubuntu mirror can take
+      # some minutes. Thus the cache keeps the packages for each runner
+      # image: with the same image, the packages fit the installed ones.
+      # ImageOS and ImageVersion are shell variables of the runner, not
+      # values of the env context.
+      - name: Find the runner image
+        id: image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the QEMU packages
+        uses: actions/cache@v6
+        with:
+          path: ~/qemu-debs
+          key: qemu-debs-${{ steps.image.outputs.id }}
+
       - name: Install QEMU
         run: |
+          # If the packages from the cache do not install, apt-get downloads
+          # them again.
+          if ls ~/qemu-debs/*.deb >/dev/null 2>&1 && sudo dpkg -i ~/qemu-debs/*.deb; then
+            exit 0
+          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+          mkdir -p ~/qemu-debs/partial
+          sudo apt-get install -y --no-install-recommends -f \
+            -o Dir::Cache::archives="$HOME/qemu-debs" qemu-system-x86 qemu-utils
+          sudo rm -rf ~/qemu-debs/partial ~/qemu-debs/lock
+          sudo chown -R "$USER" ~/qemu-debs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: matrix.part != 'service'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
 
+      # The browser needs Ubuntu packages from the same mirror. The cache
+      # also keeps the browser (ms-playwright): Playwright does not download
+      # a browser that it has. The key has package-lock.json, thus a new
+      # Playwright version gets a new entry. The job vm (service) has no
+      # browser, thus this cache has its own key.
+      - name: Restore the browser and its packages
+        if: matrix.part != 'service'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/browser-debs
+            ~/.cache/ms-playwright
+          key: browser-${{ steps.image.outputs.id }}-${{ hashFiles('openwrt/luci-app-cake-autorate-go/tests/package-lock.json') }}
+
       - name: Install the browser for the LuCI tests
         if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
         run: |
           npm ci
+          # With the packages from the cache, dpkg installs them, without
+          # the apt-get update of Playwright (approximately 30 seconds).
+          if ls ~/browser-debs/*.deb >/dev/null 2>&1; then
+            if sudo dpkg -i ~/browser-debs/*.deb; then
+              npx playwright install chromium
+              exit 0
+            fi
+            # Repair the packages that dpkg did not configure.
+            sudo apt-get update
+            sudo apt-get install -y -f
+          fi
+          # Playwright runs apt-get update and apt-get install. With this
+          # directory, apt-get keeps the packages for the cache.
+          mkdir -p ~/browser-debs/partial
+          echo "Dir::Cache::archives \"$HOME/browser-debs\";" | sudo tee /etc/apt/apt.conf.d/99browser-debs
           npx playwright install --with-deps chromium
+          sudo rm -f /etc/apt/apt.conf.d/99browser-debs ~/browser-debs/lock
+          sudo rm -rf ~/browser-debs/partial
+          sudo chown -R "$USER" ~/browser-debs
 
-      - name: Wait for the package build
-        run: |
-          for i in $(seq 600); do
-            [ -f package-build.rc ] && break
-            sleep 1
-          done
-          cat package-build.log
-          [ "$(cat package-build.rc 2>/dev/null)" = 0 ]
+      - name: Get the packages of package-x86
+        uses: actions/download-artifact@v8
+        with:
+          name: openwrt-x86_64-openwrt-25.12
+          path: packages
 
       - name: Start the VM and install the package
         run: |
           scripts/openwrt-vm.sh start
-          scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
+          scripts/openwrt-vm.sh install packages/*.apk
           # The dependencies of the packages are installed (the pin of the
           # link uses conntrack).
           scripts/openwrt-vm.sh ssh 'command -v conntrack'
@@ -192,7 +228,7 @@ jobs:
 
       - name: Store the browser test results
         if: failure() && matrix.part != 'service'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: luci-test-results-${{ strategy.job-index }}
           path: openwrt/luci-app-cake-autorate-go/tests/test-results
@@ -210,7 +246,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: openwrt-*
           path: dist
