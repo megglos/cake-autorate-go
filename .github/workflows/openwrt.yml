@@ -160,9 +160,14 @@ jobs:
           npm ci
           # With the packages from the cache, dpkg installs them, without
           # the apt-get update of Playwright (approximately 30 seconds).
-          if ls ~/browser-debs/*.deb >/dev/null 2>&1 && sudo dpkg -i ~/browser-debs/*.deb; then
-            npx playwright install chromium
-            exit 0
+          if ls ~/browser-debs/*.deb >/dev/null 2>&1; then
+            if sudo dpkg -i ~/browser-debs/*.deb; then
+              npx playwright install chromium
+              exit 0
+            fi
+            # Repair the packages that dpkg did not configure.
+            sudo apt-get update
+            sudo apt-get install -y -f
           fi
           # Playwright runs apt-get update and apt-get install. With this
           # directory, apt-get keeps the packages for the cache.
