@@ -120,10 +120,28 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The download of the QEMU packages from the Ubuntu mirror can take
+      # some minutes. Thus the cache keeps the packages for each runner
+      # image: with the same image, the packages fit the installed ones.
+      - name: Restore the QEMU packages
+        uses: actions/cache@v4
+        with:
+          path: ~/qemu-debs
+          key: qemu-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}
+
       - name: Install QEMU
         run: |
+          # If the packages from the cache do not install, apt-get downloads
+          # them again.
+          if ls ~/qemu-debs/*.deb >/dev/null 2>&1 && sudo dpkg -i ~/qemu-debs/*.deb; then
+            exit 0
+          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+          mkdir -p ~/qemu-debs/partial
+          sudo apt-get install -y --no-install-recommends -f \
+            -o Dir::Cache::archives="$HOME/qemu-debs" qemu-system-x86 qemu-utils
+          sudo rm -rf ~/qemu-debs/partial ~/qemu-debs/lock
+          sudo chown -R "$USER" ~/qemu-debs
 
       - uses: actions/setup-node@v4
         if: matrix.part != 'service'
