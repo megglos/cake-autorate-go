@@ -15,7 +15,7 @@ jobs:
   converter:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build ucode
         run: |
@@ -35,7 +35,7 @@ jobs:
         working-directory: openwrt/cake-autorate-go
         run: ucode -L "$PWD/files/*.uc" tests/convert_test.uc files
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -100,7 +100,7 @@ jobs:
         part: [service, 1/8, 2/8, 3/8, 4/8, 5/8, 6/8, 7/8, 8/8]
     name: vm (${{ matrix.part }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable KVM
         run: |
@@ -118,7 +118,7 @@ jobs:
         run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
 
       - name: Restore the QEMU packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/qemu-debs
           key: qemu-debs-${{ steps.image.outputs.id }}
@@ -137,7 +137,7 @@ jobs:
           sudo rm -rf ~/qemu-debs/partial ~/qemu-debs/lock
           sudo chown -R "$USER" ~/qemu-debs
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: matrix.part != 'service'
         with:
           node-version: 22
@@ -148,7 +148,7 @@ jobs:
       # vm (service) has no browser, thus this cache has its own key.
       - name: Restore the browser packages
         if: matrix.part != 'service'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/browser-debs
           key: browser-debs-${{ steps.image.outputs.id }}-${{ hashFiles('openwrt/luci-app-cake-autorate-go/tests/package-lock.json') }}
@@ -235,7 +235,7 @@ jobs:
 
       - name: Store the browser test results
         if: failure() && matrix.part != 'service'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: luci-test-results-${{ strategy.job-index }}
           path: openwrt/luci-app-cake-autorate-go/tests/test-results
@@ -253,7 +253,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: openwrt-*
           path: dist

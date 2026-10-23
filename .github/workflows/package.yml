@@ -29,7 +29,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -58,7 +58,7 @@ jobs:
           sed -i -e "s/^PKG_VERSION:=.*/PKG_VERSION:=$v/" "$luci"
           grep -E '^(PKG_VERSION|CAKE_AUTORATE_VERSION)' "$mk" "$luci"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -95,7 +95,7 @@ jobs:
           ls -l dist
 
       - name: Store packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openwrt-${{ inputs.arch }}
           path: dist/*.apk

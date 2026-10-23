@@ -14,9 +14,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -61,9 +61,9 @@ jobs:
   emulation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -89,7 +89,7 @@ jobs:
 
       # The original cake-autorate for the comparison phase, at a fixed
       # commit: a new upstream version does not change the result.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: lynxthecat/cake-autorate
           ref: ac75f49348c2ce697e698270a340d42e499cd953
@@ -108,7 +108,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: ci-emulation
@@ -125,9 +125,9 @@ jobs:
             name: linux-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -141,7 +141,7 @@ jobs:
           go build -ldflags="-s -w -X main.version=${VERSION}" -o cake-autorate-go-${{ matrix.name }} .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cake-autorate-go-${{ matrix.name }}
           path: cake-autorate-go-${{ matrix.name }}
