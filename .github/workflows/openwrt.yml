@@ -123,11 +123,17 @@ jobs:
       # The download of the QEMU packages from the Ubuntu mirror can take
       # some minutes. Thus the cache keeps the packages for each runner
       # image: with the same image, the packages fit the installed ones.
+      # ImageOS and ImageVersion are shell variables of the runner, not
+      # values of the env context.
+      - name: Find the runner image
+        id: image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+
       - name: Restore the QEMU packages
         uses: actions/cache@v4
         with:
           path: ~/qemu-debs
-          key: qemu-debs-${{ env.ImageOS }}-${{ env.ImageVersion }}
+          key: qemu-debs-${{ steps.image.outputs.id }}
 
       - name: Install QEMU
         run: |
