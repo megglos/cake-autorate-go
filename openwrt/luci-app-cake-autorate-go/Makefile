@@ -24,8 +24,10 @@ define Package/luci-app-cake-autorate-go
   # Only in the package, because the SDK does not have the LuCI feed. The
   # rpcd plugin uses ucode-mod-socket for the control socket. The
   # calibration and the bufferbloat test pin the link: with conntrack, the
-  # pin also moves the existing connections of the load.
-  EXTRA_DEPENDS:=luci-base (>=0), ucode-mod-socket (>=0), conntrack (>=0)
+  # pin also moves the existing connections of the load. The setup steps
+  # use SQM to set up CAKE, and the page reads the SQM queues. The program
+  # does not need SQM, thus only the LuCI app installs it.
+  EXTRA_DEPENDS:=luci-base (>=0), ucode-mod-socket (>=0), conntrack (>=0), luci-app-sqm (>=0)
 endef
 
 define Package/luci-app-cake-autorate-go/description

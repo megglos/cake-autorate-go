@@ -297,7 +297,8 @@ test('page warns about an interface without CAKE', async ({ page }) => {
 		catch (e) {
 			throw new Error(e.message + '\nqdisc of eth1 now: ' + vm('tc qdisc show dev eth1 root; logread | tail -20'));
 		}
-		await expect(warning).toContainText('package luci-app-sqm');
+		// The LuCI app installs luci-app-sqm, thus the menu has SQM QoS.
+		await expect(warning.getByRole('link', { name: 'SQM QoS' })).toHaveAttribute('href', /\/admin\/network\/sqm$/);
 		await expect(link.locator('[data-cake-warning="dl"]')).toHaveCount(0);
 
 		vm('tc qdisc replace dev eth1 root cake bandwidth 12mbit');

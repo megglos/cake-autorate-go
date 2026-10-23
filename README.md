@@ -46,7 +46,7 @@ apk add --allow-untrusted ./cake-autorate-go-*.apk ./luci-app-cake-autorate-go-*
 
 Then:
 
-1. Set up CAKE on the WAN with SQM QoS (`luci-app-sqm`): queue discipline `cake`, script `piece_of_cake.qos` or `layer_cake.qos`. The rates in SQM are only start values: the service changes them.
+1. Set up CAKE on the WAN with SQM QoS (`luci-app-sqm`, the LuCI app installs it): queue discipline `cake`, script `piece_of_cake.qos` or `layer_cake.qos`. The rates in SQM are only start values: the service changes them.
 2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Edit the link `wan` (the package adds it): select the SQM queue in **SQM queue** (the page sets the interfaces), and set the rates. Add a link only for each other WAN. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
 3. Open the tab **Status**. If an interface has no CAKE, the page shows a warning.
 

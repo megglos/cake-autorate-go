@@ -22,11 +22,11 @@ apk update
 apk add --allow-untrusted ./cake-autorate-go-*.apk ./luci-app-cake-autorate-go-*.apk
 ```
 
-`apk update` is necessary because apk installs the dependencies (for example `kmod-sched-cake`) from the OpenWrt feeds. The packages have no signature, thus `--allow-untrusted` is necessary.
+`apk update` is necessary because apk installs the dependencies (for example `kmod-sched-cake` and `luci-app-sqm`) from the OpenWrt feeds. The packages have no signature, thus `--allow-untrusted` is necessary.
 
 Then:
 
-1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`): queue discipline `cake`, script `piece_of_cake.qos` or `layer_cake.qos`. The rates in SQM are only start values: the service changes them.
+1. Set up CAKE on the download and the upload interface, for example with SQM QoS (`luci-app-sqm`, the LuCI app installs it): queue discipline `cake`, script `piece_of_cake.qos` or `layer_cake.qos`. The rates in SQM are only start values: the service changes them.
 2. In LuCI, open **Network → CAKE Autorate (Go)**, tab **Configuration**. Set the interfaces and the rates of the link. With SQM, select the queue in **SQM queue**: the page sets the interfaces. Select **Enabled** in **Service → General**: after the installation, the service is disabled. Then click **Save & Apply**.
 3. Open the tab **Status**. If an interface has no CAKE, the page shows a warning.
 

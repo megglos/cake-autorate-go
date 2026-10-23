@@ -4,7 +4,9 @@
 		"read": {
 			"file": {
 				"/var/run/cake-autorate/config-error": [ "read" ],
-				"/var/run/cake-autorate/status.json": [ "read" ]
+				"/var/run/cake-autorate/status.json": [ "read" ],
+				"/tmp/run/cake-autorate/config-error": [ "read" ],
+				"/tmp/run/cake-autorate/status.json": [ "read" ]
 			},
 			"ubus": {
 				"cake-autorate": [ "history", "qdisc" ],
