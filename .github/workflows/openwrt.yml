@@ -139,14 +139,19 @@ jobs:
           cache: npm
           cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
 
-      # The browser needs Ubuntu packages from the same mirror. The job
-      # vm (service) has no browser, thus this cache has its own key.
-      - name: Restore the browser packages
+      # The browser needs Ubuntu packages from the same mirror. The cache
+      # also keeps the browser (ms-playwright): Playwright does not download
+      # a browser that it has. The key has package-lock.json, thus a new
+      # Playwright version gets a new entry. The job vm (service) has no
+      # browser, thus this cache has its own key.
+      - name: Restore the browser and its packages
         if: matrix.part != 'service'
         uses: actions/cache@v6
         with:
-          path: ~/browser-debs
-          key: browser-debs-${{ steps.image.outputs.id }}-${{ hashFiles('openwrt/luci-app-cake-autorate-go/tests/package-lock.json') }}
+          path: |
+            ~/browser-debs
+            ~/.cache/ms-playwright
+          key: browser-${{ steps.image.outputs.id }}-${{ hashFiles('openwrt/luci-app-cake-autorate-go/tests/package-lock.json') }}
 
       - name: Install the browser for the LuCI tests
         if: matrix.part != 'service'
