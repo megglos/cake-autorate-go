@@ -84,16 +84,11 @@ jobs:
   # browser tests are split in shards; in a shard, they run one after the
   # other, as on a local run.
   # Each VM job tests the packages of the job package-x86, thus the tests
-  # use the same files as the release. The VM job does not wait for the
-  # end of package-x86 (needs): it installs QEMU and the browser at the
-  # same time, then gets the packages.
+  # use the same files as the release.
   vm:
+    needs: package-x86
     # Playwright 1.56 has no Chromium for Ubuntu 26.04 (ubuntu-latest).
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      # To get the artifact of package-x86 before the end of this run.
-      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -168,37 +163,11 @@ jobs:
           sudo rm -rf ~/browser-debs/partial
           sudo chown -R "$USER" ~/browser-debs
 
-      # An artifact is available when its upload step is done, also while
-      # its job and this run continue. The name is the artifact of
-      # package-x86 (openwrt-ARCH).
-      # The nine VM jobs share the API limit of the token (1000 requests
-      # each hour for the repository). Thus each job sends one request each
-      # 20 seconds, and asks for the job status only each minute. An API
-      # error does not stop the job: the next loop tries again.
       - name: Get the packages of package-x86
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT: openwrt-x86_64-openwrt-25.12
-        run: |
-          api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          for i in $(seq 45); do
-            n=$(gh api "$api/artifacts?name=$ARTIFACT" -q .total_count 2>/dev/null || echo 0)
-            if [ "$n" != 0 ] && gh run download "$GITHUB_RUN_ID" -n "$ARTIFACT" -D packages; then
-              ls -l packages
-              exit 0
-            fi
-            if [ $((i % 3)) = 0 ]; then
-              state=$(gh api "$api/jobs?per_page=30" \
-                -q '.jobs[] | select(.name == "package-x86 / build") | .conclusion' 2>/dev/null || true)
-              if [ -n "$state" ] && [ "$state" != success ]; then
-                echo "the job package-x86 has the result $state" >&2
-                exit 1
-              fi
-            fi
-            sleep 20
-          done
-          echo "no packages from package-x86 after 15 minutes" >&2
-          exit 1
+        uses: actions/download-artifact@v8
+        with:
+          name: openwrt-x86_64-openwrt-25.12
+          path: packages
 
       - name: Start the VM and install the package
         run: |
