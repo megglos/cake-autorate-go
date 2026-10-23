@@ -83,12 +83,17 @@ jobs:
   # VM (configuration, service, rpcd), thus they cannot share a VM. The
   # browser tests are split in shards; in a shard, they run one after the
   # other, as on a local run.
-  # Each VM job builds the x86_64 packages itself (the same script as the
-  # package job), in the background while it installs QEMU and the
-  # browser. Thus it does not wait for the package job.
+  # Each VM job tests the packages of the job package-x86, thus the tests
+  # use the same files as the release. The VM job does not wait for the
+  # end of package-x86 (needs): it installs QEMU and the browser at the
+  # same time, then gets the packages.
   vm:
     # Playwright 1.56 has no Chromium for Ubuntu 26.04 (ubuntu-latest).
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # To get the artifact of package-x86 before the end of this run.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -96,23 +101,6 @@ jobs:
     name: vm (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Start the package build
-        run: |
-          # The step shell has "set -e": write the exit code also after an
-          # error, else the next step waits for its time limit.
-          (
-            set +e
-            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-              -ldflags="-s -w -X main.version=$(git describe --tags --always)" \
-              -o openwrt/cake-autorate-go/prebuilt/cake-autorate-go . &&
-              scripts/openwrt-build.sh x86_64-25.12.5
-            echo $? > package-build.rc
-          ) > package-build.log 2>&1 &
 
       - name: Enable KVM
         run: |
@@ -156,26 +144,57 @@ jobs:
           cache: npm
           cache-dependency-path: openwrt/luci-app-cake-autorate-go/tests/package-lock.json
 
+      # The browser needs Ubuntu packages from the same mirror. The job
+      # vm (service) has no browser, thus this cache has its own key.
+      - name: Restore the browser packages
+        if: matrix.part != 'service'
+        uses: actions/cache@v4
+        with:
+          path: ~/browser-debs
+          key: browser-debs-${{ steps.image.outputs.id }}-${{ hashFiles('openwrt/luci-app-cake-autorate-go/tests/package-lock.json') }}
+
       - name: Install the browser for the LuCI tests
         if: matrix.part != 'service'
         working-directory: openwrt/luci-app-cake-autorate-go/tests
         run: |
           npm ci
+          # Playwright runs apt-get update and apt-get install. With this
+          # directory, apt-get does not download the packages that are in
+          # the cache.
+          mkdir -p ~/browser-debs/partial
+          echo "Dir::Cache::archives \"$HOME/browser-debs\";" | sudo tee /etc/apt/apt.conf.d/99browser-debs
           npx playwright install --with-deps chromium
+          sudo rm -f /etc/apt/apt.conf.d/99browser-debs ~/browser-debs/lock
+          sudo rm -rf ~/browser-debs/partial
+          sudo chown -R "$USER" ~/browser-debs
 
-      - name: Wait for the package build
+      # An artifact is available when its upload step is done, also while
+      # its job and this run continue. The name is the artifact of
+      # package-x86 (openwrt-ARCH).
+      - name: Get the packages of package-x86
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          for i in $(seq 600); do
-            [ -f package-build.rc ] && break
-            sleep 1
+          for i in $(seq 180); do
+            if gh run download "$GITHUB_RUN_ID" -n openwrt-x86_64-openwrt-25.12 -D packages 2>/dev/null; then
+              ls -l packages
+              exit 0
+            fi
+            state=$(gh run view "$GITHUB_RUN_ID" --json jobs \
+              -q '.jobs[] | select(.name == "package-x86 / build") | .conclusion')
+            if [ -n "$state" ] && [ "$state" != success ]; then
+              echo "the job package-x86 has the result $state" >&2
+              exit 1
+            fi
+            sleep 5
           done
-          cat package-build.log
-          [ "$(cat package-build.rc 2>/dev/null)" = 0 ]
+          echo "no packages from package-x86 after 15 minutes" >&2
+          exit 1
 
       - name: Start the VM and install the package
         run: |
           scripts/openwrt-vm.sh start
-          scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
+          scripts/openwrt-vm.sh install packages/*.apk
           # The dependencies of the packages are installed (the pin of the
           # link uses conntrack).
           scripts/openwrt-vm.sh ssh 'command -v conntrack'
