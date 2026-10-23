@@ -171,22 +171,31 @@ jobs:
       # An artifact is available when its upload step is done, also while
       # its job and this run continue. The name is the artifact of
       # package-x86 (openwrt-ARCH).
+      # The nine VM jobs share the API limit of the token (1000 requests
+      # each hour for the repository). Thus each job sends one request each
+      # 20 seconds, and asks for the job status only each minute. An API
+      # error does not stop the job: the next loop tries again.
       - name: Get the packages of package-x86
         env:
           GH_TOKEN: ${{ github.token }}
+          ARTIFACT: openwrt-x86_64-openwrt-25.12
         run: |
-          for i in $(seq 180); do
-            if gh run download "$GITHUB_RUN_ID" -n openwrt-x86_64-openwrt-25.12 -D packages 2>/dev/null; then
+          api="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          for i in $(seq 45); do
+            n=$(gh api "$api/artifacts?name=$ARTIFACT" -q .total_count 2>/dev/null || echo 0)
+            if [ "$n" != 0 ] && gh run download "$GITHUB_RUN_ID" -n "$ARTIFACT" -D packages; then
               ls -l packages
               exit 0
             fi
-            state=$(gh run view "$GITHUB_RUN_ID" --json jobs \
-              -q '.jobs[] | select(.name == "package-x86 / build") | .conclusion')
-            if [ -n "$state" ] && [ "$state" != success ]; then
-              echo "the job package-x86 has the result $state" >&2
-              exit 1
+            if [ $((i % 3)) = 0 ]; then
+              state=$(gh api "$api/jobs?per_page=30" \
+                -q '.jobs[] | select(.name == "package-x86 / build") | .conclusion' 2>/dev/null || true)
+              if [ -n "$state" ] && [ "$state" != success ]; then
+                echo "the job package-x86 has the result $state" >&2
+                exit 1
+              fi
             fi
-            sleep 5
+            sleep 20
           done
           echo "no packages from package-x86 after 15 minutes" >&2
           exit 1
