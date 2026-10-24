@@ -313,6 +313,14 @@ test('log file must be an absolute path', async ({ page }) => {
 	await expect(input(page, 'global', 'log_file_path')).not.toHaveClass(INVALID);
 });
 
+test('recording directory must be an absolute path', async ({ page }) => {
+	await openTab(page, 'logging');
+	await setValue(page, 'global', 'record_dir', 'recordings');
+	await expect(input(page, 'global', 'record_dir')).toHaveClass(INVALID);
+	await setValue(page, 'global', 'record_dir', '/mnt/usb/recordings');
+	await expect(input(page, 'global', 'record_dir')).not.toHaveClass(INVALID);
+});
+
 test('placeholders show the defaults of the program', async ({ page }) => {
 	// The checks of the page use these values for empty fields.
 	const defaults = {};

@@ -14,6 +14,8 @@ With the `--record` option, cake-autorate-go writes all controller events to a f
 | `--record-max-mb N` | Stop the recording when the file gets to `N` MB. The controller continues. `0` (default) is no limit. |
 | `--no-adjust` | Do not change the shaper rates. This option overrides `adjust` in the config. Use it with `--record` to measure a link without autorate. |
 
+The config can also set a recording (see [configuration.md](configuration.md#logging)): `record_dir` is a directory, and the program writes a new file in it at each start. `record_max_mb` (default 100) is the maximum size of a file. Use this for a service, for example on OpenWrt (field **Recording directory** in the tab Logging of the LuCI app). The option `--record` overrides `record_dir`.
+
 The recording does not change the behavior of the controller.
 
 ## File size
@@ -46,11 +48,12 @@ All other lines have these fields:
 | `pause` | `dir`, `paused` | A user paused or resumed the rate control of a direction (control socket). |
 | `calibrating` | `on` | A calibration session started (`true`) or ended (`false`) the calibration mode: the controller does not go to `IDLE`. |
 | `unshaped` | `on` | The command `unshape` started (`true`) or `shape` ended (`false`) the unshaped mode: the controller does not go to `IDLE`. |
+| `mode` | `mode` | A user changed the mode of the link (control command `mode`). |
 | `fixed_rate` | `dir`, `rate_kbps` | A calibration block or the command `unshape` set a fixed shaper rate (no useful limit) and paused the rate control of the direction. |
 | `shaper` | `dir`, `rate_kbps` | The controller set a shaper rate. |
 | `state` | `state` | The controller changed its state (`RUNNING`, `IDLE`, `STALL`). |
 
-The `start`, `ping`, `rate`, `reflector_reset`, `pause`, `calibrating`, `unshaped` and `fixed_rate` events are the inputs of the controller. The `shaper` and `state` events are the decisions of the controller.
+The `start`, `ping`, `rate`, `reflector_reset`, `pause`, `calibrating`, `unshaped`, `mode` and `fixed_rate` events are the inputs of the controller. The `shaper` and `state` events are the decisions of the controller.
 
 When `adjust` is `false` for a direction, the controller does not set the shaper rate for that direction. Thus, the recording has no `shaper` events for that direction.
 
