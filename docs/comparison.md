@@ -84,20 +84,20 @@ Means of the first sessions (excess RTT p50 / p95 / p99, download as a percentag
 | Upload | cake-autorate-go | 22 / 49 / 62 ms | 94 % |
 | Upload | cake-autorate | 30 / 68 / 86 ms | 91 % |
 
-The 5G options move cake-autorate-go between the two (pairs with the default of cake-autorate-go):
+The 5G options move cake-autorate-go between the two (pairs with cake-autorate-go without these options, the mode `latency`). The [link modes](configuration.md#link-modes) set these options: `balanced` with `icmp-timestamp` turns on `refractory_on_decrease`, `bandwidth` turns on the two options (and `auto_max_rate`, which these tests did not use):
 
-| Options | Load | Pairs | Download | Delay p50 |
+| Options (mode) | Load | Pairs | Download | Delay p50 |
 |---|---|---|---|---|
-| `refractory_on_decrease` | Download | 32 | +9 ± 9 Mbit/s | +0.8 ms * |
-| `refractory_on_decrease` | Two directions | 32 | +5 ± 7 Mbit/s | +1.6 ms * |
-| `increase_to_delay_thr`, `refractory_on_decrease` | Download | 17 | +21 ± 15 Mbit/s * | +4.1 ms * |
-| `increase_to_delay_thr`, `refractory_on_decrease` | Two directions | 17 | +13 ± 8 Mbit/s * | +6.4 ms * |
+| `refractory_on_decrease` (`balanced`) | Download | 32 | +9 ± 9 Mbit/s | +0.8 ms * |
+| `refractory_on_decrease` (`balanced`) | Two directions | 32 | +5 ± 7 Mbit/s | +1.6 ms * |
+| `increase_to_delay_thr`, `refractory_on_decrease` (`bandwidth`) | Download | 17 | +21 ± 15 Mbit/s * | +4.1 ms * |
+| `increase_to_delay_thr`, `refractory_on_decrease` (`bandwidth`) | Two directions | 17 | +13 ± 8 Mbit/s * | +6.4 ms * |
 
 Results on the real 5G link:
 
-- cake-autorate-go has a lower delay in all load types: p50 7 to 9 ms lower, p99 up to 41 ms lower.
+- cake-autorate-go (mode `latency`) has a lower delay in all load types: p50 7 to 9 ms lower, p99 up to 41 ms lower.
 - cake-autorate gets more download: approximately +20 % (19 to 26 Mbit/s). The upload is equal.
-- With `increase_to_delay_thr` and `refractory_on_decrease`, cake-autorate-go gets most of this download, with less delay than the original: p50 +4.1 and +6.4 ms, against +7.0 and +9.1 ms (60 to 70 % of the delay cost). The delay cost of these options and of the original depends on the load of the cell: at night +2 ms p50, in the morning +16 ms p50 (two directions).
+- With `increase_to_delay_thr` and `refractory_on_decrease` (mode `bandwidth`), cake-autorate-go gets most of this download, with less delay than the original: p50 +4.1 and +6.4 ms, against +7.0 and +9.1 ms (60 to 70 % of the delay cost). The delay cost of these options and of the original depends on the load of the cell: at night +2 ms p50, in the morning +16 ms p50 (two directions).
 - At night, the cell gave up to 420 Mbit/s download, more than the calibrated maximum (245 Mbit/s). With a fixed maximum, all controllers then stay at the maximum. `auto_max_rate` increases the maximum when the link uses it (see [5G links](configuration.md#5g-links)).
 - These results are from one 5G cell. Starlink is not tested yet.
 
