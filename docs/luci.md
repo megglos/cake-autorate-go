@@ -118,7 +118,7 @@ To record, set **Recording directory** in the tab Logging of the section Service
 - Make the directory first. The service does not make it: if the USB drive is not mounted, the service runs without a recording and writes the error to the system log.
 - The service does not remove old recordings. Remove them yourself.
 
-To share a recording, for example with a bug report, copy the file from the router (for example with `scp -O`) and attach it to the issue. Write the time of the problem and the type of link (5G, Starlink, DSL). The recording contains the configuration of the service (also `ping_source_addr`, if set), the addresses of the reflectors and the interface names. It contains no addresses of LAN clients.
+The service completes the file (the end of the gzip stream) only when it stops. A copy of the current file is thus not complete, also after the size limit. To share a recording, for example with a bug report, first restart the service (`/etc/init.d/cake-autorate restart`): then the file is complete, and the service starts a new one. Copy the complete file from the router (for example with `scp -O`) and attach it to the issue. Write the time of the problem and the type of link (5G, Starlink, DSL). The recording contains the configuration of the service (also `ping_source_addr`, if set), the addresses of the reflectors and the interface names. It contains no addresses of LAN clients.
 
 ## Build and test
 

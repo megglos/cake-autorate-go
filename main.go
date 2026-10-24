@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -324,10 +325,11 @@ func printDefaults() {
 	fmt.Printf("# control_socket: /var/run/cake-autorate/control.sock  # commands: pause, resume, list\n")
 }
 
-// recordFile returns the path of a new recording in the directory dir:
-// cake-autorate-YYYYMMDD-HHMMSS.jsonl.gz, with a number if the file is
-// already there (for example after a fast restart). The directory must be
-// there.
+// recordFile makes a new empty recording in the directory dir and returns
+// its path: cake-autorate-YYYYMMDD-HHMMSS.jsonl.gz, with a number if the
+// file is already there (for example after a fast restart). The file is
+// made with O_EXCL, thus two programs that start at the same time do not
+// get the same file. The directory must be there.
 func recordFile(dir string, now time.Time) (string, error) {
 	fi, err := os.Stat(dir)
 	if err != nil {
@@ -342,9 +344,14 @@ func recordFile(dir string, now time.Time) (string, error) {
 		if i > 1 {
 			path = fmt.Sprintf("%s-%d.jsonl.gz", base, i)
 		}
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return path, nil
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
 		}
+		if err != nil {
+			return "", fmt.Errorf("record_dir: %w", err)
+		}
+		return path, f.Close()
 	}
 	return "", fmt.Errorf("record_dir: too many recordings for %s", base)
 }

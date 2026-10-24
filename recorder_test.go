@@ -570,10 +570,7 @@ func TestRecordFile(t *testing.T) {
 	if err != nil || path != want {
 		t.Fatalf("got %q, %v; want %q", path, err, want)
 	}
-	// A second start in the same second does not overwrite the file.
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// A second start in the same second gets a new file.
 	path, err = recordFile(dir, now)
 	if want2 := filepath.Join(dir, "cake-autorate-20261030-180509-2.jsonl.gz"); err != nil || path != want2 {
 		t.Errorf("got %q, %v; want %q", path, err, want2)
