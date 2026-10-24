@@ -121,6 +121,7 @@ scripts/openwrt-vm.sh install bin/openwrt/x86_64-25.12.5/*.apk
 scripts/openwrt-vm-test.sh       # start, status, control socket, reload, stop, LuCI files
 (cd openwrt/luci-app-cake-autorate-go/tests && npm ci && npx playwright install chromium && npx playwright test)  # LuCI pages in a browser
 scripts/openwrt-vm.sh ssh        # shell in the VM; LuCI: http://localhost:8080
+scripts/openwrt-vm-load.sh setup  # SQM on the WAN and one link for it (replaces the configuration of the service)
 scripts/openwrt-vm-load.sh start  # load on the WAN of the VM, for the graphs (10 minutes)
 (cd openwrt/luci-app-cake-autorate-go/tests && node screenshots.js)  # the screenshots in docs/images
 scripts/openwrt-vm-load.sh stop
