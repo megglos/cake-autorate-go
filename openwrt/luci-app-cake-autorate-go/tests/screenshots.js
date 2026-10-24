@@ -2,7 +2,7 @@
 //
 // Makes the screenshots of the LuCI app for the documentation, from the
 // OpenWrt VM. Start the VM, install the packages and put load on the link
-// first, so that the graphs show data.
+// first (scripts/openwrt-vm-load.sh), so that the graphs show data.
 //
 // Usage: node screenshots.js [OUTPUT_DIR] [SECONDS]
 //   OUTPUT_DIR  directory for the PNG files (default: ../../../docs/images)
