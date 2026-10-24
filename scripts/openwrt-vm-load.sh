@@ -36,6 +36,8 @@ PIDFILE=/tmp/cav-load.pid
 # script. Each phase stops at the end of the load time.
 # shellcheck disable=SC2016
 LOAD='
+trap "rm -f /tmp/cav-load.pid" EXIT
+trap "exit 143" TERM
 end=$(( $(date +%s) + $1 ))
 left() { l=$(( end - $(date +%s) )); [ "$l" -gt 0 ] || return 1; [ "$l" -lt "$1" ] && echo "$l" || echo "$1"; }
 pause() { t=$(left "$1") || exit 0; sleep "$t"; }
@@ -43,8 +45,11 @@ dl() { t=$(left "$1") || exit 0; curl -s -o /dev/null --max-time "$t" https://pr
 ul() {
 	t=$(left "$1") || exit 0
 	u_end=$(( $(date +%s) + t ))
-	while [ "$(date +%s)" -lt "$u_end" ]; do
-		curl -s -o /dev/null --max-time "$(( u_end - $(date +%s) ))" \
+	while :; do
+		# One value for the test and for curl: --max-time 0 is no limit.
+		r=$(( u_end - $(date +%s) ))
+		[ "$r" -gt 0 ] || break
+		curl -s -o /dev/null --max-time "$r" \
 			--data-binary @/tmp/cav-up.bin https://speed.cloudflare.com/__up
 	done
 }
@@ -58,12 +63,16 @@ done
 # start-stop-daemon -b starts the loop in a new session, with its own
 # process group. The group is not the PID of the loop (busybox forks two
 # times), thus stop reads it from /proc. The kill of the group also stops
-# the curl processes of the loop, and no other processes.
+# the curl processes of the loop, and no other processes. The loop removes
+# the PID file at its end; stop also makes sure that the PID is still the
+# loop, before it sends the signal.
 cmd_stop() {
 	# shellcheck disable=SC2016
 	"$VM" ssh '[ -f '"$PIDFILE"' ] || exit 0
 		pid=$(cat '"$PIDFILE"')
-		pgid=$(cut -d" " -f5 /proc/$pid/stat 2>/dev/null) && kill -TERM -$pgid
+		if grep -q cav-load.sh /proc/$pid/cmdline 2>/dev/null; then
+			kill -TERM -$(cut -d" " -f5 /proc/$pid/stat)
+		fi
 		rm -f '"$PIDFILE" || true
 }
 
@@ -73,7 +82,13 @@ setup)
 	# shellcheck disable=SC2016
 	"$VM" ssh 'set -e
 		tc qdisc del dev br-lan root 2>/dev/null || true
+		# The SQM browser test removes /etc/config/sqm.
+		touch /etc/config/sqm
+		uci set sqm.eth1=queue
 		uci set sqm.eth1.enabled=1
+		uci set sqm.eth1.interface=eth1
+		uci set sqm.eth1.qdisc=cake
+		uci set sqm.eth1.script=piece_of_cake.qos
 		uci set sqm.eth1.download=150000
 		uci set sqm.eth1.upload=30000
 		uci commit sqm
