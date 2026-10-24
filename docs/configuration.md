@@ -323,7 +323,11 @@ log_to_file: true
 log_file_path: /var/log/cake-autorate.log
 log_file_max_size_kb: 2000    # The program truncates the log when it is larger than this
 debug: false                  # Write more log messages (or use the --debug flag)
+record_dir: /mnt/usb/rec      # Write a recording to this directory (empty: no recording)
+record_max_mb: 100            # Stop a recording at this size (0: no limit)
 ```
+
+With `record_dir`, the program writes a recording of the controller events at each start (see [recording.md](recording.md)): a new file `cake-autorate-YYYYMMDD-HHMMSS.jsonl.gz` in the directory. The program does not make the directory. If the directory is not there (for example, a USB drive is not mounted), the program writes an error to the log and runs without a recording. The option `--record` overrides `record_dir`. The program does not remove old recordings.
 
 ## Status file
 
@@ -453,6 +457,8 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `log_file_path` | `/var/log/cake-autorate.log` | Path of the log file |
 | `log_file_max_size_kb` | `2000` | Maximum size of the log file (KB) |
 | `debug` | `false` | Write more log messages |
+| `record_dir` | (empty) | Directory of the recordings. At each start, the program writes a new file in it. Empty: no recording |
+| `record_max_mb` | `100` | Stop a recording of `record_dir` at this size (MB). `0`: no limit |
 | `status_file` | (empty) | Path of the status file. The program writes the status of all links to it each second. Empty: no status file |
 | `status_history` | `false` | Keep the samples of the last 15 minutes of each link in memory, for the control command `history` (approximately 36 kB for each link). Needs `status_file` |
 | `control_socket` | (empty) | Path of the Unix socket for the commands `pause`, `resume`, `list`, `history` and `calibrate`. Not more than 90 bytes. Empty: no control socket |

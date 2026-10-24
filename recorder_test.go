@@ -561,3 +561,29 @@ func TestRecording_ReplayUnshaped(t *testing.T) {
 		t.Errorf("recorded:\n%v\nreplay:\n%v", recorded, replayed)
 	}
 }
+
+func TestRecordFile(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 30, 18, 5, 9, 0, time.Local)
+	want := filepath.Join(dir, "cake-autorate-20261030-180509.jsonl.gz")
+	path, err := recordFile(dir, now)
+	if err != nil || path != want {
+		t.Fatalf("got %q, %v; want %q", path, err, want)
+	}
+	// A second start in the same second gets a new file.
+	path, err = recordFile(dir, now)
+	if want2 := filepath.Join(dir, "cake-autorate-20261030-180509-2.jsonl.gz"); err != nil || path != want2 {
+		t.Errorf("got %q, %v; want %q", path, err, want2)
+	}
+	// The program does not make a missing directory.
+	missing := filepath.Join(dir, "usb")
+	if _, err := recordFile(missing, now); err == nil {
+		t.Error("expected an error for a missing directory")
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("the directory was made: %v", err)
+	}
+	if _, err := recordFile(want, now); err == nil {
+		t.Error("expected an error for a file in place of a directory")
+	}
+}

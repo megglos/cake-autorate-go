@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -111,6 +112,22 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Infof("recording events to %s", *recordPath)
+	} else if cfg.RecordDir != "" {
+		// A recording from the config is not necessary for the rate
+		// control: without it, the program continues. The program does
+		// not make the directory: if a USB drive is not mounted, the file
+		// must not go to the flash memory.
+		path, err := recordFile(cfg.RecordDir, time.Now())
+		if err == nil {
+			recorder, err = NewRecorder(path, int64(cfg.RecordMaxMB)*1024*1024, cfg, logger)
+		}
+		if err != nil {
+			logger.Errorf("no recording: %v", err)
+		} else {
+			logger.Infof("recording events to %s", path)
+		}
+	}
+	if recorder != nil {
 		defer func() {
 			if err := recorder.Close(); err != nil {
 				logger.Errorf("%v", err)
@@ -302,6 +319,39 @@ func printDefaults() {
 	fmt.Printf("log_file_path: %s\n", cfg.LogFilePath)
 	fmt.Printf("log_file_max_size_kb: %d\n", cfg.LogFileMaxSizeKB)
 	fmt.Printf("debug: %t\n", cfg.Debug)
+	fmt.Printf("# record_dir: /mnt/usb/rec  # recordings: each start writes a new file in this directory\n")
+	fmt.Printf("record_max_mb: %d  # stop a recording of record_dir at this size (0: no limit)\n", cfg.RecordMaxMB)
 	fmt.Printf("# status_file: /var/run/cake-autorate/status.json  # status of all links, written each second\n")
 	fmt.Printf("# control_socket: /var/run/cake-autorate/control.sock  # commands: pause, resume, list\n")
+}
+
+// recordFile makes a new empty recording in the directory dir and returns
+// its path: cake-autorate-YYYYMMDD-HHMMSS.jsonl.gz, with a number if the
+// file is already there (for example after a fast restart). The file is
+// made with O_EXCL, thus two programs that start at the same time do not
+// get the same file. The directory must be there.
+func recordFile(dir string, now time.Time) (string, error) {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("record_dir: %w", err)
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("record_dir %s is not a directory", dir)
+	}
+	base := filepath.Join(dir, "cake-autorate-"+now.Format("20060102-150405"))
+	for i := 1; i <= 100; i++ {
+		path := base + ".jsonl.gz"
+		if i > 1 {
+			path = fmt.Sprintf("%s-%d.jsonl.gz", base, i)
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("record_dir: %w", err)
+		}
+		return path, f.Close()
+	}
+	return "", fmt.Errorf("record_dir: too many recordings for %s", base)
 }

@@ -38,6 +38,30 @@ func TestValidate_EmptyInterface(t *testing.T) {
 	}
 }
 
+func TestValidate_Record(t *testing.T) {
+	for _, tc := range []struct {
+		dir   string
+		maxMB int
+		want  string
+	}{
+		{"rec", 100, "record_dir"},
+		{"/mnt/usb/rec", -1, "record_max_mb"},
+		{"/mnt/usb/rec", 0, ""},
+		{"", 100, ""},
+	} {
+		cfg := DefaultConfig()
+		cfg.migrateLinks()
+		cfg.RecordDir, cfg.RecordMaxMB = tc.dir, tc.maxMB
+		err := cfg.Validate()
+		if tc.want == "" && err != nil {
+			t.Errorf("%q %d: %v", tc.dir, tc.maxMB, err)
+		}
+		if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("%q %d: expected %s error, got: %v", tc.dir, tc.maxMB, tc.want, err)
+		}
+	}
+}
+
 func TestValidate_AutoMaxRateLimitFactor(t *testing.T) {
 	for _, f := range []float64{0.5, math.NaN(), math.Inf(1)} {
 		cfg := DefaultConfig()

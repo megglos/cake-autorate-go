@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -190,6 +191,14 @@ type Config struct {
 	LogFilePath      string `yaml:"log_file_path"`
 	LogFileMaxSizeKB int    `yaml:"log_file_max_size_kb"`
 	Debug            bool   `yaml:"debug"`
+
+	// RecordDir is the directory of the recordings (see docs/recording.md).
+	// At each start, the program writes a new file in it. Empty: no
+	// recording. The flag --record overrides it.
+	RecordDir string `yaml:"record_dir"`
+	// RecordMaxMB stops a recording in RecordDir when the file gets to
+	// this size in MB. 0: no limit.
+	RecordMaxMB int `yaml:"record_max_mb"`
 
 	// StatusFile is the path of the status file. The program writes the
 	// status of all links to it each second. Empty: no status file.
@@ -396,6 +405,8 @@ func DefaultConfig() *Config {
 		LogFilePath:      "/var/log/cake-autorate.log",
 		LogFileMaxSizeKB: 2000,
 		Debug:            false,
+
+		RecordMaxMB: 100,
 	}
 }
 
@@ -632,6 +643,13 @@ func validateIfname(name string) error {
 func (c *Config) Validate() error {
 	if len(c.Links) == 0 {
 		return fmt.Errorf("at least one link must be configured")
+	}
+
+	if c.RecordDir != "" && !filepath.IsAbs(c.RecordDir) {
+		return fmt.Errorf("record_dir %q must be an absolute path", c.RecordDir)
+	}
+	if c.RecordMaxMB < 0 {
+		return fmt.Errorf("record_max_mb must not be negative")
 	}
 
 	if len(c.ControlSocket) > maxControlSocketPath {

@@ -108,6 +108,18 @@ An empty field uses the default value of the program. The field shows this value
 
 The shapers must have CAKE: set them up with SQM (`luci-app-sqm`) or `tc`, then select the same interfaces in the link. If `/etc/config/sqm` has a queue, the dialog shows the field **SQM queue**. It lists the enabled SQM queues. A queue sets the upload interface to the WAN device of the queue. It sets the download interface to the IFB of the queue: `ifb4` and the device name, cut to 15 characters. The dialog also shows a warning if no enabled SQM queue shapes an interface of the link with CAKE. Other CAKE setups (for example with `tc`) can ignore this warning.
 
+### Recordings
+
+A recording contains the pings, the measured rates and the decisions of the controller (see [recording.md](recording.md)). A replay of it gives the same decisions. Thus a recording helps to find the cause of a problem, and to improve the controller.
+
+To record, set **Recording directory** in the tab Logging of the section Service, for example `/mnt/usb/recordings`. At each start, the service writes a new file `cake-autorate-YYYYMMDD-HHMMSS.jsonl.gz` in this directory. With load, a link gives approximately 1.5 MB each hour. A recording stops at **Maximum recording size** (default 100 MB), and the rate control continues.
+
+- Use a USB drive. Do not write recordings to the flash memory of the router for a long time. `/tmp` is in the RAM: a reboot removes the files, and a full `/tmp` can stop the router.
+- Make the directory first. The service does not make it: if the USB drive is not mounted, the service runs without a recording and writes the error to the system log.
+- The service does not remove old recordings. Remove them yourself.
+
+The service completes the file (the end of the gzip stream) only when it stops. A copy of the current file is thus not complete, also after the size limit. To share a recording, for example with a bug report, first restart the service (`/etc/init.d/cake-autorate restart`): then the file is complete, and the service starts a new one. Copy the complete file from the router (for example with `scp -O`) and attach it to the issue. Write the time of the problem and the type of link (5G, Starlink, DSL). The recording contains the configuration of the service (also `ping_source_addr`, if set), the addresses of the reflectors and the interface names. It contains no addresses of LAN clients.
+
 ## Build and test
 
 To build the packages on your computer with Docker, run `scripts/openwrt-build.sh`. The packages go to `bin/openwrt/`.

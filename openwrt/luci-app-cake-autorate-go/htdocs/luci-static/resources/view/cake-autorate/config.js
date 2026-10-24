@@ -472,6 +472,16 @@ function globalSection(m, sid) {
 	};
 	number(s, 'logging', 'log_file_max_size_kb', _('Maximum log file size (KB)'), 2000, 'and(uinteger,min(1))');
 	flag(s, 'logging', 'debug', _('Debug messages'), false);
+	o = field(s, 'logging', form.Value, 'record_dir', _('Recording directory'), null,
+		_('At each start, the service writes a new recording of the controller events to this directory (approximately 1.5 MB each hour and link with load). Use a USB drive, not the flash memory. If the directory is not there, the service runs without a recording. Empty: no recording.'));
+	// The program refuses a relative path.
+	o.validate = function(sid, value) {
+		if (isEmpty(value) || /^\/[^\0]*$/.test(value))
+			return true;
+		return _('Use an absolute path of a directory, for example /mnt/usb/recordings');
+	};
+	number(s, 'logging', 'record_max_mb', _('Maximum recording size (MB)'), 100, 'uinteger',
+		_('The recording stops at this size; the rate control continues. 0: no limit.'));
 }
 
 // Validates the rate key of the direction d: min <= base <= max, all > 0.

@@ -28,6 +28,8 @@
 		"ping_method": "string",
 		"ping_source_addr": "string",
 		"pinger_count": "int",
+		"record_dir": "string",
+		"record_max_mb": "int",
 		"reflector_misbehaving_detection_thr": "int",
 		"reflector_misbehaving_detection_window": "int",
 		"reflector_response_deadline_s": "float",
