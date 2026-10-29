@@ -1,7 +1,7 @@
 # cake-autorate-go: improvement plan
 
 > Working plan. It is on the branch `plans` (worktree ../cake-autorate-go-plans, symlinked into the main worktree). Commit and push each change there. Never merge this branch into main.
-> Goal: the best possible CAKE autorate for **5G** and **Starlink** links.
+> Goal: the best possible CAKE autorate for **LTE** and **5G** links. (Starlink dropped on 2026-10-29: no bufferbloat without a shaper.)
 > Language: ASD-STE100.
 > Last review: 2026-10-11.
 
@@ -145,7 +145,7 @@ Connection: back on the fiber line since 2026-10-11 evening (5G day pass used up
 5. Step 8 without 5G: upstream on the CI emulation: PR #38 (`ci-emulation.sh -U`, CI builds fping 5.5, upstream pinned at ac75f49; also fixes the autorate kill in the script). CI 2026-10-12: ours p95 43.7 ms, DL 85 %, UL 78 %; upstream p95 82.9 ms, DL 85 %, UL 77 %. Merged 2026-10-12. Resource use: `benchmark.sh` on the GL-MT6000 (ours vs upstream). darkmoon removed from the comparison 2026-10-12 (user decision: not well maintained).
 6. 6b online part (`calibrate --iface`): run the session steps itself (lower priority; the offline flow works).
 7. Step 9: LuCI/OpenWrt package (`PLAN-LUCI.md`). Needs the QEMU VM (user: `modprobe kvm_amd`, `pacman -S qemu-base`).
-8. Step 10: Starlink from 2026-10-28 (branch `feat/starlink-reconfig`).
+8. ~~Step 10: Starlink~~: dropped on 2026-10-29 (#121).
 9. Known issues are GitHub issues #30 (F1), #31 (F2), #32 (F4), #33 (F5); PR #34 links them in the CI summary. `refractory_on_decrease` as default rejected 2026-10-11: sim baseline 5g-variable OWD p95 58 → 115 ms (more throughput, much more delay). Idea for F1/F2 without that cost: block repeated cuts only during a short spike (e.g. no second cut while the delta decreases).
 10. Housekeeping: remove old worktrees; root-owned `recordings/20261011-1610-enp7s0` (user: sudo rm).
 
@@ -288,9 +288,4 @@ Tooling for the day pass: PR #107 (scripts/openwrt-vm-session.sh: record-session
   - Calibration button: rpcd/ucode call that runs `cake-autorate-go calibrate` (6b) for one link, shows the result, and applies it to UCI on confirmation.
   - Optional: CAKE setup by the package (as darkmoon) so sqm-scripts is not necessary.
   - Test without the router: OpenWrt x86-64 image in QEMU/KVM (real kernel with CAKE, IFB, netlink, procd, rpcd, LuCI; same as the target except the CPU). Host: AMD with svm, but kvm_amd not loaded and no qemu installed (2026-10-11): user runs `sudo modprobe kvm_amd` and `sudo pacman -S qemu-base`. LuCI through port forward (hostfwd 8080 → 80). Optional: aarch64 image (armsr/armv8) with qemu-system-aarch64 (TCG, slow) to test the arm64 binary of the GL-MT6000. The same VM can also serve step 7 (CI emulation). Docker (openwrt/rootfs) is lighter but uses the host kernel: good for the UI only.
-- [ ] **10. Starlink: measurement and tuning** (dedicated last step; Starlink access only from **2026-10-28**). User decision 2026-10-11.
-  - Test plan: [PLAN-STARLINK.md](PLAN-STARLINK.md) (2026-10-22).
-  - 2026-10-11: branch `feat/starlink-reconfig` (7af38ac, pushed, **no PR yet**: needs real Starlink data). Option `starlink_reconfiguration` (off by default, OWD only). Measures the floor step in 600 ms after each 15 s boundary (smallest delta increase, smaller of the two directions or the idle direction), then shifts all baselines. Sim: +40 ms floor step at s57 → DL shaper 108 (off) vs 157 (on) Mbit/s; starlink-like 8 seeds p95 33.1 → 34.1, DL 89.6 → 89.0. RTT/2: worse (cannot separate floor and queue) → OWD only.
-  - Source of the 15 s / 12-27-42-57 schedule: public measurement studies of Starlink (for example Mohan et al., "A Multifaceted Look at Starlink Performance", WWW 2024) and the cake-autorate Starlink discussions. From model knowledge, not checked in this session. Verify with our own Starlink recordings (from 2026-10-28): plot the OWD per second-of-minute, check the steps at 12/27/42/57 and whether the step is the same in the two directions. If the offsets differ: make period and offset config keys.
-  - Sessions on Starlink with `record-session.sh` (dl / ul / both, unshaped + autorate + `starlink_reconfiguration` variant). Trace import (`trace-from-session.sh -r`) → `starlink-recorded` scenario, calibrate `starlink-like` like 2c.
-  - Then: PR for `starlink_reconfiguration` (or reject it), Starlink profile (thresholds), Starlink part of the calibration mode (6b: detect the 15 s floor steps) and of the comparison (8).
+- [x] ~~**10. Starlink: measurement and tuning**~~ Dropped on 2026-10-29 (user decision). A test on Starlink (one dish, bypass mode, no shaper) gave Waveform A+, 109.8/30.2 Mbit/s. Median (p95) delay: idle 36.5 (48.1) ms, download 35.8 (48.3) ms, upload 27.1 (39.2) ms. The load did not increase the delay. Single delays of 90 to 100 ms occurred, probably at the satellite changes, and a shaper cannot remove them. #121 removes the Starlink code (sim scenario `starlink-like`, `scripts/starlink-floor.py`, probe reflector `100.64.0.1`) and adds the results to the README. The branches `feat/starlink-reconfig` and `feat/starlink-reconfig-v2` (option `starlink_reconfiguration`) are deleted.

@@ -11,7 +11,7 @@ On the branch `plans`, like PLAN.md. This is roadmap step 9 in PLAN.md. It runs 
 5. Enable and disable autorate for each link, and for each direction of a link, from the UI (user request 2026-10-11).
 6. Keep the YAML config as the single format of the program. The tests, the simulator and the recordings do not change.
 
-Out of scope (for now): a history that the router keeps (the graphs keep their data only in the browser), Starlink-specific UI before step 5 is done, other platforms than OpenWrt.
+Out of scope (for now): a history that the router keeps (the graphs keep their data only in the browser), other platforms than OpenWrt.
 
 ## 2. Reference: darkmoon
 
@@ -360,7 +360,7 @@ Each phase is a PR, with the Copilot review cycles.
 | Item | Status |
 |---|---|
 | #98 LuCI: switch the link mode on the status page | After the link modes (#96 exploration, #97 core). Data of 2026-10-18 on #96: on 5G, a threshold factor for each direction with a lower limit for the upload (grant delay); higher thresholds give no throughput. No merge of the mode PRs without the user's test. |
-| Line type in the calibration | Idea: the user selects fiber/cable/DSL, 5G/LTE or Starlink; the rules use it in addition to the measurement. After the link modes. |
+| Line type in the calibration | Idea: the user selects fiber/cable/DSL or 5G/LTE; the rules use it in addition to the measurement. After the link modes. |
 | `openwrt-build.sh` | Idea: warn about a stale `prebuilt/` binary. Developer only. |
 | IFB without SQM | Not needed now: the download field is a device select (also free text), and the SQM picker fills it. Only a first setup without SQM must type `ifb4<wan>`. |
 | #57 passive and continuous calibration | Later. |
