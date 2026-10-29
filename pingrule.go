@@ -10,6 +10,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,9 +34,15 @@ import (
 // pingRulePriority is the priority of the rules of the ping interfaces.
 const pingRulePriority = "900"
 
-// pingRuleState is the file with the rules that the program added. Tests
-// change it.
-var pingRuleState = "/var/run/cake-autorate-go.ping-rules"
+// pingRuleState is the file with the rules that the program added. A
+// program that is not root (with CAP_NET_ADMIN) cannot write to /var/run:
+// it uses the temporary directory. Tests change it.
+var pingRuleState = func() string {
+	if os.Geteuid() == 0 {
+		return "/var/run/cake-autorate-go.ping-rules"
+	}
+	return filepath.Join(os.TempDir(), "cake-autorate-go.ping-rules")
+}()
 
 // pingRule is a rule of a ping interface: the address family ("-4" or
 // "-6") and the device.
@@ -70,8 +77,12 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 				continue
 			}
 			// Write the rule before it exists: after a crash in between,
-			// the next start removes it.
-			writePingRuleState(append(own, r), logger)
+			// the next start removes it. Without the record, the next start
+			// could not know that the rule is of the program.
+			if err := writePingRuleState(append(own, r), logger); err != nil {
+				logger.Errorf("no routing rule for the pings through %s (with mwan3, the pings can go through another link): %v", dev, err)
+				continue
+			}
 			if out, err := execCommand("ip", r.args("add")...); err != nil {
 				if !pinNoFamily(out) {
 					logger.Errorf("no routing rule for the pings through %s (with mwan3, the pings can go through another link): ip %s rule add: %v: %s",
@@ -82,14 +93,18 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 			own = append(own, r)
 		}
 	}
-	writePingRuleState(own, logger)
+	if err := writePingRuleState(own, logger); err != nil {
+		logger.Errorf("ping rules: %v", err)
+	}
 	return own
 }
 
 // RemovePingRules removes the rules that AddPingRules added. The state file
 // keeps the rules that stay.
 func RemovePingRules(rules []pingRule, logger *Logger) {
-	writePingRuleState(removePingRules(rules, logger), logger)
+	if err := writePingRuleState(removePingRules(rules, logger), logger); err != nil {
+		logger.Errorf("ping rules: %v", err)
+	}
 }
 
 // removePingRules removes the rules and returns the rules that stay.
@@ -143,12 +158,12 @@ func pingRuleExists(r pingRule) bool {
 
 // writePingRuleState writes the rules to pingRuleState. Without rules, it
 // removes the file.
-func writePingRuleState(rules []pingRule, logger *Logger) {
+func writePingRuleState(rules []pingRule, logger *Logger) error {
 	if len(rules) == 0 {
 		if err := os.Remove(pingRuleState); err != nil && !os.IsNotExist(err) {
 			logger.Debugf("ping rules: %v", err)
 		}
-		return
+		return nil
 	}
 	var b strings.Builder
 	for _, r := range rules {
@@ -158,10 +173,11 @@ func writePingRuleState(rules []pingRule, logger *Logger) {
 	// lose the earlier list.
 	tmp := pingRuleState + ".new"
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
-		logger.Debugf("ping rules: %v", err)
-		return
+		return fmt.Errorf("writing the list of the rules: %w", err)
 	}
 	if err := os.Rename(tmp, pingRuleState); err != nil {
-		logger.Debugf("ping rules: %v", err)
+		os.Remove(tmp)
+		return fmt.Errorf("writing the list of the rules: %w", err)
 	}
+	return nil
 }

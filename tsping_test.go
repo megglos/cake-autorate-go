@@ -363,3 +363,17 @@ func needRawSocket(t *testing.T) {
 	}
 	conn.Close()
 }
+
+// An IPv6 reflector keeps its zone (a link-local address needs it).
+func TestResolveIP_KeepsZone(t *testing.T) {
+	a, err := resolveIP(context.Background(), "fe80::1%lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Zone != "lo" || a.IP.String() != "fe80::1" {
+		t.Errorf("got %v zone %q, want fe80::1 zone lo", a.IP, a.Zone)
+	}
+	if a, err := resolveIP(context.Background(), "127.0.0.1"); err != nil || a.IP.To4() == nil {
+		t.Errorf("IPv4: %v %v", a, err)
+	}
+}

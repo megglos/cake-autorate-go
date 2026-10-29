@@ -157,3 +157,15 @@ func TestPingRules_FailedStaleRemovalStaysOwned(t *testing.T) {
 		t.Errorf("the temporary state file stays: %v", err)
 	}
 }
+
+// Without the record in the state file, the program adds no rule: after a
+// crash, the next start could not know that the rule is of the program.
+func TestPingRules_NoRuleWithoutState(t *testing.T) {
+	f := &fakeRules{noV6: true}
+	f.install(t)
+	pingRuleState = t.TempDir() + "/missing/ping-rules"
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	if len(rules) != 0 || len(f.rules) != 0 {
+		t.Errorf("own rules %v, rules %v: want no rule without the state file", rules, f.rules)
+	}
+}

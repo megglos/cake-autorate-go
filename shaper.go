@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -413,5 +414,32 @@ func WirePacketCompensationUs(mtuBytes int, rateKbps int) float64 {
 var execCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcExecTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	if caps := childCaps(); len(caps) > 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{AmbientCaps: caps}
+	}
+	return cmd.CombinedOutput()
 }
+
+// childCaps returns the capabilities that a command (tc, ip) must get
+// from a program that is not root: CAP_NET_ADMIN and CAP_NET_RAW, if the
+// program has them (for example as file capabilities). Without ambient
+// capabilities, the command does not get them, and it fails with
+// "Operation not permitted". Root needs no ambient capabilities.
+var childCaps = sync.OnceValue(func() []uintptr {
+	if os.Geteuid() == 0 {
+		return nil
+	}
+	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&hdr, &data[0]); err != nil {
+		return nil
+	}
+	var caps []uintptr
+	for _, c := range []uintptr{unix.CAP_NET_ADMIN, unix.CAP_NET_RAW} {
+		if data[c/32].Permitted&(1<<(c%32)) != 0 {
+			caps = append(caps, c)
+		}
+	}
+	return caps
+})

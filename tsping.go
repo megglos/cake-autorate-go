@@ -257,21 +257,21 @@ var resolveIPv4 = func(ctx context.Context, host string) (*net.IPAddr, error) {
 }
 
 // resolveIP returns the first IPv4 address of host, else its first IPv6
-// address.
+// address. The address keeps its zone (for example fe80::1%wan).
 func resolveIP(ctx context.Context, host string) (*net.IPAddr, error) {
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil {
 		return nil, err
 	}
-	for _, ip := range ips {
-		if ip.To4() != nil {
-			return &net.IPAddr{IP: ip}, nil
+	for _, a := range addrs {
+		if a.IP.To4() != nil {
+			return &a, nil
 		}
 	}
-	if len(ips) == 0 {
+	if len(addrs) == 0 {
 		return nil, fmt.Errorf("no IP address")
 	}
-	return &net.IPAddr{IP: ips[0]}, nil
+	return &addrs[0], nil
 }
 
 // runICMPPinger sends ICMP requests of one kind to one reflector. It sends
