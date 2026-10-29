@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -163,9 +164,54 @@ func TestPingRules_FailedStaleRemovalStaysOwned(t *testing.T) {
 func TestPingRules_NoRuleWithoutState(t *testing.T) {
 	f := &fakeRules{noV6: true}
 	f.install(t)
-	pingRuleState = t.TempDir() + "/missing/ping-rules"
+	pingRuleState = t.TempDir() + "/no/such/dir/ping-rules"
 	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
 	if len(rules) != 0 || len(f.rules) != 0 {
 		t.Errorf("own rules %v, rules %v: want no rule without the state file", rules, f.rules)
+	}
+}
+
+// The program reads and writes only a state file that no other user can
+// change: else a file of another user could make it remove rules that it
+// did not add.
+func TestPingRules_UnsafeStateIsRefused(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 wan0"}, noV6: true}
+	f.install(t)
+	links := []LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}
+
+	// A directory that others can write.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	pingRuleState = dir + "/ping-rules"
+	if err := os.WriteFile(pingRuleState, []byte("-4 wan0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rules := AddPingRules(links, testLogger(t)); len(rules) != 0 || !slices.Equal(f.rules, []string{"-4 wan0"}) {
+		t.Errorf("writable directory: own %v, rules %v; want no change", rules, f.rules)
+	}
+
+	// A symbolic link as the state file.
+	dir = t.TempDir()
+	target := t.TempDir() + "/other"
+	if err := os.WriteFile(target, []byte("-4 wan0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pingRuleState = dir + "/ping-rules"
+	if err := os.Symlink(target, pingRuleState); err != nil {
+		t.Fatal(err)
+	}
+	if rules := AddPingRules(links, testLogger(t)); len(rules) != 0 || !slices.Equal(f.rules, []string{"-4 wan0"}) {
+		t.Errorf("symbolic link: own %v, rules %v; want no change", rules, f.rules)
+	}
+}
+
+func TestTrustedPath(t *testing.T) {
+	if p, err := trustedPath("sh"); err != nil || !strings.HasSuffix(p, "/sh") || !strings.HasPrefix(p, "/") {
+		t.Errorf("sh: %q %v", p, err)
+	}
+	if _, err := trustedPath("no-such-command-cav"); !errors.Is(err, exec.ErrNotFound) {
+		t.Errorf("missing command: %v, want exec.ErrNotFound", err)
 	}
 }

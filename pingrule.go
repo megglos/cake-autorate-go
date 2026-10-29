@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // The pingers bind their sockets to the ping interface (SO_BINDTODEVICE).
@@ -36,13 +37,57 @@ const pingRulePriority = "900"
 
 // pingRuleState is the file with the rules that the program added. A
 // program that is not root (with CAP_NET_ADMIN) cannot write to /var/run:
-// it uses the temporary directory. Tests change it.
+// it uses its runtime directory (XDG_RUNTIME_DIR), else a directory of its
+// own in the temporary directory. Tests change it.
 var pingRuleState = func() string {
-	if os.Geteuid() == 0 {
+	uid := os.Geteuid()
+	if uid == 0 {
 		return "/var/run/cake-autorate-go.ping-rules"
 	}
-	return filepath.Join(os.TempDir(), "cake-autorate-go.ping-rules")
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = filepath.Join(os.TempDir(), fmt.Sprintf("cake-autorate-go-%d", uid))
+	}
+	return filepath.Join(dir, "cake-autorate-go.ping-rules")
 }()
+
+// checkPingRuleState makes sure that only this user can change the state
+// file. The program removes the rules in the file with CAP_NET_ADMIN: a
+// file of another user could remove rules that the program did not add.
+// The directory must be of this user (or root) and not writable for
+// others, and the file must be a regular file of this user. A program that
+// is not root makes its directory (mode 0700) if it is not there.
+func checkPingRuleState() error {
+	uid := os.Geteuid()
+	dir := filepath.Dir(pingRuleState)
+	if uid != 0 {
+		if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+			return err
+		}
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(real)
+	if err != nil {
+		return err
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || !fi.IsDir() || (int(st.Uid) != uid && st.Uid != 0) || fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s must be a directory of user %d or root, not writable for others", dir, uid)
+	}
+	fi, err = os.Lstat(pingRuleState)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || !fi.Mode().IsRegular() || int(st.Uid) != uid {
+		return fmt.Errorf("%s must be a regular file of user %d", pingRuleState, uid)
+	}
+	return nil
+}
 
 // pingRule is a rule of a ping interface: the address family ("-4" or
 // "-6") and the device.
@@ -61,6 +106,10 @@ func (r pingRule) String() string { return r.fam + " " + r.dev }
 // added. An error does not stop the program: without policy routing, the
 // pings operate also without the rules.
 func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
+	if err := checkPingRuleState(); err != nil {
+		logger.Errorf("no routing rules for the pings (with mwan3, the pings can go through another link): %v", err)
+		return nil
+	}
 	// A stale rule that stays (failed removal) is still a rule of the
 	// program: the stop and the next start try again.
 	own := removeStalePingRules(logger)

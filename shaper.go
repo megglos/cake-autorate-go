@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -414,11 +415,37 @@ func WirePacketCompensationUs(mtuBytes int, rateKbps int) float64 {
 var execCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcExecTimeout)
 	defer cancel()
+	caps := childCaps()
+	if len(caps) > 0 {
+		// The command gets the capabilities: it must not come from a
+		// directory in PATH that the caller can change.
+		path, err := trustedPath(name)
+		if err != nil {
+			return nil, err
+		}
+		name = path
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
-	if caps := childCaps(); len(caps) > 0 {
+	if len(caps) > 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{AmbientCaps: caps}
 	}
 	return cmd.CombinedOutput()
+}
+
+// trustedDirs are the directories of the system commands (ip, tc,
+// conntrack).
+var trustedDirs = []string{"/usr/sbin", "/sbin", "/usr/bin", "/bin"}
+
+// trustedPath returns the path of a command in trustedDirs. The error
+// wraps exec.ErrNotFound if the command is not there.
+func trustedPath(name string) (string, error) {
+	for _, d := range trustedDirs {
+		p := filepath.Join(d, name)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s in %v: %w", name, trustedDirs, exec.ErrNotFound)
 }
 
 // childCaps returns the capabilities that a command (tc, ip) must get
