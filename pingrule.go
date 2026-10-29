@@ -54,18 +54,19 @@ func (r pingRule) String() string { return r.fam + " " + r.dev }
 // added. An error does not stop the program: without policy routing, the
 // pings operate also without the rules.
 func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
-	removeStalePingRules(logger)
+	// A stale rule that stays (failed removal) is still a rule of the
+	// program: the stop and the next start try again.
+	own := removeStalePingRules(logger)
 	var devs []string
 	for _, l := range links {
 		if d := l.PingInterfaceName; d != "" && !slices.Contains(devs, d) {
 			devs = append(devs, d)
 		}
 	}
-	var own []pingRule
 	for _, dev := range devs {
 		for _, fam := range []string{"-4", "-6"} {
 			r := pingRule{fam, dev}
-			if pingRuleExists(r) {
+			if slices.Contains(own, r) || pingRuleExists(r) {
 				continue
 			}
 			// Write the rule before it exists: after a crash in between,
@@ -85,8 +86,14 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 	return own
 }
 
-// RemovePingRules removes the rules that AddPingRules added.
+// RemovePingRules removes the rules that AddPingRules added. The state file
+// keeps the rules that stay.
 func RemovePingRules(rules []pingRule, logger *Logger) {
+	writePingRuleState(removePingRules(rules, logger), logger)
+}
+
+// removePingRules removes the rules and returns the rules that stay.
+func removePingRules(rules []pingRule, logger *Logger) []pingRule {
 	var left []pingRule
 	for _, r := range rules {
 		if err := removePingRule(r); err != nil {
@@ -94,15 +101,15 @@ func RemovePingRules(rules []pingRule, logger *Logger) {
 			left = append(left, r)
 		}
 	}
-	writePingRuleState(left, logger)
+	return left
 }
 
 // removeStalePingRules removes the rules in pingRuleState (of an earlier
-// process).
-func removeStalePingRules(logger *Logger) {
+// process). It returns the rules that stay.
+func removeStalePingRules(logger *Logger) []pingRule {
 	data, err := os.ReadFile(pingRuleState)
 	if err != nil {
-		return
+		return nil
 	}
 	var stale []pingRule
 	for _, line := range strings.Split(string(data), "\n") {
@@ -110,7 +117,7 @@ func removeStalePingRules(logger *Logger) {
 			stale = append(stale, pingRule{f[0], f[1]})
 		}
 	}
-	RemovePingRules(stale, logger)
+	return removePingRules(stale, logger)
 }
 
 // removePingRule removes one rule (also if the same rule is there two
@@ -123,13 +130,14 @@ func removePingRule(r pingRule) error {
 	return nil
 }
 
-// pingRuleExists tells if the rule is already there.
+// pingRuleExists tells if the rule is already there, without other
+// selectors (a rule with "to SUBNET" does not cover all reflectors).
 func pingRuleExists(r pingRule) bool {
 	out, err := execCommand("ip", r.fam, "rule", "show", "pref", pingRulePriority)
 	if err != nil {
 		return false
 	}
-	re := regexp.MustCompile(`\boif ` + regexp.QuoteMeta(r.dev) + ` lookup main\b`)
+	re := regexp.MustCompile(`(?m)^` + pingRulePriority + `:\s+from all oif ` + regexp.QuoteMeta(r.dev) + ` lookup main\s*$`)
 	return re.Match(out)
 }
 
@@ -146,7 +154,14 @@ func writePingRuleState(rules []pingRule, logger *Logger) {
 	for _, r := range rules {
 		b.WriteString(r.String() + "\n")
 	}
-	if err := os.WriteFile(pingRuleState, []byte(b.String()), 0o644); err != nil {
+	// Write a new file and rename it: a crash during the write must not
+	// lose the earlier list.
+	tmp := pingRuleState + ".new"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+		logger.Debugf("ping rules: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, pingRuleState); err != nil {
 		logger.Debugf("ping rules: %v", err)
 	}
 }

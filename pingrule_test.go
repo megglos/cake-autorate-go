@@ -16,6 +16,11 @@ import (
 type fakeRules struct {
 	rules []string
 	noV6  bool
+	// restricted are rules with a destination selector ("-4 lan2"): they
+	// are not the rule of a ping interface.
+	restricted []string
+	// failDel are the rules that "ip rule del" cannot remove.
+	failDel []string
 }
 
 func (f *fakeRules) install(t *testing.T) {
@@ -36,11 +41,19 @@ func (f *fakeRules) install(t *testing.T) {
 					b.WriteString("900:\tfrom all oif " + f[1] + " lookup main\n")
 				}
 			}
+			for _, r := range f.restricted {
+				if f := strings.Fields(r); f[0] == fam {
+					b.WriteString("900:\tfrom all to 192.0.2.0/24 oif " + f[1] + " lookup main\n")
+				}
+			}
 			return []byte(b.String()), nil
 		case strings.HasPrefix(a, "rule add pref 900 oif "):
 			f.rules = append(f.rules, fam+" "+args[6])
 			return nil, nil
 		case strings.HasPrefix(a, "rule del pref 900 oif "):
+			if slices.Contains(f.failDel, fam+" "+args[6]) {
+				return []byte("RTNETLINK answers: Operation not permitted"), errors.New("exit status 2")
+			}
 			i := slices.Index(f.rules, fam+" "+args[6])
 			if i < 0 {
 				return []byte("RTNETLINK answers: No such file or directory"), errors.New("exit status 2")
@@ -106,5 +119,41 @@ func TestPingRules_RemoveStale(t *testing.T) {
 	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
 	if !slices.Equal(f.rules, []string{"-4 wwan0", "-4 lan2"}) || len(rules) != 1 {
 		t.Errorf("rules %v (own %v): the stale rule must go, the other must stay, no IPv6 rule", f.rules, rules)
+	}
+}
+
+// A rule with other selectors (here "to 192.0.2.0/24") does not cover all
+// reflectors: the program adds its own rule.
+func TestPingRules_RestrictedRuleIsNotEnough(t *testing.T) {
+	f := &fakeRules{restricted: []string{"-4 lan2"}, noV6: true}
+	f.install(t)
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	if len(rules) != 1 || !slices.Equal(f.rules, []string{"-4 lan2"}) {
+		t.Errorf("own rules %v, rules %v: want the program's own rule for lan2", rules, f.rules)
+	}
+}
+
+// A stale rule that the start cannot remove stays a rule of the program:
+// the stop tries again, and the state file keeps it until then.
+func TestPingRules_FailedStaleRemovalStaysOwned(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 lan9"}, noV6: true, failDel: []string{"-4 lan9"}}
+	f.install(t)
+	if err := os.WriteFile(pingRuleState, []byte("-4 lan9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	if !slices.Contains(rules, pingRule{"-4", "lan9"}) {
+		t.Fatalf("own rules %v: the stale rule must stay owned", rules)
+	}
+	if data, _ := os.ReadFile(pingRuleState); !strings.Contains(string(data), "-4 lan9") {
+		t.Errorf("state file %q lost the stale rule", data)
+	}
+	f.failDel = nil
+	RemovePingRules(rules, testLogger(t))
+	if len(f.rules) != 0 {
+		t.Errorf("after the stop: rules %v", f.rules)
+	}
+	if _, err := os.Stat(pingRuleState + ".new"); !os.IsNotExist(err) {
+		t.Errorf("the temporary state file stays: %v", err)
 	}
 }
