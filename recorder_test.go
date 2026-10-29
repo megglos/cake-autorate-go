@@ -282,7 +282,6 @@ func TestRecording_ReplayGivesSameDecisions(t *testing.T) {
 		reflectorTimeMs float64
 	}{
 		{"5g-variable", policyAutorate, 0},
-		{"starlink-like", policyAutorate, 0},
 		{"capacity-drop", policyAutorate, 0},
 		{"5g-variable", policyAutorateOWD, 0},
 		{"bidir-saturated", policyAutorateOWD, 0},

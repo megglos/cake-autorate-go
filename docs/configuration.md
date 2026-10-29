@@ -176,7 +176,7 @@ ping_method: icmp-timestamp   # "icmp" (default) or "icmp-timestamp"
 ```
 
 - `icmp` uses ICMP echo. It measures only the round-trip time (RTT). The controller uses RTT/2 as the delay of each direction. Thus, a queue in one direction also decreases the rate of the other direction. For example, a saturated upload decreases the download rate.
-- `icmp-timestamp` uses ICMP timestamp requests (RFC 792). The reply gives the delay of each direction. Thus, the controller decreases only the rate of the direction with the queue. On 5G and Starlink, the upload is frequently saturated. Thus, use `icmp-timestamp` on these links.
+- `icmp-timestamp` uses ICMP timestamp requests (RFC 792). The reply gives the delay of each direction. Thus, the controller decreases only the rate of the direction with the queue. On LTE and 5G, the upload is frequently saturated. Thus, use `icmp-timestamp` on these links.
 
 Requirements for `icmp-timestamp`:
 

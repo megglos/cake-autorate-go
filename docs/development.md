@@ -5,7 +5,7 @@ This document tells how to test a change to the controller. Each change must sho
 ## Tests and tools
 
 - **Unit tests and replay:** `go test ./...`. The core of the controller does not read the clock and starts no goroutines. Thus, the same events always give the same decisions, in the tests and in a replay of a recording.
-- **Link simulator:** a model of a link with a bottleneck queue, TCP flows and ping replies. Scenarios include a steady link, a capacity drop, 5G and Starlink. A scorecard gives the delay and the throughput for each scenario, and a baseline check finds regressions. See [Simulator](#simulator).
+- **Link simulator:** a model of a link with a bottleneck queue, TCP flows and ping replies. Scenarios include a steady link, a capacity drop and 5G. A scorecard gives the delay and the throughput for each scenario, and a baseline check finds regressions. See [Simulator](#simulator).
 - **CI emulation:** [`scripts/ci-emulation.sh`](../scripts/ci-emulation.sh) tests the real binary, CAKE and netlink in network namespaces, without an internet connection. Each CI run also runs the original cake-autorate on the same link for comparison (option `-U`).
 - **Link emulation:** [`scripts/emulate-link.sh`](../scripts/emulate-link.sh) emulates a variable link (for example 5G) from a capacity trace on a fast connection, with real TCP traffic. See [emulation.md](emulation.md).
 - **Test sessions on a real link:** [`scripts/record-session.sh`](../scripts/record-session.sh) measures different policies in alternating blocks. The policies are no shaper, a fixed shaper, cake-autorate-go, other configs or binaries (`-A`), and the original cake-autorate (`-U`). [`scripts/summarize-session.sh`](../scripts/summarize-session.sh) shows the delay and the throughput of each block. See [recording.md](recording.md).
@@ -47,7 +47,6 @@ Scenarios (`simScenarios` in `sim_scenarios_test.go`):
 | `capacity-drop` | The download capacity decreases from 200 to 40 Mbit/s and then increases again |
 | `bidir-saturated` | Load in the two directions |
 | `5g-variable` | Capacity changes as a random walk with deep fades, large buffers |
-| `starlink-like` | The capacity and the RTT floor change every 15 s, large jitter |
 | `latency-spike` | The RTT floor increases by 120 ms for 300 ms. This delay is not a queue |
 | `5g-recorded-a`, `5g-recorded-b` | Capacity from two recorded 5G sessions (`testdata/traces/`, each 200 ms sample), with the upload delays of the same link (as `5g-coupled`). `TestSimCalibration_5GRecorded` compares the result with the 5G link |
 | `5g-coupled` | 5G radio delays on the upload that no shaper can remove: download activity adds a median of 21 ms, upload activity adds 14 ms (p50) and 24 ms (p95). Load in the two directions |

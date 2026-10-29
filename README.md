@@ -1,6 +1,6 @@
 # cake-autorate-go
 
-**A Go rewrite of [cake-autorate](https://github.com/lynxthecat/cake-autorate). It started as an experiment: how much fewer resources does a native program use than the original Bash scripts? Now, it also has changes to the algorithm for variable links such as 5G and Starlink: low bufferbloat and high throughput.**
+**A Go rewrite of [cake-autorate](https://github.com/lynxthecat/cake-autorate). It started as an experiment: how much fewer resources does a native program use than the original Bash scripts? Now, it also has changes to the algorithm for variable links such as LTE and 5G: low bufferbloat and high throughput.**
 
 > **WARNING:** This project is experimental, and AI tools wrote most of the
 > code. The author still tests it. Use it at your own risk and with much
@@ -16,9 +16,19 @@ The original project has the [GPL-2.0](https://www.gnu.org/licenses/old-licenses
 
 ## What it does
 
-cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of a variable link, for example LTE, 5G or Starlink. It measures the delay with pings and the load of the link. When the delay increases, it decreases the rate. When the link is busy and the delay is low, it increases the rate.
+cake-autorate-go changes the bandwidth of CAKE shapers to follow the capacity of a variable link, for example LTE or 5G. It measures the delay with pings and the load of the link. When the delay increases, it decreases the rate. When the link is busy and the delay is low, it increases the rate.
 
 ![The LuCI status page: the rates, the delays and the graphs of a link](docs/images/luci-status.png)
+
+### Starlink
+
+cake-autorate-go has no special support for Starlink, and we do not plan it. In a test in October 2026 (one dish, bypass mode, no shaper), Starlink had almost no bufferbloat:
+
+| Waveform | Download | Upload | Delay, median (p95) |
+|---|---|---|---|
+| A+ | 109.8 Mbit/s | 30.2 Mbit/s | idle 36.5 ms (48.1), download 35.8 ms (48.3), upload 27.1 ms (39.2) |
+
+The load did not increase the delay. Some single delays of 90 to 100 ms occurred, probably at the satellite changes every 15 s. These delays are not a queue, and a shaper cannot remove them. Thus, on Starlink, start without a shaper. If you see bufferbloat on Starlink, please open an issue with a recording ([docs/luci.md](docs/luci.md)).
 
 ## Features
 
@@ -97,7 +107,7 @@ sudo ./cake-autorate-go -config FILE           # run
 
 Set `base_rate_kbps` to the usual speed of your link, `min_rate_kbps` to the lowest bandwidth that you can use, and `max_rate_kbps` to the maximum bandwidth. To measure these values on your link, use calibration ([docs/calibration.md](docs/calibration.md)).
 
-For **5G and Starlink**, use `ping_method: icmp-timestamp`. The settings that gave the best results on a 5G link are in [docs/configuration.md](docs/configuration.md#5g-links).
+For **LTE and 5G**, use `ping_method: icmp-timestamp`. The settings that gave the best results on a 5G link are in [docs/configuration.md](docs/configuration.md#5g-links).
 
 [docs/configuration.md](docs/configuration.md) has all settings, more than one link, the reflectors, the status file, the control socket and the command-line options.
 

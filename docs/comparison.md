@@ -99,7 +99,7 @@ Results on the real 5G link:
 - cake-autorate gets more download: approximately +20 % (19 to 26 Mbit/s). The upload is equal.
 - With `increase_to_delay_thr` and `refractory_on_decrease` (mode `bandwidth`), cake-autorate-go gets most of this download, with less delay than the original: p50 +4.1 and +6.4 ms, against +7.0 and +9.1 ms (60 to 70 % of the delay cost). The delay cost of these options and of the original depends on the load of the cell: at night +2 ms p50, in the morning +16 ms p50 (two directions).
 - At night, the cell gave up to 420 Mbit/s download, more than the calibrated maximum (245 Mbit/s). With a fixed maximum, all controllers then stay at the maximum. `auto_max_rate` increases the maximum when the link uses it (see [5G links](configuration.md#5g-links)).
-- These results are from one 5G cell. Starlink is not tested yet.
+- These results are from one 5G cell.
 
 ## Resource use: Bash and Go
 

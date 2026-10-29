@@ -3,7 +3,7 @@
 // cake-autorate-go: A Go rewrite of cake-autorate
 //
 // This program dynamically adjusts CAKE qdisc bandwidth settings to minimize
-// latency on variable-bandwidth connections (LTE, 5G, cable, Starlink, etc.).
+// latency on variable-bandwidth connections (LTE, 5G, etc.).
 //
 // Original project: https://github.com/lynxthecat/cake-autorate
 // Original author: lynxthecat and contributors

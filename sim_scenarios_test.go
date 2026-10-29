@@ -81,25 +81,6 @@ func radioStalls(seed uint64, dur time.Duration, capacity func(float64) float64,
 	}
 }
 
-// starlinkHandovers returns a capacity trace and a base RTT for each
-// reflector. The two change at each Starlink reconfiguration boundary
-// (seconds 12/27/42/57 of each minute). At each boundary, the base RTT
-// changes to a new floor.
-func starlinkHandovers(seed uint64, dur time.Duration, lo, hi, baseLo, baseHi float64) (capacity func(float64) float64, baseRTT func(float64, int) float64) {
-	rng := rand.New(rand.NewPCG(seed, 2))
-	slots := int(dur.Seconds()/15) + 2
-	caps := make([]float64, slots)
-	bases := make([]float64, slots)
-	for i := range caps {
-		caps[i] = lo + (hi-lo)*rng.Float64()
-		bases[i] = baseLo + (baseHi-baseLo)*rng.Float64()
-	}
-	slot := func(t float64) int { return int((t/1000 + 3) / 15) } // the first boundary is at 12s
-	capacity = func(t float64) float64 { return caps[slot(t)] }
-	baseRTT = func(t float64, i int) float64 { return bases[slot(t)] + 2*float64(i) }
-	return capacity, baseRTT
-}
-
 // recordedTrace reads a capacity trace (CSV "t_ms,dl_kbps,ul_kbps", from
 // scripts/trace-from-session.sh or scripts/gen-trace.sh) and returns the
 // capacity of each direction. Each line applies until the next line. After
@@ -187,8 +168,6 @@ func simScenariosVariant(variant uint64) []simScenario {
 		Download: dirConfig(30000, 150000, 800000),
 		Upload:   dirConfig(4000, 18000, 45000),
 	}
-	slCap, slBase := starlinkHandovers(4+v, dur, 60000, 250000, 25, 55)
-	slUlCap, _ := starlinkHandovers(5+v, dur, 8000, 25000, 25, 55)
 
 	return []simScenario{
 		{
@@ -227,18 +206,6 @@ func simScenariosVariant(variant uint64) []simScenario {
 			dlDemand:   between(2, 118), ulDemand: between(30, 90),
 			bufferMs: 800, baseRTT: reflectorBase(25), jitterMs: 3,
 			link: link5G,
-		},
-		{
-			// Similar to Starlink: the capacity and the RTT floor change at the
-			// 15s reconfiguration boundaries, with large jitter (findings F3, F5).
-			name: "starlink-like", duration: dur, seed: 5 + v,
-			dlCapacity: slCap, ulCapacity: slUlCap,
-			dlDemand: between(2, 118), ulDemand: between(30, 90),
-			bufferMs: 300, baseRTT: slBase, jitterMs: 6,
-			link: LinkConfig{
-				Download: dirConfig(20000, 100000, 300000),
-				Upload:   dirConfig(3000, 15000, 40000),
-			},
 		},
 		{
 			// The capacity of a real 5G link (unshaped blocks of a session,
@@ -701,7 +668,7 @@ func TestSimOWD_UploadBloatDoesNotThrottleDownload(t *testing.T) {
 	}
 }
 
-// F5: a step in the RTT floor (Starlink reconfiguration, route change) is not
+// F5: a step in the RTT floor (for example a route change) is not
 // a queue. After Core learns the new floor, the step must not decrease the
 // throughput.
 func TestKnownIssue5_BaselineStepCostsThroughput(t *testing.T) {
