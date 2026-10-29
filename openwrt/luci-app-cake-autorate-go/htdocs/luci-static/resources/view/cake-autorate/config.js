@@ -808,7 +808,7 @@ return view.extend({
 
 	render: function(data) {
 		const m = new form.Map('cake-autorate', _('CAKE Autorate (Go)'),
-			_('cake-autorate-go changes the rate of CAKE shapers to follow the capacity of a variable link (for example LTE, 5G or Starlink). Empty fields use the default value of the program.'));
+			_('cake-autorate-go changes the rate of CAKE shapers to follow the capacity of a variable link (for example LTE or 5G). Empty fields use the default value of the program.'));
 
 		// The converter accepts a global section with any name, also an
 		// anonymous one. Without a global section, add one.

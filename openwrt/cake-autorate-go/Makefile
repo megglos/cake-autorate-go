@@ -61,7 +61,7 @@ endef
 
 define Package/cake-autorate-go/description
   cake-autorate-go changes the bandwidth of CAKE shapers to follow the
-  capacity of a variable link (for example LTE, 5G or Starlink). It
+  capacity of a variable link (for example LTE or 5G). It
   measures the delay with pings and the load of the link. It decreases
   the rate when the delay increases, and increases the rate when the
   link is busy and the delay is low.

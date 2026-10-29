@@ -2,8 +2,7 @@
 
 The link emulation makes a variable link (for example 5G) on a fast and
 stable connection (for example fiber). Use it to test the controller with
-real TCP traffic, real CAKE and real bufferbloat, without a 5G modem or a
-Starlink dish.
+real TCP traffic, real CAKE and real bufferbloat, without a 5G modem.
 
 The emulation does not replace recordings of real links. It shows how the
 controller operates when the capacity changes as the trace specifies. A real

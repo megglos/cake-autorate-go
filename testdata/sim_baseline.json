@@ -55,13 +55,6 @@
     "dl_util": 97.72,
     "ul_util": 0
   },
-  "autorate-owd/starlink-like": {
-    "lat_p95_ms": 35.93,
-    "lat_p99_ms": 70.35,
-    "bloat_s": 11.97,
-    "dl_util": 89.8,
-    "ul_util": 85.76
-  },
   "autorate-owd/steady-dl": {
     "lat_p95_ms": 30.92,
     "lat_p99_ms": 31.75,
@@ -124,13 +117,6 @@
     "bloat_s": 77.34,
     "dl_util": 98.35,
     "ul_util": 0
-  },
-  "autorate/starlink-like": {
-    "lat_p95_ms": 60.39,
-    "lat_p99_ms": 100.37,
-    "bloat_s": 38.86,
-    "dl_util": 68.74,
-    "ul_util": 78.08
   },
   "autorate/steady-dl": {
     "lat_p95_ms": 63.76,

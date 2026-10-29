@@ -94,7 +94,7 @@ func TestProposeFromProbe_FarReflectors(t *testing.T) {
 func TestProbeCandidates(t *testing.T) {
 	link := &LinkConfig{Reflectors: []string{"1.1.1.1", defaultTimestampReflectors[0]}}
 	got := probeCandidates(link)
-	want := slices.Concat([]string{"1.1.1.1"}, defaultTimestampReflectors, accessTimestampReflectors, worldTimestampReflectors)
+	want := slices.Concat([]string{"1.1.1.1"}, defaultTimestampReflectors, worldTimestampReflectors)
 	if !slices.Equal(got, want) {
 		t.Errorf("candidates: %v", got)
 	}

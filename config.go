@@ -282,15 +282,6 @@ var defaultTimestampReflectors = []string{
 	"ping.online.net",
 }
 
-// accessTimestampReflectors are in the network of the access provider. The
-// calibration probe tests them. 100.64.0.1 is the carrier NAT gateway of
-// Starlink at the point of presence: its delay is mostly the delay of the
-// satellite link. It is one host, thus the proposal uses it only together
-// with other reflectors.
-var accessTimestampReflectors = []string{
-	"100.64.0.1",
-}
-
 // worldTimestampReflectors reply to ICMP timestamp requests in other
 // regions. They are not in the default list: the program selects the
 // active reflectors at random, and a far reflector has a long RTT. The

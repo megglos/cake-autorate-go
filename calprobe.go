@@ -85,7 +85,7 @@ type probeFunc func(ctx context.Context, cfg *Config, logger *Logger) ([]tsProbe
 // reflectors of access providers, then the reflectors in other regions.
 func probeCandidates(link *LinkConfig) []string {
 	var out []string
-	for _, r := range slices.Concat(link.Reflectors, defaultTimestampReflectors, accessTimestampReflectors, worldTimestampReflectors) {
+	for _, r := range slices.Concat(link.Reflectors, defaultTimestampReflectors, worldTimestampReflectors) {
 		if !slices.Contains(out, r) && len(out) < calProbeMaxReflectors {
 			out = append(out, r)
 		}
