@@ -89,7 +89,9 @@ links:
     ping_interface: wan2
 ```
 
-On a router with more than one WAN (for example with mwan3), set `ping_interface` for each link. Then, the ICMP packets go through the correct WAN (`SO_BINDTODEVICE`). You can also set `ping_source_addr` to use a specific source IP address.
+On a router with more than one WAN (for example with mwan3), the pings of each link must go through its WAN. Else the controller uses the delay of another link. The program binds the ICMP socket to `ping_interface` (`SO_BINDTODEVICE`). If a link does not set `ping_interface`, the program uses the top-level `ping_interface`, else the upload interface of the link (the WAN device). An upload interface that starts with `ifb` is not a WAN device: then set `ping_interface`. A link with `ping_source_addr` and without `ping_interface` uses the routing of that address.
+
+mwan3 marks the packets of the router for the link of its policy. A socket bound to another WAN then gets no route, and mwan3 drops the packets. Thus, at the start, the program adds a routing rule for each ping interface: `ip -4 rule add pref 900 oif DEVICE lookup main`. This rule comes before the rules of mwan3 (1001 and higher). It applies only to sockets bound to the device. At the stop, the program removes the rules.
 
 ## Link overrides
 
@@ -426,7 +428,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `links[].*.base_rate_kbps` | `20000` | Usual bandwidth (kbit/s) |
 | `links[].*.max_rate_kbps` | `80000`/`35000` | Maximum bandwidth (DL/UL, kbit/s) |
 | `links[].reflectors` | the default list for the `ping_method` (see [Reflectors](#reflectors) and [Ping method](#ping-method)) | ICMP ping targets for the delay measurement |
-| `links[].ping_interface` | *(none)* | Send the ICMP packets through this interface (multi-WAN) |
+| `links[].ping_interface` | top-level `ping_interface`, else the upload interface (not an IFB, not with `ping_source_addr`) | Send the ICMP packets through this interface (multi-WAN) |
 | `links[].ping_source_addr` | *(none)* | Source IP address of the ICMP packets |
 | `pinger_count` | `6` | Number of reflectors that the program pings at the same time |
 | `ping_interval_ms` | `300` | Time between two pings to one reflector (ms) |

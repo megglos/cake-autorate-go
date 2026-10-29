@@ -739,3 +739,44 @@ func TestValidate_ControlSocketPathLength(t *testing.T) {
 		t.Errorf("expected a length error, got: %v", err)
 	}
 }
+
+// A link without ping_interface pings through the top-level
+// ping_interface, else through its upload interface. Else, with more than
+// one WAN, the pings can go through another link.
+func TestLoadConfig_PingInterfaceDefault(t *testing.T) {
+	path := t.TempDir() + "/c.yaml"
+	link := func(name, ul, extra string) string {
+		return "  - name: " + name + "\n" +
+			"    download: {interface: ifb4" + name + ", min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n" +
+			"    upload: {interface: " + ul + ", min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n" + extra
+	}
+	for _, tc := range []struct {
+		name, yaml string
+		want       []string
+	}{
+		{"upload interface", "links:\n" +
+			link("a", "lan2", "") +
+			link("b", "lan1", "    ping_interface: wwan0\n") +
+			link("c", "ifb4x", "") +
+			link("d", "eth1", "    ping_source_addr: 10.0.0.2\n"),
+			[]string{"lan2", "wwan0", "", ""}},
+		{"top-level", "ping_interface: wan\nlinks:\n" + link("a", "lan2", ""), []string{"wan"}},
+		{"legacy", "download: {interface: ifb4wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n" +
+			"upload: {interface: wan, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n", []string{"wan"}},
+	} {
+		if err := os.WriteFile(path, []byte(tc.yaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var got []string
+		for _, l := range cfg.Links {
+			got = append(got, l.PingInterfaceName)
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: ping interfaces %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
