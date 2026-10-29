@@ -55,7 +55,8 @@ var pingRuleState = func() string {
 // file. The program removes the rules in the file with CAP_NET_ADMIN: a
 // file of another user could remove rules that the program did not add.
 // The directory must be of this user (or root) and not writable for
-// others, and the file must be a regular file of this user. A program that
+// others, and the file must be a regular file of this user, not writable for
+// others. A program that
 // is not root makes its directory (mode 0700) if it is not there.
 func checkPingRuleState() error {
 	uid := os.Geteuid()
