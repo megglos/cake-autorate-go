@@ -291,3 +291,39 @@ func TestPingRules_Kernel(t *testing.T) {
 		t.Errorf("after the stop, the rule stays:\n%s", show())
 	}
 }
+
+// If the program cannot read the list of an earlier process, it changes
+// nothing: a new list would lose the earlier rules.
+func TestPingRules_UnreadableStateChangesNothing(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 lan9"}, noV6: true}
+	f.install(t)
+	// A directory as the state file: it exists, but ReadFile fails.
+	if err := os.Mkdir(pingRuleState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	RemovePingRules(rules, testLogger(t))
+	if len(rules) != 0 || !slices.Equal(f.rules, []string{"-4 lan9"}) {
+		t.Errorf("own %v, rules %v: want no change", rules, f.rules)
+	}
+}
+
+// As non-root with file capabilities, ip gets CAP_NET_ADMIN (ambient
+// capability). CI runs it:
+//
+//	go test -c -o cap.test . && sudo setcap cap_net_admin,cap_net_raw+ep cap.test
+//	CAKE_CAP_TESTS=1 ./cap.test -test.run TestExecCommand_AmbientCaps
+func TestExecCommand_AmbientCaps(t *testing.T) {
+	if os.Getenv("CAKE_CAP_TESTS") != "1" {
+		t.Skip("set CAKE_CAP_TESTS=1 (non-root with file capabilities)")
+	}
+	if os.Geteuid() == 0 || len(childCaps()) == 0 {
+		t.Fatalf("want non-root with CAP_NET_ADMIN: euid %d, caps %v", os.Geteuid(), childCaps())
+	}
+	if out, err := execCommand("ip", "link", "add", "cavcap0", "type", "dummy"); err != nil {
+		t.Fatalf("ip with the capability: %v: %s", err, out)
+	}
+	if out, err := execCommand("ip", "link", "del", "cavcap0"); err != nil {
+		t.Errorf("ip link del: %v: %s", err, out)
+	}
+}

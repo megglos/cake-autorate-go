@@ -117,7 +117,13 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 	}
 	// A stale rule that stays (failed removal) is still a rule of the
 	// program: the stop and the next start try again.
-	own := removeStalePingRules(logger)
+	own, err := removeStalePingRules(logger)
+	if err != nil {
+		logger.Errorf("no routing rules for the pings: %v", err)
+		pingRuleLock.Close()
+		pingRuleLock = nil
+		return nil
+	}
 	var devs []string
 	for _, l := range links {
 		if d := l.PingInterfaceName; d != "" && !slices.Contains(devs, d) {
@@ -200,11 +206,17 @@ func removePingRules(rules []pingRule, logger *Logger) []pingRule {
 }
 
 // removeStalePingRules removes the rules in pingRuleState (of an earlier
-// process). It returns the rules that stay.
-func removeStalePingRules(logger *Logger) []pingRule {
+// process). It returns the rules that stay, or an error if it cannot read
+// the file.
+func removeStalePingRules(logger *Logger) ([]pingRule, error) {
 	data, err := os.ReadFile(pingRuleState)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		// Without the list, a new list would lose the rules of the
+		// earlier process.
+		return nil, err
 	}
 	var stale []pingRule
 	for _, line := range strings.Split(string(data), "\n") {
@@ -212,7 +224,7 @@ func removeStalePingRules(logger *Logger) []pingRule {
 			stale = append(stale, pingRule{f[0], f[1]})
 		}
 	}
-	return removePingRules(stale, logger)
+	return removePingRules(stale, logger), nil
 }
 
 // removePingRule removes one rule (also if the same rule is there two
