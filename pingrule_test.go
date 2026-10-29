@@ -327,3 +327,21 @@ func TestExecCommand_AmbientCaps(t *testing.T) {
 		t.Errorf("ip link del: %v: %s", err, out)
 	}
 }
+
+// With ambient capabilities, a command gets a fixed environment: else
+// LD_PRELOAD of the caller would load code into ip with CAP_NET_ADMIN.
+// CI runs it with file capabilities (see TestExecCommand_AmbientCaps).
+func TestExecCommand_AmbientCapsCleanEnv(t *testing.T) {
+	if os.Getenv("CAKE_CAP_TESTS") != "1" {
+		t.Skip("set CAKE_CAP_TESTS=1 (non-root with file capabilities)")
+	}
+	t.Setenv("LD_PRELOAD", "/nonexistent/evil.so")
+	t.Setenv("CAKE_SECRET_TEST", "1")
+	out, err := execCommand("env")
+	if err != nil {
+		t.Fatalf("env: %v: %s", err, out)
+	}
+	if strings.Contains(string(out), "LD_PRELOAD") || strings.Contains(string(out), "CAKE_SECRET_TEST") {
+		t.Errorf("the command got the environment of the caller:\n%s", out)
+	}
+}

@@ -428,6 +428,11 @@ var execCommand = func(name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if len(caps) > 0 {
 		cmd.SysProcAttr = &syscall.SysProcAttr{AmbientCaps: caps}
+		// A command with ambient capabilities does not run in the secure
+		// mode of a setuid or setcap program: the dynamic loader would use
+		// LD_PRELOAD and similar variables of the caller. Thus, the command
+		// gets a fixed environment.
+		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
 	}
 	return cmd.CombinedOutput()
 }

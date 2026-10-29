@@ -70,6 +70,9 @@ func checkPingRuleState() error {
 	if err != nil {
 		return err
 	}
+	// From here, use the checked directory: a symbolic link in the path
+	// cannot change after the check.
+	pingRuleState = filepath.Join(real, filepath.Base(pingRuleState))
 	fi, err := os.Stat(real)
 	if err != nil {
 		return err
