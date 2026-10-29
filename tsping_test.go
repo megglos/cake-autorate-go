@@ -248,6 +248,9 @@ func TestEchoRequest_Format(t *testing.T) {
 func TestEchoPinger_IPv6Loopback(t *testing.T) {
 	needRawSocket(t)
 	if c, err := listenRaw(context.Background(), "ip6:ipv6-icmp", "", ""); err != nil {
+		if rawTests() {
+			t.Fatalf("no raw ICMPv6 socket: %v", err)
+		}
 		t.Skipf("no raw ICMPv6 socket: %v", err)
 	} else {
 		c.Close()
@@ -340,6 +343,9 @@ func TestEchoPinger_Loopback(t *testing.T) {
 func TestEchoPinger_BoundToInterface(t *testing.T) {
 	needRawSocket(t)
 	if err := exec.Command("ip", "link", "add", "capdummy0", "type", "dummy").Run(); err != nil {
+		if rawTests() {
+			t.Fatal("cannot add a dummy interface")
+		}
 		t.Skip("cannot add a dummy interface (CAP_NET_ADMIN and ip are necessary)")
 	}
 	defer exec.Command("ip", "link", "del", "capdummy0").Run()
@@ -356,13 +362,17 @@ func needRawSocket(t *testing.T) {
 	t.Helper()
 	conn, err := listenICMP(context.Background(), "", "")
 	if err != nil {
-		if errors.Is(err, syscall.EPERM) || errors.Is(err, os.ErrPermission) {
+		if (errors.Is(err, syscall.EPERM) || errors.Is(err, os.ErrPermission)) && !rawTests() {
 			t.Skip("CAP_NET_RAW is necessary")
 		}
 		t.Fatal(err)
 	}
 	conn.Close()
 }
+
+// rawTests tells if the tests with raw sockets must run (CI sets
+// CAKE_RAW_TESTS=1): then a missing capability is an error, not a skip.
+func rawTests() bool { return os.Getenv("CAKE_RAW_TESTS") == "1" }
 
 // An IPv6 reflector keeps its zone (a link-local address needs it).
 func TestResolveIP_KeepsZone(t *testing.T) {

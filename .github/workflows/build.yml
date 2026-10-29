@@ -35,6 +35,14 @@ jobs:
           go test -c -o pin.test .
           sudo CAKE_PIN_NETNS=1 unshare -n ./pin.test -test.run TestPinner_Kernel -test.v
 
+      # The pingers with raw ICMP sockets and the routing rules of the ping
+      # interfaces with the kernel, as root in a new network namespace.
+      # CAKE_RAW_TESTS=1: a missing capability fails the tests, no skip.
+      - name: Ping tests in a network namespace
+        run: |
+          go test -c -o ping.test .
+          sudo CAKE_RAW_TESTS=1 unshare -n sh -c 'ip link set lo up && ./ping.test -test.v -test.run "TestEchoPinger|TestTimestampPinger|TestPinger_|TestPingers_Restart|TestPingRules_Kernel"'
+
       # Show the baseline comparison, the simulator scorecard and the known
       # issues in the job summary. This step also runs when the tests fail.
       - name: Simulator scorecard

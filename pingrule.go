@@ -111,6 +111,10 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 		logger.Errorf("no routing rules for the pings (with mwan3, the pings can go through another link): %v", err)
 		return nil
 	}
+	if err := lockPingRuleState(); err != nil {
+		logger.Errorf("no routing rules for the pings: %v", err)
+		return nil
+	}
 	// A stale rule that stays (failed removal) is still a rule of the
 	// program: the stop and the next start try again.
 	own := removeStalePingRules(logger)
@@ -152,9 +156,35 @@ func AddPingRules(links []LinkConfig, logger *Logger) []pingRule {
 // RemovePingRules removes the rules that AddPingRules added. The state file
 // keeps the rules that stay.
 func RemovePingRules(rules []pingRule, logger *Logger) {
+	if pingRuleLock == nil {
+		return // the rules and the state file are of another process
+	}
 	if err := writePingRuleState(removePingRules(rules, logger), logger); err != nil {
 		logger.Errorf("ping rules: %v", err)
 	}
+	pingRuleLock.Close()
+	pingRuleLock = nil
+}
+
+// pingRuleLock is the lock file while this process manages the rules. Two
+// processes (for example a second instance with another config) must not
+// change the same state file: the stop of one could remove the rules of
+// the other.
+var pingRuleLock *os.File
+
+// lockPingRuleState takes the lock of the state file until
+// RemovePingRules. If another process has the lock, it returns an error.
+func lockPingRuleState() error {
+	f, err := os.OpenFile(pingRuleState+".lock", os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return fmt.Errorf("another process manages them (lock %s): %w", f.Name(), err)
+	}
+	pingRuleLock = f
+	return nil
 }
 
 // removePingRules removes the rules and returns the rules that stay.

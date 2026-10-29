@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -65,7 +66,13 @@ func (f *fakeRules) install(t *testing.T) {
 		t.Fatalf("unexpected command: %s %v", name, args)
 		return nil, nil
 	}
-	t.Cleanup(func() { execCommand, pingRuleState = old, oldState })
+	t.Cleanup(func() {
+		execCommand, pingRuleState = old, oldState
+		if pingRuleLock != nil {
+			pingRuleLock.Close()
+			pingRuleLock = nil
+		}
+	})
 }
 
 func TestPingRules_AddAndRemove(t *testing.T) {
@@ -226,5 +233,61 @@ func TestTrustedPath(t *testing.T) {
 	}
 	if _, err := trustedPath("no-such-command-cav"); !errors.Is(err, exec.ErrNotFound) {
 		t.Errorf("missing command: %v, want exec.ErrNotFound", err)
+	}
+}
+
+// A second process does not change the rules and the state file of the
+// first.
+func TestPingRules_SecondProcessKeepsOff(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 lan2"}, noV6: true}
+	f.install(t)
+	if err := os.WriteFile(pingRuleState, []byte("-4 lan2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The lock of the first process (flock: also for a second file
+	// description in this process).
+	other, err := os.OpenFile(pingRuleState+".lock", os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan1"}}, testLogger(t))
+	RemovePingRules(rules, testLogger(t))
+	if len(rules) != 0 || !slices.Equal(f.rules, []string{"-4 lan2"}) {
+		t.Errorf("own %v, rules %v: the second process must change nothing", rules, f.rules)
+	}
+	if data, _ := os.ReadFile(pingRuleState); string(data) != "-4 lan2\n" {
+		t.Errorf("state file %q: the second process must not change it", data)
+	}
+}
+
+// The rules with the kernel: root in a network namespace. CI runs it:
+//
+//	go test -c -o ping.test . && sudo CAKE_RAW_TESTS=1 unshare -n ./ping.test -test.run TestPingRules_Kernel
+func TestPingRules_Kernel(t *testing.T) {
+	if os.Getenv("CAKE_RAW_TESTS") != "1" {
+		t.Skip("set CAKE_RAW_TESTS=1 (root in a new network namespace)")
+	}
+	if out, err := exec.Command("ip", "link", "add", "cavping0", "type", "dummy").CombinedOutput(); err != nil {
+		t.Fatalf("dummy interface: %v: %s", err, out)
+	}
+	defer exec.Command("ip", "link", "del", "cavping0").Run()
+	old := pingRuleState
+	pingRuleState = t.TempDir() + "/ping-rules"
+	t.Cleanup(func() { pingRuleState = old })
+	show := func() string {
+		out, _ := exec.Command("ip", "-4", "rule", "show", "pref", "900").CombinedOutput()
+		return string(out)
+	}
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "cavping0"}}, testLogger(t))
+	if !strings.Contains(show(), "oif cavping0 lookup main") || len(rules) == 0 {
+		t.Fatalf("after the start: own %v, rules:\n%s", rules, show())
+	}
+	RemovePingRules(rules, testLogger(t))
+	if strings.Contains(show(), "cavping0") {
+		t.Errorf("after the stop, the rule stays:\n%s", show())
 	}
 }
