@@ -192,6 +192,19 @@ func TestPingRules_UnsafeStateIsRefused(t *testing.T) {
 		t.Errorf("writable directory: own %v, rules %v; want no change", rules, f.rules)
 	}
 
+	// A file that others can write.
+	dir = t.TempDir()
+	pingRuleState = dir + "/ping-rules"
+	if err := os.WriteFile(pingRuleState, []byte("-4 wan0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(pingRuleState, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if rules := AddPingRules(links, testLogger(t)); len(rules) != 0 || !slices.Equal(f.rules, []string{"-4 wan0"}) {
+		t.Errorf("writable file: own %v, rules %v; want no change", rules, f.rules)
+	}
+
 	// A symbolic link as the state file.
 	dir = t.TempDir()
 	target := t.TempDir() + "/other"

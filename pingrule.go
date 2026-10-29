@@ -83,8 +83,8 @@ func checkPingRuleState() error {
 	if err != nil {
 		return err
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || !fi.Mode().IsRegular() || int(st.Uid) != uid {
-		return fmt.Errorf("%s must be a regular file of user %d", pingRuleState, uid)
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || !fi.Mode().IsRegular() || int(st.Uid) != uid || fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s must be a regular file of user %d, not writable for others", pingRuleState, uid)
 	}
 	return nil
 }
@@ -221,7 +221,7 @@ func writePingRuleState(rules []pingRule, logger *Logger) error {
 	// Write a new file and rename it: a crash during the write must not
 	// lose the earlier list.
 	tmp := pingRuleState + ".new"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("writing the list of the rules: %w", err)
 	}
 	if err := os.Rename(tmp, pingRuleState); err != nil {
