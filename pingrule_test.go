@@ -4,68 +4,107 @@ package main
 
 import (
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 )
 
-// fakeRules is a rule list of "ip -4 rule" at priority 900: the device of
-// each rule of a ping interface, and other rules (for example of the
-// Pinner) that must stay.
+// fakeRules is the list of the rules of the ping interfaces at priority
+// 900, for each address family ("-4 lan2"). noV6 simulates a kernel
+// without IPv6.
 type fakeRules struct {
-	oif   []string
-	other []string
+	rules []string
+	noV6  bool
 }
 
 func (f *fakeRules) install(t *testing.T) {
 	t.Helper()
-	old := execCommand
+	old, oldState := execCommand, pingRuleState
+	pingRuleState = t.TempDir() + "/ping-rules"
 	execCommand = func(name string, args ...string) ([]byte, error) {
-		a := strings.Join(args, " ")
+		fam := args[0]
+		if fam == "-6" && f.noV6 {
+			return []byte("RTNETLINK answers: Address family not supported by protocol"), errors.New("exit status 2")
+		}
+		a := strings.Join(args[1:], " ")
 		switch {
-		case a == "-4 rule show pref 900":
+		case a == "rule show pref 900":
 			var b strings.Builder
-			for _, d := range f.oif {
-				b.WriteString("900:\tfrom all oif " + d + " lookup main\n")
-			}
-			for _, o := range f.other {
-				b.WriteString("900:\tfrom all to " + o + " lookup 7370\n")
+			for _, r := range f.rules {
+				if f := strings.Fields(r); f[0] == fam {
+					b.WriteString("900:\tfrom all oif " + f[1] + " lookup main\n")
+				}
 			}
 			return []byte(b.String()), nil
-		case strings.HasPrefix(a, "-4 rule add pref 900 oif "):
-			f.oif = append(f.oif, args[6])
+		case strings.HasPrefix(a, "rule add pref 900 oif "):
+			f.rules = append(f.rules, fam+" "+args[6])
 			return nil, nil
-		case strings.HasPrefix(a, "-4 rule del pref 900 oif "):
-			i := slices.Index(f.oif, args[6])
+		case strings.HasPrefix(a, "rule del pref 900 oif "):
+			i := slices.Index(f.rules, fam+" "+args[6])
 			if i < 0 {
 				return []byte("RTNETLINK answers: No such file or directory"), errors.New("exit status 2")
 			}
-			f.oif = slices.Delete(f.oif, i, i+1)
+			f.rules = slices.Delete(f.rules, i, i+1)
 			return nil, nil
 		}
-		t.Fatalf("unexpected command: %s %s", name, a)
+		t.Fatalf("unexpected command: %s %v", name, args)
 		return nil, nil
 	}
-	t.Cleanup(func() { execCommand = old })
+	t.Cleanup(func() { execCommand, pingRuleState = old, oldState })
 }
 
 func TestPingRules_AddAndRemove(t *testing.T) {
-	// Rules of an earlier process: one for a device that is not in the
-	// config now, one twice. A rule of the Pinner stays.
-	f := &fakeRules{oif: []string{"wwan0", "lan2", "lan2"}, other: []string{"1.2.3.4"}}
+	f := &fakeRules{}
 	f.install(t)
 	links := []LinkConfig{
 		{Name: "a", PingInterfaceName: "lan2"},
-		{Name: "b", PingInterfaceName: "lan2"}, // same device: one rule
+		{Name: "b", PingInterfaceName: "lan2"}, // same device: one rule each family
 		{Name: "c"},                            // no ping interface: no rule
 		{Name: "d", PingInterfaceName: "lan1"},
 	}
-	devs := AddPingRules(links, testLogger(t))
-	if !slices.Equal(devs, []string{"lan2", "lan1"}) || !slices.Equal(f.oif, []string{"lan2", "lan1"}) {
-		t.Fatalf("devices %v, rules %v; want one rule each for lan2 and lan1", devs, f.oif)
+	rules := AddPingRules(links, testLogger(t))
+	want := []string{"-4 lan2", "-6 lan2", "-4 lan1", "-6 lan1"}
+	if !slices.Equal(f.rules, want) || len(rules) != 4 {
+		t.Fatalf("rules %v (own %v), want %v", f.rules, rules, want)
 	}
-	RemovePingRules(devs, testLogger(t))
-	if len(f.oif) != 0 || len(f.other) != 1 {
-		t.Errorf("after the stop: rules %v, other rules %v", f.oif, f.other)
+	if data, _ := os.ReadFile(pingRuleState); string(data) != strings.Join(want, "\n")+"\n" {
+		t.Errorf("state file %q", data)
+	}
+	RemovePingRules(rules, testLogger(t))
+	if len(f.rules) != 0 {
+		t.Errorf("after the stop: rules %v", f.rules)
+	}
+	if _, err := os.Stat(pingRuleState); !os.IsNotExist(err) {
+		t.Errorf("the state file stays after the stop: %v", err)
+	}
+}
+
+// The program removes only its own rules: a rule of the administrator
+// stays, also with the same device.
+func TestPingRules_KeepOtherRules(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 lan2", "-4 wwan0"}}
+	f.install(t)
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	if len(rules) != 1 || rules[0] != (pingRule{"-6", "lan2"}) {
+		t.Fatalf("own rules %v, want only -6 lan2 (-4 lan2 is already there)", rules)
+	}
+	RemovePingRules(rules, testLogger(t))
+	if !slices.Equal(f.rules, []string{"-4 lan2", "-4 wwan0"}) {
+		t.Errorf("rules after the stop %v, want the two rules of the administrator", f.rules)
+	}
+}
+
+// After a crash, the next start removes the rules in the state file, and
+// only those.
+func TestPingRules_RemoveStale(t *testing.T) {
+	f := &fakeRules{rules: []string{"-4 lan9", "-4 wwan0"}, noV6: true}
+	f.install(t)
+	if err := os.WriteFile(pingRuleState, []byte("-4 lan9\nbad line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules := AddPingRules([]LinkConfig{{Name: "a", PingInterfaceName: "lan2"}}, testLogger(t))
+	if !slices.Equal(f.rules, []string{"-4 wwan0", "-4 lan2"}) || len(rules) != 1 {
+		t.Errorf("rules %v (own %v): the stale rule must go, the other must stay, no IPv6 rule", f.rules, rules)
 	}
 }

@@ -161,8 +161,8 @@ func main() {
 
 	// The pings of a link must go through its ping interface, also with
 	// policy routing (see pingrule.go).
-	pingRuleDevs := AddPingRules(cfg.Links, logger)
-	defer RemovePingRules(pingRuleDevs, logger)
+	pingRules := AddPingRules(cfg.Links, logger)
+	defer RemovePingRules(pingRules, logger)
 
 	// The controllers stop after a calibration session has restored the
 	// rate control (see below). Thus, they have their own context.

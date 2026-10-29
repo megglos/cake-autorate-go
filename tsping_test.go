@@ -229,16 +229,65 @@ func TestEchoRequest_Format(t *testing.T) {
 	if _, _, ok := parseEchoReply(b[:4]); ok {
 		t.Error("a short message is not a reply")
 	}
+
+	b6 := marshalEchoRequest6(0x1234, 7)
+	if b6[0] != icmpv6TypeEchoRequest {
+		t.Fatalf("bad ICMPv6 request: % x", b6)
+	}
+	if _, _, ok := parseEchoReply6(b6); ok {
+		t.Error("an ICMPv6 request is not a reply")
+	}
+	b6[0] = icmpv6TypeEchoReply
+	if id, seq, ok := parseEchoReply6(b6); !ok || id != 0x1234 || seq != 7 {
+		t.Errorf("parse ICMPv6: id %#x seq %d ok %v", id, seq, ok)
+	}
+}
+
+// Echo pings to an IPv6 reflector (pro-bing supported them). It needs
+// CAP_NET_RAW and IPv6 on lo.
+func TestEchoPinger_IPv6Loopback(t *testing.T) {
+	needRawSocket(t)
+	if c, err := listenRaw(context.Background(), "ip6:ipv6-icmp", "", ""); err != nil {
+		t.Skipf("no raw ICMPv6 socket: %v", err)
+	} else {
+		c.Close()
+	}
+	got := pings(t, PingMethodEcho, "::1", "lo", 50, 1, 500*time.Millisecond)
+	if replies(got) < 3 {
+		t.Fatalf("got %d replies from ::1 in 500 ms, want 3 or more", replies(got))
+	}
+}
+
+// A request without a reply gives a timeout after the deadline, also if the
+// next request comes much later. 192.0.2.1 (TEST-NET-1) has no route in
+// the test network namespace: no reply.
+func TestPinger_DeadlineIndependentOfInterval(t *testing.T) {
+	needRawSocket(t)
+	start := time.Now()
+	got := pings(t, PingMethodEcho, "192.0.2.1", "", 5000, 0.2, 600*time.Millisecond)
+	if len(got) != 1 || !got[0].Timeout {
+		t.Fatalf("results %+v, want one timeout", got)
+	}
+	if d := got[0].Timestamp.Sub(start); d > 500*time.Millisecond {
+		t.Errorf("timeout after %v, want about 0.2 to 0.3 s (not at the next request after 5 s)", d)
+	}
 }
 
 // loopbackPings runs the pinger of the link to 127.0.0.1 for the time d
 // and returns the results.
 func loopbackPings(t *testing.T, method, ifname string, d time.Duration) []PingResult {
+	return pings(t, method, "127.0.0.1", ifname, 50, 1, d)
+}
+
+// pings runs the pinger of the link to the reflector for the time d, with
+// the ping interval (ms) and the deadline (s), and returns the results.
+func pings(t *testing.T, method, reflector, ifname string, intervalMs int, deadlineS float64, d time.Duration) []PingResult {
 	t.Helper()
 	cfg := testConfig()
 	cfg.PingMethod = method
-	cfg.PingIntervalMs = 50
-	cfg.Links[0].Reflectors = []string{"127.0.0.1"}
+	cfg.PingIntervalMs = intervalMs
+	cfg.ReflectorResponseDeadlineS = deadlineS
+	cfg.Links[0].Reflectors = []string{reflector}
 	cfg.Links[0].PingInterfaceName = ifname
 	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
 	ctx, cancel := context.WithTimeout(context.Background(), d)
