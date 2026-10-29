@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"slices"
 	"syscall"
 	"testing"
@@ -208,4 +209,108 @@ links:
 	if _, err := LoadConfig(path); err == nil {
 		t.Error("an unknown ping_method must give an error")
 	}
+}
+
+func TestEchoRequest_Format(t *testing.T) {
+	b := marshalEchoRequest(0x1234, 7)
+	if len(b) != icmpEchoLen || b[0] != icmpTypeEchoRequest {
+		t.Fatalf("bad request: % x", b)
+	}
+	if c := icmpChecksum(b); c != 0 {
+		t.Errorf("checksum check gives %#x, want 0", c)
+	}
+	if _, _, ok := parseEchoReply(b); ok {
+		t.Error("a request is not a reply")
+	}
+	b[0] = icmpTypeEchoReply
+	if id, seq, ok := parseEchoReply(b); !ok || id != 0x1234 || seq != 7 {
+		t.Errorf("parse: id %#x seq %d ok %v", id, seq, ok)
+	}
+	if _, _, ok := parseEchoReply(b[:4]); ok {
+		t.Error("a short message is not a reply")
+	}
+}
+
+// loopbackPings runs the pinger of the link to 127.0.0.1 for the time d
+// and returns the results.
+func loopbackPings(t *testing.T, method, ifname string, d time.Duration) []PingResult {
+	t.Helper()
+	cfg := testConfig()
+	cfg.PingMethod = method
+	cfg.PingIntervalMs = 50
+	cfg.Links[0].Reflectors = []string{"127.0.0.1"}
+	cfg.Links[0].PingInterfaceName = ifname
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	results := make(chan PingResult, 256)
+	done := make(chan struct{})
+	go func() {
+		pm.Run(ctx, results)
+		close(done)
+	}()
+	<-done
+	close(results)
+	var got []PingResult
+	for r := range results {
+		got = append(got, r)
+	}
+	return got
+}
+
+func replies(rs []PingResult) int {
+	n := 0
+	for _, r := range rs {
+		if !r.Timeout {
+			n++
+		}
+	}
+	return n
+}
+
+// The echo pinger uses the raw socket of the timestamp pinger. This test
+// needs CAP_NET_RAW. To run it without root:
+//
+//	unshare -rn sh -c 'ip link set lo up && go test -run TestEchoPinger -v'
+func TestEchoPinger_Loopback(t *testing.T) {
+	needRawSocket(t)
+	got := loopbackPings(t, PingMethodEcho, "lo", 500*time.Millisecond)
+	if replies(got) < 3 {
+		t.Fatalf("got %d replies in 500 ms, want 3 or more", replies(got))
+	}
+	for _, r := range got {
+		if !r.Timeout && (r.OWD || r.RTT <= 0) {
+			t.Errorf("an echo reply has an RTT and no one-way delays: %+v", r)
+		}
+	}
+}
+
+// A pinger bound to an interface must send only through it: pings to
+// 127.0.0.1 through a dummy interface get no reply. It needs CAP_NET_ADMIN
+// for the dummy interface (unshare -rn gives it).
+func TestEchoPinger_BoundToInterface(t *testing.T) {
+	needRawSocket(t)
+	if err := exec.Command("ip", "link", "add", "capdummy0", "type", "dummy").Run(); err != nil {
+		t.Skip("cannot add a dummy interface (CAP_NET_ADMIN and ip are necessary)")
+	}
+	defer exec.Command("ip", "link", "del", "capdummy0").Run()
+	if err := exec.Command("ip", "link", "set", "capdummy0", "up").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if n := replies(loopbackPings(t, PingMethodEcho, "capdummy0", 500*time.Millisecond)); n != 0 {
+		t.Errorf("got %d replies through the dummy interface, want 0", n)
+	}
+}
+
+// needRawSocket skips the test without CAP_NET_RAW.
+func needRawSocket(t *testing.T) {
+	t.Helper()
+	conn, err := listenICMP(context.Background(), "", "")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, os.ErrPermission) {
+			t.Skip("CAP_NET_RAW is necessary")
+		}
+		t.Fatal(err)
+	}
+	conn.Close()
 }

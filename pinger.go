@@ -9,12 +9,9 @@ package main
 
 import (
 	"context"
-	"math"
 	"math/rand"
 	"sync"
 	"time"
-
-	probing "github.com/prometheus-community/pro-bing"
 )
 
 // PingResult holds the result of a single ping to a reflector.
@@ -54,7 +51,7 @@ type PingerManager struct {
 	reflectors []string
 	states     map[string]*ReflectorState
 	mu         sync.RWMutex
-	// onSend, if set, gets each request that the timestamp pinger sent.
+	// onSend, if set, gets each request that a pinger sent.
 	// The calibration probe counts them: a request without a result
 	// at the end of the probe is lost. It must be safe for parallel calls.
 	onSend func(reflector string)
@@ -155,143 +152,18 @@ func (pm *PingerManager) runPinger(ctx context.Context, reflector string, interv
 		}
 	}
 
+	kind := icmpEcho
 	if pm.cfg.PingMethod == PingMethodTimestamp {
-		err := pm.runTimestampPinger(ctx, reflector, interval, deadline, resultCh)
-		if err != nil && ctx.Err() == nil {
-			pm.logger.Errorf("timestamp pinger %s: %v", reflector, err)
-			pm.recordHealth(reflector, true)
-			select {
-			case resultCh <- PingResult{Reflector: reflector, Timestamp: time.Now(), Timeout: true}:
-			case <-ctx.Done():
-			}
-		}
-		return
+		kind = icmpTimestamp
 	}
-
-	// Create a single long-running pinger instead of a new one per ping.
-	// This avoids per-ping DNS resolution, socket creation, and object allocation.
-	pinger, err := probing.NewPinger(reflector)
-	if err != nil {
-		pm.logger.Errorf("creating pinger for %s: %v", reflector, err)
-		pm.recordHealth(reflector, true) // record miss so health check can replace it
-		return
-	}
-	pinger.Count = -1 // continuous
-	pinger.Interval = interval
-	pinger.Timeout = time.Duration(math.MaxInt64) // context controls lifetime
-	pinger.SetPrivileged(true)
-
-	if pm.link.PingInterfaceName != "" {
-		pinger.InterfaceName = pm.link.PingInterfaceName
-	}
-	if pm.link.PingSourceAddr != "" {
-		pinger.Source = pm.link.PingSourceAddr
-	}
-
-	// Track in-flight pings for timeout detection.
-	// With deadline (1s) > interval (300ms), up to ~3 pings can be in flight.
-	var mu sync.Mutex
-	pending := make(map[int]time.Time) // seq -> send time
-
-	pinger.OnSend = func(pkt *probing.Packet) {
-		mu.Lock()
-		pending[pkt.Seq] = time.Now()
-		mu.Unlock()
-	}
-
-	pinger.OnRecv = func(pkt *probing.Packet) {
-		mu.Lock()
-		_, ok := pending[pkt.Seq]
-		if ok {
-			delete(pending, pkt.Seq)
-		}
-		mu.Unlock()
-		if !ok {
-			return // unexpected reply, ignore
-		}
-
-		pm.recordHealth(reflector, false)
-
-		recvTime := time.Now()
-		select {
-		case resultCh <- PingResult{
-			Reflector: reflector,
-			RTT:       pkt.Rtt,
-			Timestamp: recvTime,
-			Timeout:   false,
-		}:
-		case <-ctx.Done():
-		}
-	}
-
-	// Sweep for timed-out pings. Use a local context so the sweeper stops
-	// when the pinger exits (e.g. on error), not just when the parent ctx
-	// is cancelled.
-	// Join it before return. Thus, no result of this pinger comes after it
-	// returns.
-	pingerCtx, pingerCancel := context.WithCancel(ctx)
-	sweeperDone := make(chan struct{})
-	defer func() {
-		pingerCancel()
-		<-sweeperDone
-	}()
-
-	go func() {
-		defer close(sweeperDone)
-		sweepInterval := deadline / 2
-		if sweepInterval < 100*time.Millisecond {
-			sweepInterval = 100 * time.Millisecond
-		}
-		ticker := time.NewTicker(sweepInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-pingerCtx.Done():
-				return
-			case <-ticker.C:
-				now := time.Now()
-				mu.Lock()
-				var expired []int
-				for seq, sent := range pending {
-					if now.Sub(sent) > deadline {
-						expired = append(expired, seq)
-					}
-				}
-				for _, seq := range expired {
-					delete(pending, seq)
-				}
-				mu.Unlock()
-
-				// Send timeout results outside the lock
-				for range expired {
-					pm.recordHealth(reflector, true)
-					select {
-					case resultCh <- PingResult{
-						Reflector: reflector,
-						Timestamp: now,
-						Timeout:   true,
-					}:
-					case <-pingerCtx.Done():
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	err = pinger.RunWithContext(ctx)
+	err := pm.runICMPPinger(ctx, reflector, kind, interval, deadline, resultCh)
 	if err != nil && ctx.Err() == nil {
-		pm.logger.Debugf("pinger %s: %v", reflector, err)
-		// Record a miss and send a timeout so the controller notices the
-		// pinger died (rather than waiting for the next health tick).
+		pm.logger.Errorf("pinger %s: %v", reflector, err)
+		// Record a miss and send a timeout: then the controller sees at
+		// once that the pinger stopped.
 		pm.recordHealth(reflector, true)
 		select {
-		case resultCh <- PingResult{
-			Reflector: reflector,
-			Timestamp: time.Now(),
-			Timeout:   true,
-		}:
+		case resultCh <- PingResult{Reflector: reflector, Timestamp: time.Now(), Timeout: true}:
 		case <-ctx.Done():
 		}
 	}

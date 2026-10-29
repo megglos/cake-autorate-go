@@ -98,6 +98,70 @@ func (r timestampReply) oneWayDelays(recvMs uint32) (ul, dl, inReflector time.Du
 	return ul, dl, inReflector, true
 }
 
+// ICMP echo messages (RFC 792). A reply gives only the RTT.
+const (
+	icmpTypeEchoReply   = 0
+	icmpTypeEchoRequest = 8
+	// icmpEchoLen is the length of an echo request: the header (8 bytes)
+	// and 16 bytes of data.
+	icmpEchoLen = 24
+)
+
+// marshalEchoRequest returns an ICMP echo request.
+func marshalEchoRequest(id, seq uint16) []byte {
+	b := make([]byte, icmpEchoLen)
+	b[0] = icmpTypeEchoRequest
+	binary.BigEndian.PutUint16(b[4:], id)
+	binary.BigEndian.PutUint16(b[6:], seq)
+	binary.BigEndian.PutUint16(b[2:], icmpChecksum(b))
+	return b
+}
+
+// parseEchoReply returns the ID and the sequence number of an ICMP echo
+// reply. It returns false if b is not an echo reply.
+func parseEchoReply(b []byte) (id, seq uint16, ok bool) {
+	if len(b) < 8 || b[0] != icmpTypeEchoReply || b[1] != 0 {
+		return 0, 0, false
+	}
+	return binary.BigEndian.Uint16(b[4:]), binary.BigEndian.Uint16(b[6:]), true
+}
+
+// icmpKind is a kind of ICMP request of a pinger.
+type icmpKind struct {
+	// request returns a request, sent at now.
+	request func(id, seq uint16, now time.Time) []byte
+	// reply returns the ID and the sequence number of a reply that arrived
+	// at recv. For a reply with one-way delays, it sets them in res. It
+	// returns false if b is not a reply of this kind.
+	reply func(b []byte, recv time.Time, res *PingResult) (id, seq uint16, ok bool)
+}
+
+// icmpEcho sends ICMP echo requests (ping_method icmp).
+var icmpEcho = icmpKind{
+	request: func(id, seq uint16, _ time.Time) []byte { return marshalEchoRequest(id, seq) },
+	reply: func(b []byte, _ time.Time, _ *PingResult) (uint16, uint16, bool) {
+		return parseEchoReply(b)
+	},
+}
+
+// icmpTimestamp sends ICMP timestamp requests (ping_method
+// icmp-timestamp).
+var icmpTimestamp = icmpKind{
+	request: func(id, seq uint16, now time.Time) []byte {
+		return marshalTimestampRequest(id, seq, msSinceMidnightUTC(now))
+	},
+	reply: func(b []byte, recv time.Time, res *PingResult) (uint16, uint16, bool) {
+		r, ok := parseTimestampReply(b)
+		if !ok {
+			return 0, 0, false
+		}
+		if ul, dl, in, ok := r.oneWayDelays(msSinceMidnightUTC(recv)); ok {
+			res.OWD, res.UlOWD, res.DlOWD, res.ReflectorTime = true, ul, dl, in
+		}
+		return r.id, r.seq, true
+	},
+}
+
 // icmpChecksum returns the internet checksum of b.
 func icmpChecksum(b []byte) uint16 {
 	var sum uint32
@@ -147,10 +211,16 @@ var resolveIPv4 = func(ctx context.Context, host string) (*net.IPAddr, error) {
 	return &net.IPAddr{IP: ips[0]}, nil
 }
 
-// runTimestampPinger sends ICMP timestamp requests to one reflector. It
-// sends a PingResult with the RTT and the one-way delays for each reply,
-// and a timeout result for each request without a reply in the deadline.
-func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector string, interval, deadline time.Duration, resultCh chan<- PingResult) error {
+// runICMPPinger sends ICMP requests of one kind to one reflector. It sends
+// a PingResult with the RTT (and the one-way delays of a timestamp reply)
+// for each reply, and a timeout result for each request without a reply in
+// the deadline.
+//
+// The socket is bound to the ping interface (SO_BINDTODEVICE). A hint for
+// each packet (IP_PKTINFO) is not sufficient: with policy routing (for
+// example mwan3), the router routes its own packets again after the mark,
+// and then the requests can go through another link.
+func (pm *PingerManager) runICMPPinger(ctx context.Context, reflector string, kind icmpKind, interval, deadline time.Duration, resultCh chan<- PingResult) error {
 	dst, err := resolveIPv4(ctx, reflector)
 	if err != nil {
 		return fmt.Errorf("resolving %s: %w", reflector, err)
@@ -198,25 +268,23 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 				return // the socket is closed
 			}
 			recvTime := time.Now()
-			reply, ok := parseTimestampReply(buf[:n])
-			if !ok || reply.id != id {
+			res := PingResult{Reflector: reflector, Timestamp: recvTime}
+			rid, rseq, ok := kind.reply(buf[:n], recvTime, &res)
+			if !ok || rid != id {
 				continue
 			}
 			if ip, isIP := from.(*net.IPAddr); !isIP || !ip.IP.Equal(dst.IP) {
 				continue
 			}
 			mu.Lock()
-			sent, found := pending[reply.seq]
-			delete(pending, reply.seq)
+			sent, found := pending[rseq]
+			delete(pending, rseq)
 			mu.Unlock()
 			if !found {
 				continue // late or unexpected reply
 			}
 			pm.recordHealth(reflector, false)
-			res := PingResult{Reflector: reflector, RTT: recvTime.Sub(sent), Timestamp: recvTime}
-			if ul, dl, in, ok := reply.oneWayDelays(msSinceMidnightUTC(recvTime)); ok {
-				res.OWD, res.UlOWD, res.DlOWD, res.ReflectorTime = true, ul, dl, in
-			}
+			res.RTT = recvTime.Sub(sent)
 			send(res)
 		}
 	}()
@@ -247,11 +315,11 @@ func (pm *PingerManager) runTimestampPinger(ctx context.Context, reflector strin
 		mu.Lock()
 		pending[seq] = now
 		mu.Unlock()
-		if _, err := conn.WriteTo(marshalTimestampRequest(id, seq, msSinceMidnightUTC(now)), dst); err != nil {
+		if _, err := conn.WriteTo(kind.request(id, seq, now), dst); err != nil {
 			if pctx.Err() != nil {
 				return nil
 			}
-			pm.logger.Debugf("timestamp ping %s: %v", reflector, err)
+			pm.logger.Debugf("ping %s: %v", reflector, err)
 		} else if pm.onSend != nil {
 			pm.onSend(reflector)
 		}
