@@ -126,7 +126,7 @@ func probeTimestamps(ctx context.Context, cfg *Config, logger *Logger) ([]tsProb
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := pm.runTimestampPinger(ctx, r, interval, deadline, resultCh); err != nil {
+			if err := pm.runICMPPinger(ctx, r, icmpTimestamp, interval, deadline, resultCh); err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("%s: %w", r, err))
 				mu.Unlock()

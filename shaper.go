@@ -12,7 +12,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -413,5 +415,63 @@ func WirePacketCompensationUs(mtuBytes int, rateKbps int) float64 {
 var execCommand = func(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcExecTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	caps := childCaps()
+	if len(caps) > 0 {
+		// The command gets the capabilities: it must not come from a
+		// directory in PATH that the caller can change.
+		path, err := trustedPath(name)
+		if err != nil {
+			return nil, err
+		}
+		name = path
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	if len(caps) > 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{AmbientCaps: caps}
+		// A command with ambient capabilities does not run in the secure
+		// mode of a setuid or setcap program: the dynamic loader would use
+		// LD_PRELOAD and similar variables of the caller. Thus, the command
+		// gets a fixed environment.
+		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"}
+	}
+	return cmd.CombinedOutput()
 }
+
+// trustedDirs are the directories of the system commands (ip, tc,
+// conntrack).
+var trustedDirs = []string{"/usr/sbin", "/sbin", "/usr/bin", "/bin"}
+
+// trustedPath returns the path of a command in trustedDirs. The error
+// wraps exec.ErrNotFound if the command is not there.
+func trustedPath(name string) (string, error) {
+	for _, d := range trustedDirs {
+		p := filepath.Join(d, name)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s in %v: %w", name, trustedDirs, exec.ErrNotFound)
+}
+
+// childCaps returns the capabilities that a command (tc, ip) must get
+// from a program that is not root: CAP_NET_ADMIN and CAP_NET_RAW, if the
+// program has them (for example as file capabilities). Without ambient
+// capabilities, the command does not get them, and it fails with
+// "Operation not permitted". Root needs no ambient capabilities.
+var childCaps = sync.OnceValue(func() []uintptr {
+	if os.Geteuid() == 0 {
+		return nil
+	}
+	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	var data [2]unix.CapUserData
+	if err := unix.Capget(&hdr, &data[0]); err != nil {
+		return nil
+	}
+	var caps []uintptr
+	for _, c := range []uintptr{unix.CAP_NET_ADMIN, unix.CAP_NET_RAW} {
+		if data[c/32].Permitted&(1<<(c%32)) != 0 {
+			caps = append(caps, c)
+		}
+	}
+	return caps
+})

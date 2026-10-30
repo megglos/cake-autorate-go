@@ -128,10 +128,15 @@ func (c *LinkController) Run(ctx context.Context) error {
 	}
 
 	c.logger.Infof("[%s] controller started in %s state", c.name, c.core.Core().State())
-	c.logger.Infof("[%s] dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps",
+	pingIf := c.link.PingInterfaceName
+	if pingIf == "" {
+		pingIf = "routing of the router"
+	}
+	c.logger.Infof("[%s] dl: %s %d/%d/%d kbps, ul: %s %d/%d/%d kbps, pings: %s",
 		c.name,
 		c.link.Download.Interface, c.link.Download.MinRateKbps, c.link.Download.BaseRateKbps, c.link.Download.MaxRateKbps,
-		c.link.Upload.Interface, c.link.Upload.MinRateKbps, c.link.Upload.BaseRateKbps, c.link.Upload.MaxRateKbps)
+		c.link.Upload.Interface, c.link.Upload.MinRateKbps, c.link.Upload.BaseRateKbps, c.link.Upload.MaxRateKbps,
+		pingIf)
 
 	return c.loop(ctx, healthTicker.C, statusC)
 }

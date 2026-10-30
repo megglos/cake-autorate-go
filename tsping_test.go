@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"slices"
 	"syscall"
 	"testing"
@@ -207,5 +208,182 @@ links:
 	write("ping_method: udp\n" + link)
 	if _, err := LoadConfig(path); err == nil {
 		t.Error("an unknown ping_method must give an error")
+	}
+}
+
+func TestEchoRequest_Format(t *testing.T) {
+	b := marshalEchoRequest(0x1234, 7)
+	if len(b) != icmpEchoLen || b[0] != icmpTypeEchoRequest {
+		t.Fatalf("bad request: % x", b)
+	}
+	if c := icmpChecksum(b); c != 0 {
+		t.Errorf("checksum check gives %#x, want 0", c)
+	}
+	if _, _, ok := parseEchoReply(b); ok {
+		t.Error("a request is not a reply")
+	}
+	b[0] = icmpTypeEchoReply
+	if id, seq, ok := parseEchoReply(b); !ok || id != 0x1234 || seq != 7 {
+		t.Errorf("parse: id %#x seq %d ok %v", id, seq, ok)
+	}
+	if _, _, ok := parseEchoReply(b[:4]); ok {
+		t.Error("a short message is not a reply")
+	}
+
+	b6 := marshalEchoRequest6(0x1234, 7)
+	if b6[0] != icmpv6TypeEchoRequest {
+		t.Fatalf("bad ICMPv6 request: % x", b6)
+	}
+	if _, _, ok := parseEchoReply6(b6); ok {
+		t.Error("an ICMPv6 request is not a reply")
+	}
+	b6[0] = icmpv6TypeEchoReply
+	if id, seq, ok := parseEchoReply6(b6); !ok || id != 0x1234 || seq != 7 {
+		t.Errorf("parse ICMPv6: id %#x seq %d ok %v", id, seq, ok)
+	}
+}
+
+// Echo pings to an IPv6 reflector (pro-bing supported them). It needs
+// CAP_NET_RAW and IPv6 on lo.
+func TestEchoPinger_IPv6Loopback(t *testing.T) {
+	needRawSocket(t)
+	if c, err := listenRaw(context.Background(), "ip6:ipv6-icmp", "", ""); err != nil {
+		if rawTests() {
+			t.Fatalf("no raw ICMPv6 socket: %v", err)
+		}
+		t.Skipf("no raw ICMPv6 socket: %v", err)
+	} else {
+		c.Close()
+	}
+	got := pings(t, PingMethodEcho, "::1", "lo", 50, 1, 500*time.Millisecond)
+	if replies(got) < 3 {
+		t.Fatalf("got %d replies from ::1 in 500 ms, want 3 or more", replies(got))
+	}
+}
+
+// A request without a reply gives a timeout after the deadline, also if the
+// next request comes much later. 192.0.2.1 (TEST-NET-1) has no route in
+// the test network namespace: no reply.
+func TestPinger_DeadlineIndependentOfInterval(t *testing.T) {
+	needRawSocket(t)
+	start := time.Now()
+	got := pings(t, PingMethodEcho, "192.0.2.1", "", 5000, 0.2, 600*time.Millisecond)
+	if len(got) != 1 || !got[0].Timeout {
+		t.Fatalf("results %+v, want one timeout", got)
+	}
+	if d := got[0].Timestamp.Sub(start); d > 500*time.Millisecond {
+		t.Errorf("timeout after %v, want about 0.2 to 0.3 s (not at the next request after 5 s)", d)
+	}
+}
+
+// loopbackPings runs the pinger of the link to 127.0.0.1 for the time d
+// and returns the results.
+func loopbackPings(t *testing.T, method, ifname string, d time.Duration) []PingResult {
+	return pings(t, method, "127.0.0.1", ifname, 50, 1, d)
+}
+
+// pings runs the pinger of the link to the reflector for the time d, with
+// the ping interval (ms) and the deadline (s), and returns the results.
+func pings(t *testing.T, method, reflector, ifname string, intervalMs int, deadlineS float64, d time.Duration) []PingResult {
+	t.Helper()
+	cfg := testConfig()
+	cfg.PingMethod = method
+	cfg.PingIntervalMs = intervalMs
+	cfg.ReflectorResponseDeadlineS = deadlineS
+	cfg.Links[0].Reflectors = []string{reflector}
+	cfg.Links[0].PingInterfaceName = ifname
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	results := make(chan PingResult, 256)
+	done := make(chan struct{})
+	go func() {
+		pm.Run(ctx, results)
+		close(done)
+	}()
+	<-done
+	close(results)
+	var got []PingResult
+	for r := range results {
+		got = append(got, r)
+	}
+	return got
+}
+
+func replies(rs []PingResult) int {
+	n := 0
+	for _, r := range rs {
+		if !r.Timeout {
+			n++
+		}
+	}
+	return n
+}
+
+// The echo pinger uses the raw socket of the timestamp pinger. This test
+// needs CAP_NET_RAW. To run it without root:
+//
+//	unshare -rn sh -c 'ip link set lo up && go test -run TestEchoPinger -v'
+func TestEchoPinger_Loopback(t *testing.T) {
+	needRawSocket(t)
+	got := loopbackPings(t, PingMethodEcho, "lo", 500*time.Millisecond)
+	if replies(got) < 3 {
+		t.Fatalf("got %d replies in 500 ms, want 3 or more", replies(got))
+	}
+	for _, r := range got {
+		if !r.Timeout && (r.OWD || r.RTT <= 0) {
+			t.Errorf("an echo reply has an RTT and no one-way delays: %+v", r)
+		}
+	}
+}
+
+// A pinger bound to an interface must send only through it: pings to
+// 127.0.0.1 through a dummy interface get no reply. It needs CAP_NET_ADMIN
+// for the dummy interface (unshare -rn gives it).
+func TestEchoPinger_BoundToInterface(t *testing.T) {
+	needRawSocket(t)
+	if err := exec.Command("ip", "link", "add", "capdummy0", "type", "dummy").Run(); err != nil {
+		if rawTests() {
+			t.Fatal("cannot add a dummy interface")
+		}
+		t.Skip("cannot add a dummy interface (CAP_NET_ADMIN and ip are necessary)")
+	}
+	defer exec.Command("ip", "link", "del", "capdummy0").Run()
+	if err := exec.Command("ip", "link", "set", "capdummy0", "up").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if n := replies(loopbackPings(t, PingMethodEcho, "capdummy0", 500*time.Millisecond)); n != 0 {
+		t.Errorf("got %d replies through the dummy interface, want 0", n)
+	}
+}
+
+// needRawSocket skips the test without CAP_NET_RAW.
+func needRawSocket(t *testing.T) {
+	t.Helper()
+	conn, err := listenICMP(context.Background(), "", "")
+	if err != nil {
+		if (errors.Is(err, syscall.EPERM) || errors.Is(err, os.ErrPermission)) && !rawTests() {
+			t.Skip("CAP_NET_RAW is necessary")
+		}
+		t.Fatal(err)
+	}
+	conn.Close()
+}
+
+// rawTests tells if the tests with raw sockets must run (CI sets
+// CAKE_RAW_TESTS=1): then a missing capability is an error, not a skip.
+func rawTests() bool { return os.Getenv("CAKE_RAW_TESTS") == "1" }
+
+// An IPv6 reflector keeps its zone (a link-local address needs it).
+func TestResolveIP_KeepsZone(t *testing.T) {
+	a, err := resolveIP(context.Background(), "fe80::1%lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Zone != "lo" || a.IP.String() != "fe80::1" {
+		t.Errorf("got %v zone %q, want fe80::1 zone lo", a.IP, a.Zone)
+	}
+	if a, err := resolveIP(context.Background(), "127.0.0.1"); err != nil || a.IP.To4() == nil {
+		t.Errorf("IPv4: %v %v", a, err)
 	}
 }

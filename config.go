@@ -459,6 +459,7 @@ func (c *Config) migrateLinks() {
 			if c.Links[i].Name == "" {
 				c.Links[i].Name = fmt.Sprintf("link%d", i)
 			}
+			c.Links[i].setPingInterface(c.PingInterfaceName)
 		}
 		return
 	}
@@ -473,6 +474,24 @@ func (c *Config) migrateLinks() {
 			PingSourceAddr:    c.PingSourceAddr,
 			PingInterfaceName: c.PingInterfaceName,
 		}}
+		c.Links[0].setPingInterface("")
+	}
+}
+
+// setPingInterface sets the ping interface of a link that does not set
+// it: the top-level value, else the upload interface. Without a ping
+// interface, the pings use the routing of the router. With more than one
+// WAN (for example mwan3), they can then go through another link, and the
+// controller uses the delay of the wrong link. The upload interface is the
+// WAN device, except an IFB: then the link has no ping interface. A link
+// with a ping source address keeps the routing of that address.
+func (l *LinkConfig) setPingInterface(global string) {
+	switch {
+	case l.PingInterfaceName != "":
+	case global != "":
+		l.PingInterfaceName = global
+	case l.PingSourceAddr == "" && !strings.HasPrefix(l.Upload.Interface, "ifb"):
+		l.PingInterfaceName = l.Upload.Interface
 	}
 }
 

@@ -320,7 +320,7 @@ function globalSection(m, sid) {
 		_('The interval between two pings to one reflector.'));
 
 	o = field(s, 'general', widgets.DeviceSelect, 'ping_interface', _('Ping interface'), null,
-		_('Send the pings through this interface. A link can set a different interface.'));
+		_('Send the pings through this interface. A link can set a different interface. Empty: each link uses its upload interface (the WAN device).'));
 	o.noaliases = true;
 	o.optional = true;
 	o.validate = validateIfname;
@@ -773,7 +773,7 @@ function linkSection(m) {
 	o.modalonly = true;
 
 	o = s.taboption('pings', widgets.DeviceSelect, 'ping_interface', _('Ping interface'),
-		_('Empty: the ping interface of the global section.'));
+		_('Empty: the ping interface of the global section, else the upload interface of the link.'));
 	o.noaliases = true;
 	o.optional = true;
 	o.modalonly = true;
