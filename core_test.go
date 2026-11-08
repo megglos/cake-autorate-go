@@ -2766,3 +2766,25 @@ func TestPauseAboveUnshapedRateIsNotNoLimit(t *testing.T) {
 		t.Errorf("rates after the pause: %v, want none (no reapplication)", act.rates[DL][n:])
 	}
 }
+
+// An upload with rate control at 10 Gbit/s or more (a fast line) still
+// learns cross delay: only the no-limit states do not.
+func TestCrossDelayLearnedAtHighConfiguredRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	cfg.Links[0].Upload.BaseRateKbps = 12_000_000
+	cfg.Links[0].Upload.MaxRateKbps = 12_000_000
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 1000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 25, 10))
+	}
+	if c.ul.crossDelayUs == 0 {
+		t.Error("an upload at 12 Gbit/s with rate control learned no cross delay")
+	}
+}

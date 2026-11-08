@@ -588,7 +588,7 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 	// Without a limit (the commands "unshape" and "nolimit", the option
 	// unshaped), the upload load against 10 Gbit/s is always low, also on
 	// a full link: the delay can be a queue, thus do not learn it.
-	if !c.unshaped && ul.shaperRateKbps < unshapedKbps && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+	if !c.unshaped && !c.link.Upload.Unshaped && !c.NoLimit(UL) && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
 		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
 	}
