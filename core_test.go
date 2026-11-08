@@ -1366,6 +1366,7 @@ func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.state = StateRunning
 	c.dl.loadPercent, c.ul.loadPercent = 0.9, 0.9
+	c.dl.achievedKbps, c.ul.achievedKbps = 0.9*c.dl.shaperRateKbps, 0.9*c.ul.shaperRateKbps
 	dlBefore, ulBefore := c.dl.shaperRateKbps, c.ul.shaperRateKbps
 
 	ts := time.Now()
@@ -1380,6 +1381,44 @@ func TestHandlePing_OWDDelayOnlyInUpload(t *testing.T) {
 	}
 	if c.dl.shaperRateKbps < dlBefore {
 		t.Errorf("download rate %.0f, want no decrease from %.0f", c.dl.shaperRateKbps, dlBefore)
+	}
+}
+
+// Upload delay with one-way delays and an upload below the minimum rate
+// (for example the radio scheduling of 5G): the shaper is not the
+// bottleneck at any allowed rate, thus no decrease. With RTT/2, the upload
+// still decreases (the delay can come from the download, and the
+// decrease of the ACK rate can help there).
+func TestHandlePing_NoUploadDecreaseBelowMinRate(t *testing.T) {
+	c, _ := newTestCore(t)
+	c.state = StateRunning
+	c.ul.loadPercent = 0.05
+	c.ul.achievedKbps = 0.5 * float64(c.link.Upload.MinRateKbps)
+	ulBefore := c.ul.shaperRateKbps
+
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 510, -490))
+	for i := 1; i <= 6; i++ {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 510+80, -490))
+	}
+	if c.ul.shaperRateKbps < ulBefore {
+		t.Errorf("one-way delays: upload rate %.0f, want no decrease from %.0f", c.ul.shaperRateKbps, ulBefore)
+	}
+
+	c2, _ := newTestCore(t)
+	c2.state = StateRunning
+	c2.ul.loadPercent = 0.05
+	c2.ul.achievedKbps = 0.5 * float64(c2.link.Upload.MinRateKbps)
+	ulBefore = c2.ul.shaperRateKbps
+	ts = time.Now()
+	c2.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 20 * time.Millisecond, Timestamp: ts})
+	for i := 1; i <= 6; i++ {
+		ts = ts.Add(50 * time.Millisecond)
+		c2.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 180 * time.Millisecond, Timestamp: ts})
+	}
+	if c2.ul.shaperRateKbps >= ulBefore {
+		t.Errorf("RTT/2: upload rate %.0f, want a decrease from %.0f", c2.ul.shaperRateKbps, ulBefore)
 	}
 }
 
