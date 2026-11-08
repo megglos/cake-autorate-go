@@ -216,14 +216,16 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 	// If more than half of the active reflectors miss replies at the same
 	// time, the loss is on the link (for example, under high load), not in
 	// the reflectors. A replacement then removes good reflectors, and the
-	// new reflectors get their baselines while the link has a queue.
+	// new reflectors get their baselines while the link has a queue. One
+	// reflector alone does not show a loss on the link: with pinger_count
+	// 1, a reflector that misses replies is replaced.
 	bad := 0
 	for _, r := range pm.reflectors[:activeCount] {
 		if m, _ := missedOf(r); m >= pm.cfg.ReflectorMisbehavingDetectionThr {
 			bad++
 		}
 	}
-	if bad > 0 && 2*bad > activeCount {
+	if bad >= 2 && 2*bad > activeCount {
 		if !pm.linkLoss {
 			pm.logger.Infof("[%s] %d of %d reflectors miss replies at the same time: loss on the link, no reflector is replaced",
 				pm.link.Name, bad, activeCount)

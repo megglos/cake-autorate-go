@@ -267,3 +267,22 @@ func TestReplaceUnhealthy_LinkLossReplacesNothing(t *testing.T) {
 		t.Error("the link loss is still marked")
 	}
 }
+
+// With one active reflector, a reflector that misses replies is replaced:
+// one reflector alone does not show a loss on the link.
+func TestReplaceUnhealthy_SingleActiveIsReplaced(t *testing.T) {
+	cfg := testConfig()
+	cfg.PingerCount = 1
+	cfg.ReflectorMisbehavingDetectionThr = 2
+	cfg.ReflectorMisbehavingDetectionWindow = 4
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	for addr := range pm.states {
+		pm.states[addr] = &ReflectorState{MissedWindow: make([]bool, 4)}
+	}
+	first := pm.reflectors[0]
+	pm.states[first].MissedWindow[0] = true
+	pm.states[first].MissedWindow[1] = true
+	if p := pm.ReplaceUnhealthy(); len(p) != 1 || pm.reflectors[0] == first {
+		t.Errorf("promoted %v, active %s: want the spare instead of %s", p, pm.reflectors[0], first)
+	}
+}
