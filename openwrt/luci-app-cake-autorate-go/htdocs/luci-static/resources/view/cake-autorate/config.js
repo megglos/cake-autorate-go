@@ -673,6 +673,10 @@ function linkSection(m) {
 				return '0';
 			return form.Flag.prototype.cfgvalue.call(this, sid);
 		};
+		// Write the shown value also when it did not change: with
+		// dl_adjust 1 and dl_unshaped 1, the page shows 0. If the user
+		// clears "No … limit", dl_adjust must be 0, not the stored 1.
+		o.forcewrite = true;
 
 		o = s.taboption('interfaces', form.Flag, d + '_unshaped', _('No %s limit').format(title.toLowerCase()),
 			_('The service sets the rate of this shaper to 10 Gbit/s: no limit, no rate control. For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions.'));
