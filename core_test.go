@@ -2713,3 +2713,33 @@ func TestProcessDelay_StallRecoveryExpiresDuringBloat(t *testing.T) {
 		t.Errorf("recovery after 650 ms of bufferbloat (rate %.0f, cut %.0f), want none", c.dl.shaperRateKbps, cut)
 	}
 }
+
+// A pause at 10 Gbit/s ("nolimit") gets its rate again each
+// unshapedReapply with an empty shaper cache (SQM can set up the qdisc
+// again), and the rate control stays off. A resume clears the low-load time
+// of the cross-delay learning.
+func TestNoLimitPause_ReapplyAndResume(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	t0 := time.Now()
+	c.Start(t0)
+	c.SetFixedRate(UL, unshapedKbps)
+	n, inv := len(act.rates[UL]), act.invalidates
+	c.HandleRate(RateStats{Timestamp: t0, UlRateKbps: 5000})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second), UlRateKbps: 5000})
+	if got := len(act.rates[UL]) - n; got != 2 || act.invalidates-inv != 2 || lastRate(act, UL) != unshapedKbps {
+		t.Errorf("reapplications: %d rates (last %d), %d invalidations; want 2, %d, 2", got, lastRate(act, UL), act.invalidates-inv, unshapedKbps)
+	}
+	if !c.Paused(UL) || !c.NoLimit(UL) {
+		t.Error("the direction must stay paused without a limit")
+	}
+	if c.ul.lowLoadSince.IsZero() {
+		t.Fatal("test setup: no low-load time against 10 Gbit/s")
+	}
+	c.SetPaused(UL, false)
+	if !c.ul.lowLoadSince.IsZero() {
+		t.Error("after resume, the low-load time from 10 Gbit/s stays")
+	}
+}

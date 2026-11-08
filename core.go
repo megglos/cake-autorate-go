@@ -202,6 +202,9 @@ func (c *Core) Start(now time.Time) {
 // rate change, and Core keeps no state that the recording does not contain.
 func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
+	// The low load before the change was against another shaper rate: the
+	// cross-delay learning needs a new low-load time.
+	ds.lowLoadSince = time.Time{}
 	ds.paused = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
 	ds.autoMaxBreak()
@@ -269,6 +272,7 @@ func (c *Core) Calibrating() bool { return c.calibrating }
 // limit. SetPaused ends it (with the base rate).
 func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 	ds := c.getDirState(dir)
+	ds.lowLoadSince = time.Time{}
 	ds.paused = false
 	ds.shaperRateKbps = float64(rateKbps)
 	ds.autoMaxBreak()
@@ -315,7 +319,7 @@ func (c *Core) ResetReflector(reflector string, now time.Time) {
 }
 
 // unshapedReapply is the time between two applications of the rate of a
-// direction without a limit. The shaper does not send a rate that it sent
+// direction without a limit (the option unshaped, or a pause at 10 Gbit/s). The shaper does not send a rate that it sent
 // before (cache). If SQM sets up the qdisc again (for example after a
 // restart of the interface), CAKE has the SQM rate again: the next
 // application sets 10 Gbit/s again.
@@ -324,7 +328,13 @@ const unshapedReapply = 10 * time.Second
 // reapplyUnshaped applies the rate of the directions without a limit again,
 // at most each unshapedReapply.
 func (c *Core) reapplyUnshaped(now time.Time) {
-	if !c.link.Download.Unshaped && !c.link.Upload.Unshaped {
+	// A direction without a limit: the option unshaped, or a pause at
+	// 10 Gbit/s (the commands "nolimit" and "unshape").
+	noLimit := func(dir Direction) bool {
+		ds := c.getDirState(dir)
+		return c.link.DirConfig(dir).Unshaped || (ds.paused && ds.shaperRateKbps >= unshapedKbps)
+	}
+	if !noLimit(DL) && !noLimit(UL) {
 		return
 	}
 	if !c.lastUnshapedApply.IsZero() && now.Sub(c.lastUnshapedApply) < unshapedReapply {
@@ -333,8 +343,14 @@ func (c *Core) reapplyUnshaped(now time.Time) {
 	c.lastUnshapedApply = now
 	c.act.InvalidateShaper()
 	for _, dir := range Directions() {
+		if !noLimit(dir) {
+			continue
+		}
 		if c.link.DirConfig(dir).Unshaped {
 			c.applyRate(dir)
+		} else {
+			// A pause: the rate control stays off.
+			c.act.SetRate(dir, unshapedKbps)
 		}
 	}
 }
