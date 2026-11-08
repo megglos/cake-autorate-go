@@ -232,18 +232,18 @@ func TestGetState_UnknownReflector(t *testing.T) {
 	}
 }
 
-// If more than half of the active reflectors miss replies at the same time,
-// the loss is on the link: no reflector is replaced. When the loss stops
+// If more than half of the active reflectors miss some replies at the same
+// time (here 2 of 10), the loss is on the link: no reflector is replaced. When the loss stops
 // and only one reflector misses replies, it is replaced again.
 func TestReplaceUnhealthy_LinkLossReplacesNothing(t *testing.T) {
 	cfg := testConfig()
 	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
 	cfg.PingerCount = 4
 	cfg.ReflectorMisbehavingDetectionThr = 2
-	cfg.ReflectorMisbehavingDetectionWindow = 4
+	cfg.ReflectorMisbehavingDetectionWindow = 10
 	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
 	for addr := range pm.states {
-		pm.states[addr] = &ReflectorState{MissedWindow: make([]bool, 4)}
+		pm.states[addr] = &ReflectorState{MissedWindow: make([]bool, 10)}
 	}
 	before := append([]string(nil), pm.reflectors...)
 	for _, r := range pm.reflectors[:3] {
@@ -258,7 +258,7 @@ func TestReplaceUnhealthy_LinkLossReplacesNothing(t *testing.T) {
 	}
 
 	for _, r := range pm.reflectors[1:3] {
-		pm.states[r].MissedWindow = make([]bool, 4)
+		pm.states[r].MissedWindow = make([]bool, 10)
 	}
 	if p := pm.ReplaceUnhealthy(); len(p) != 1 {
 		t.Errorf("1 of 4 reflectors misses replies: promoted %v, want 1", p)
@@ -284,5 +284,50 @@ func TestReplaceUnhealthy_SingleActiveIsReplaced(t *testing.T) {
 	pm.states[first].MissedWindow[1] = true
 	if p := pm.ReplaceUnhealthy(); len(p) != 1 || pm.reflectors[0] == first {
 		t.Errorf("promoted %v, active %s: want the spare instead of %s", p, pm.reflectors[0], first)
+	}
+}
+
+// Most active reflectors stopped replying, and the link operates (one
+// reflector is healthy): the dead reflectors are replaced, also when they
+// are more than half of the active set.
+func TestReplaceUnhealthy_DeadMajorityIsReplaced(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6", "10.0.0.7"}
+	cfg.PingerCount = 4
+	cfg.ReflectorMisbehavingDetectionThr = 2
+	cfg.ReflectorMisbehavingDetectionWindow = 4
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	for addr := range pm.states {
+		pm.states[addr] = &ReflectorState{MissedWindow: make([]bool, 4)}
+	}
+	dead := append([]string(nil), pm.reflectors[:3]...)
+	for _, r := range dead {
+		pm.states[r].MissedWindow = []bool{true, true, true, true}
+	}
+	p := pm.ReplaceUnhealthy()
+	if len(p) != 3 {
+		t.Fatalf("promoted %v, want 3 spares for the dead reflectors", p)
+	}
+	for _, r := range dead {
+		if slices.Contains(pm.reflectors[:4], r) {
+			t.Errorf("dead reflector %s is still active: %v", r, pm.reflectors[:4])
+		}
+	}
+}
+
+// All active reflectors miss all replies (the link is down): no
+// replacement, the spares cannot help.
+func TestReplaceUnhealthy_AllDeadReplacesNothing(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
+	cfg.PingerCount = 4
+	cfg.ReflectorMisbehavingDetectionThr = 2
+	cfg.ReflectorMisbehavingDetectionWindow = 4
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	for addr := range pm.states {
+		pm.states[addr] = &ReflectorState{MissedWindow: []bool{true, true, true, true}}
+	}
+	if p := pm.ReplaceUnhealthy(); len(p) != 0 {
+		t.Errorf("promoted %v, want none", p)
 	}
 }

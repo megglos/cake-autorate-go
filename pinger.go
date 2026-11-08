@@ -219,21 +219,37 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 	// new reflectors get their baselines while the link has a queue. One
 	// reflector alone does not show a loss on the link: with pinger_count
 	// 1, a reflector that misses replies is replaced.
-	bad := 0
+	//
+	// A loss on the link is small and affects all reflectors. If some
+	// reflectors miss half or more of their pings and other active
+	// reflectors are healthy, those reflectors do not operate (for example,
+	// they stopped replying). They are replaced also in a loss on the link.
+	thr := pm.cfg.ReflectorMisbehavingDetectionThr
+	bad, healthy := 0, 0
 	for _, r := range pm.reflectors[:activeCount] {
-		if m, _ := missedOf(r); m >= pm.cfg.ReflectorMisbehavingDetectionThr {
+		switch m, _ := missedOf(r); {
+		case m >= thr:
 			bad++
+		case m < thr:
+			healthy++
 		}
 	}
-	if bad >= 2 && 2*bad > activeCount {
-		if !pm.linkLoss {
-			pm.logger.Infof("[%s] %d of %d reflectors miss replies at the same time: loss on the link, no reflector is replaced",
-				pm.link.Name, bad, activeCount)
-		}
-		pm.linkLoss = true
-		return nil
+	linkLoss := bad >= 2 && 2*bad > activeCount
+	if linkLoss && !pm.linkLoss {
+		pm.logger.Infof("[%s] %d of %d reflectors miss replies at the same time: loss on the link, only reflectors that do not operate are replaced",
+			pm.link.Name, bad, activeCount)
 	}
-	pm.linkLoss = false
+	pm.linkLoss = linkLoss
+	// replace tells if a reflector with the missed replies must go.
+	replace := func(missed, window int) bool {
+		if missed < thr {
+			return false
+		}
+		if !linkLoss {
+			return true
+		}
+		return healthy > 0 && 2*missed >= window
+	}
 
 	var promoted []string
 	for i := 0; i < activeCount; i++ {
@@ -241,9 +257,9 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 		if state == nil {
 			continue
 		}
-		missed, _ := missedOf(pm.reflectors[i])
+		missed, window := missedOf(pm.reflectors[i])
 
-		if missed >= pm.cfg.ReflectorMisbehavingDetectionThr && len(pm.reflectors) > activeCount {
+		if replace(missed, window) && len(pm.reflectors) > activeCount {
 			pm.logger.Infof("[%s] replacing misbehaving reflector %s (missed %d/%d)",
 				pm.link.Name, pm.reflectors[i], missed, len(state.MissedWindow))
 
