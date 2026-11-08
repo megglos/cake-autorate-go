@@ -665,6 +665,14 @@ function linkSection(m) {
 		o.rmempty = false;
 		o.modalonly = true;
 		o.onchange = onInterfaceChange;
+		// The service turns the rate control off for a direction without
+		// a limit (also with dl_adjust 1): show it so, else the hidden
+		// option "No … limit" goes away at the next save.
+		o.cfgvalue = function(sid) {
+			if (uci.get('cake-autorate', sid, this.option.replace('_adjust', '_unshaped')) == '1')
+				return '0';
+			return form.Flag.prototype.cfgvalue.call(this, sid);
+		};
 
 		o = s.taboption('interfaces', form.Flag, d + '_unshaped', _('No %s limit').format(title.toLowerCase()),
 			_('The service sets the rate of this shaper to 10 Gbit/s: no limit, no rate control. For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions.'));

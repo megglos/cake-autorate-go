@@ -755,7 +755,9 @@ return view.extend({
 		for (const [ key, dir, title ] of DIRECTIONS) {
 			const st = ls[key] || {};
 			const q = this.qdiscs.get(String(st.interface));
-			if (!st.adjust || !q || q.kind == 'cake')
+			// A direction without a limit also needs CAKE: the service
+			// sets its rate to 10 Gbit/s.
+			if ((!st.adjust && !st.unshaped) || !q || q.kind == 'cake')
 				continue;
 			const problem = q.kind
 				? _('%s: the interface %s has no CAKE (root qdisc: %s). The program cannot change the rate.').format(title, st.interface, q.kind)
