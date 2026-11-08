@@ -1262,6 +1262,21 @@ func TestUnshapedDirection_NoLimit(t *testing.T) {
 	if got := act.rates[UL]; len(got) != 1 || got[0] != cfg.Links[0].Upload.BaseRateKbps {
 		t.Errorf("ul rates %v, want [%d]", got, cfg.Links[0].Upload.BaseRateKbps)
 	}
+	if c.ShaperRateKbps(DL) != unshapedKbps {
+		t.Errorf("internal dl rate %.0f, want %d", c.ShaperRateKbps(DL), unshapedKbps)
+	}
+
+	// Each unshapedReapply, the rate is applied again with a new shaper
+	// cache: else a qdisc that SQM set up again keeps the SQM rate.
+	n, inv := len(act.rates[DL]), act.invalidates
+	t0 := time.Now()
+	c.HandleRate(RateStats{Timestamp: t0})
+	c.HandleRate(RateStats{Timestamp: t0.Add(time.Second)})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second)})
+	if got := len(act.rates[DL]) - n; got != 2 || act.invalidates-inv != 2 {
+		t.Errorf("reapplications: %d rates, %d invalidations; want 2 and 2", got, act.invalidates-inv)
+	}
+
 	st := c.Snapshot()
 	if !st.Download.Unshaped || st.Download.ShaperKbps != unshapedKbps || st.Upload.Unshaped {
 		t.Errorf("status: dl unshaped %v shaper %.0f, ul unshaped %v", st.Download.Unshaped, st.Download.ShaperKbps, st.Upload.Unshaped)

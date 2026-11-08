@@ -118,11 +118,14 @@ const reflectorBaselineKeep = 10 * time.Minute
 // Thus, the same events always give the same decisions.
 // Do not call Core from more than one goroutine at the same time.
 type Core struct {
-	name   string
-	link   *LinkConfig
-	cfg    *Config
-	act    Actuator
-	logger *Logger
+	// lastUnshapedApply is the time of the last application of the rate
+	// of the directions without a limit (see reapplyUnshaped).
+	lastUnshapedApply time.Time
+	name              string
+	link              *LinkConfig
+	cfg               *Config
+	act               Actuator
+	logger            *Logger
 
 	state               State
 	dl                  dirState
@@ -152,7 +155,7 @@ type Core struct {
 // NewCore creates a Core. dlMTU and ulMTU are the MTUs of the interfaces.
 // Core uses them for the wire packet compensation.
 func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logger *Logger) *Core {
-	return &Core{
+	c := &Core{
 		name:       link.Name,
 		link:       link,
 		cfg:        cfg,
@@ -172,6 +175,12 @@ func NewCore(link *LinkConfig, cfg *Config, dlMTU, ulMTU int, act Actuator, logg
 			delayWindow:    make([]bool, cfg.BufferbloatDetectionWindow),
 		},
 	}
+	for _, dir := range Directions() {
+		if link.DirConfig(dir).Unshaped {
+			c.getDirState(dir).shaperRateKbps = unshapedKbps
+		}
+	}
+	return c
 }
 
 // Start applies the initial shaper rates. Core starts with the assumption
@@ -298,9 +307,35 @@ func (c *Core) ResetReflector(reflector string, now time.Time) {
 	delete(c.reflectors, reflector)
 }
 
+// unshapedReapply is the time between two applications of the rate of a
+// direction without a limit. The shaper does not send a rate that it sent
+// before (cache). If SQM sets up the qdisc again (for example after a
+// restart of the interface), CAKE has the SQM rate again: the next
+// application sets 10 Gbit/s again.
+const unshapedReapply = 10 * time.Second
+
+// reapplyUnshaped applies the rate of the directions without a limit again,
+// at most each unshapedReapply.
+func (c *Core) reapplyUnshaped(now time.Time) {
+	if !c.link.Download.Unshaped && !c.link.Upload.Unshaped {
+		return
+	}
+	if !c.lastUnshapedApply.IsZero() && now.Sub(c.lastUnshapedApply) < unshapedReapply {
+		return
+	}
+	c.lastUnshapedApply = now
+	c.act.InvalidateShaper()
+	for _, dir := range Directions() {
+		if c.link.DirConfig(dir).Unshaped {
+			c.applyRate(dir)
+		}
+	}
+}
+
 // HandleRate processes a sample of the measured throughput.
 func (c *Core) HandleRate(stats RateStats) {
 	c.rateSeen = true
+	c.reapplyUnshaped(stats.Timestamp)
 	c.dl.achievedKbps = stats.DlRateKbps
 	c.ul.achievedKbps = stats.UlRateKbps
 	if c.cfg.StallRecoveryMs > 0 {
@@ -799,8 +834,9 @@ func (c *Core) setRates(dlKbps, ulKbps int) {
 func (c *Core) applyRate(dir Direction) {
 	ds := c.getDirState(dir)
 	if c.link.DirConfig(dir).Unshaped {
-		// No limit: always send the rate, the system can have changed it
-		// (for example SQM after a restart of the interface).
+		// No limit. The internal rate is the applied rate: the load and
+		// the serialization delay use it.
+		ds.shaperRateKbps = unshapedKbps
 		c.act.SetRate(dir, unshapedKbps)
 		return
 	}

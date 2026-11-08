@@ -69,10 +69,7 @@ func main() {
 		cfg.Debug = true
 	}
 	if *noAdjust {
-		for i := range cfg.Links {
-			cfg.Links[i].Download.Adjust = false
-			cfg.Links[i].Upload.Adjust = false
-		}
+		cfg.NoAdjust()
 	}
 
 	logFilePath := cfg.LogFilePath

@@ -433,6 +433,15 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Migrate legacy single-link config to links list
 	cfg.migrateLinks()
+	// A direction without a limit has no rate control (also in the legacy
+	// format).
+	for i := range cfg.Links {
+		for _, dc := range []*DirectionConfig{&cfg.Links[i].Download, &cfg.Links[i].Upload} {
+			if dc.Unshaped {
+				dc.Adjust = false
+			}
+		}
+	}
 	cfg.setDefaultModes()
 
 	if err := cfg.Validate(); err != nil {
@@ -465,11 +474,6 @@ func (c *Config) migrateLinks() {
 				c.Links[i].Name = fmt.Sprintf("link%d", i)
 			}
 			c.Links[i].setPingInterface(c.PingInterfaceName)
-			for _, dc := range []*DirectionConfig{&c.Links[i].Download, &c.Links[i].Upload} {
-				if dc.Unshaped {
-					dc.Adjust = false
-				}
-			}
 		}
 		return
 	}
@@ -820,4 +824,16 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("shaper_rate_adjust_up_load_low must be >= 1")
 	}
 	return nil
+}
+
+// NoAdjust turns the rate control of all links off, also the directions
+// without a limit (unshaped): the program then does not change the shapers
+// (option --no-adjust).
+func (c *Config) NoAdjust() {
+	for i := range c.Links {
+		for _, dc := range []*DirectionConfig{&c.Links[i].Download, &c.Links[i].Upload} {
+			dc.Adjust = false
+			dc.Unshaped = false
+		}
+	}
 }
