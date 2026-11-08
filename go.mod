@@ -1,10 +1,10 @@
 module github.com/megglos/cake-autorate-go
 
-go 1.24.0
+go 1.26.0
 
-toolchain go1.24.7
+toolchain go1.26.10
 
 require (
-	golang.org/x/sys v0.40.0
+	golang.org/x/sys v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )
