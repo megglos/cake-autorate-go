@@ -284,10 +284,11 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }
 
 // NoLimit reports whether a direction is paused without a limit (the
-// command "nolimit"): paused at unshapedKbps, outside the unshaped mode.
+// command "nolimit"): paused at exactly unshapedKbps, outside the unshaped
+// mode. A pause at a configured base rate above 10 Gbit/s is a pause.
 func (c *Core) NoLimit(dir Direction) bool {
 	ds := c.getDirState(dir)
-	return ds.paused && !c.unshaped && ds.shaperRateKbps >= unshapedKbps
+	return ds.paused && !c.unshaped && ds.shaperRateKbps == unshapedKbps
 }
 
 // State returns the current operating state.
@@ -332,7 +333,7 @@ func (c *Core) reapplyUnshaped(now time.Time) {
 	// 10 Gbit/s (the commands "nolimit" and "unshape").
 	noLimit := func(dir Direction) bool {
 		ds := c.getDirState(dir)
-		return c.link.DirConfig(dir).Unshaped || (ds.paused && ds.shaperRateKbps >= unshapedKbps)
+		return c.link.DirConfig(dir).Unshaped || (ds.paused && ds.shaperRateKbps == unshapedKbps)
 	}
 	if !noLimit(DL) && !noLimit(UL) {
 		return

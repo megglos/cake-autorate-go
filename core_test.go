@@ -2743,3 +2743,26 @@ func TestNoLimitPause_ReapplyAndResume(t *testing.T) {
 		t.Error("after resume, the low-load time from 10 Gbit/s stays")
 	}
 }
+
+// A pause at a configured base rate above 10 Gbit/s is an ordinary pause:
+// not "no limit", and the reapplication does not send 10 Gbit/s.
+func TestPauseAboveUnshapedRateIsNotNoLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	cfg.Links[0].Download.BaseRateKbps = 12_000_000
+	cfg.Links[0].Download.MaxRateKbps = 12_000_000
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	t0 := time.Now()
+	c.Start(t0)
+	c.SetPaused(DL, true)
+	if c.NoLimit(DL) {
+		t.Error("a pause at 12 Gbit/s is not a no-limit pause")
+	}
+	n := len(act.rates[DL])
+	c.HandleRate(RateStats{Timestamp: t0})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second)})
+	if len(act.rates[DL]) != n {
+		t.Errorf("rates after the pause: %v, want none (no reapplication)", act.rates[DL][n:])
+	}
+}
