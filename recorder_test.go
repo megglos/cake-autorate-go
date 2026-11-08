@@ -10,12 +10,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -600,14 +602,12 @@ func TestRecorder_CheckpointKeepsDataBeforeDamage(t *testing.T) {
 	}
 	rec.Start("test", start)
 	rec.Shaper("test", UL, 20000, start.Add(time.Second))
+	// The boundary is the byte count under the lock: the flush loop can
+	// write the header of the next member after the unlock.
 	rec.mu.Lock()
 	rec.checkpointLocked()
+	good := rec.counter.n
 	rec.mu.Unlock()
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	good := fi.Size()
 	rec.Shaper("test", UL, 30000, start.Add(2*time.Second))
 	if err := rec.Close(); err != nil {
 		t.Fatal(err)
@@ -645,4 +645,84 @@ func TestRecorder_CheckpointKeepsDataBeforeDamage(t *testing.T) {
 	if len(lines) < 3 || !strings.Contains(lines[2], `"rate_kbps":20000`) {
 		t.Errorf("after the damage: %d lines %q, want the header and the 2 events before the checkpoint", len(lines), lines)
 	}
+}
+
+// The flush loop writes the file to the disk at each checkpoint, also after
+// an fsync error and after a stop at the size limit, and Close writes it at
+// the end.
+func TestRecorder_Sync(t *testing.T) {
+	oldFlush, oldSync, oldSyncFile := recordFlushInterval, recordSyncInterval, syncFile
+	recordFlushInterval, recordSyncInterval = 5*time.Millisecond, 20*time.Millisecond
+	var mu sync.Mutex
+	syncs, fail := 0, true
+	syncFile = func(*os.File) error {
+		mu.Lock()
+		defer mu.Unlock()
+		syncs++
+		if fail {
+			fail = false
+			return errors.New("test: fsync error")
+		}
+		return nil
+	}
+	t.Cleanup(func() { recordFlushInterval, recordSyncInterval, syncFile = oldFlush, oldSync, oldSyncFile })
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return syncs
+	}
+
+	path := filepath.Join(t.TempDir(), "rec.jsonl.gz")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rec, err := newRecorderAt(path, 0, testConfig(), start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Start("test", start)
+	deadline := time.Now().Add(5 * time.Second)
+	for count() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if count() < 3 {
+		t.Fatalf("%d fsyncs in the flush loop, want 3 or more", count())
+	}
+	// After the fsync error, the recording continues.
+	rec.Shaper("test", UL, 20000, start.Add(time.Second))
+	before := count()
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if count() <= before {
+		t.Error("Close did not write the file to the disk")
+	}
+	if n := len(readRecording(t, path)); n != 3 {
+		t.Errorf("%d lines, want 3 (header, start, shaper)", n)
+	}
+
+	// A recording that stopped at the size limit is still written to the
+	// disk at each checkpoint.
+	path = filepath.Join(t.TempDir(), "small.jsonl.gz")
+	rec, err = newRecorderAt(path, 1, testConfig(), start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for !rec.stoppedNow() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	before = count()
+	for count() < before+2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if count() < before+2 {
+		t.Errorf("no fsync after the stop at the size limit")
+	}
+	rec.Close()
+}
+
+// stoppedNow reports whether the recorder stopped (test helper).
+func (r *Recorder) stoppedNow() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopped
 }
