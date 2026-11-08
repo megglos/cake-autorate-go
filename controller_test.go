@@ -544,3 +544,61 @@ func TestStopRetriesShape(t *testing.T) {
 		t.Errorf("after the stop: unshaped %v, rates %v", c.core.Core().Unshaped(), act.rates)
 	}
 }
+
+// "nolimit" sets 10 Gbit/s and stops the rate control of a direction, the
+// status shows it, and "resume" starts the rate control again from the base
+// rate. "unshape" and "shape" keep the no-limit state.
+func TestSetNoLimit(t *testing.T) {
+	c, act := testUnshapeController(t)
+	core := c.core.Core()
+	if err := c.SetNoLimit([]Direction{DL}); err != nil {
+		t.Fatal(err)
+	}
+	if lastRate(act, DL) != unshapedKbps || !core.NoLimit(DL) || core.NoLimit(UL) {
+		t.Fatalf("dl rate %d, nolimit dl %v ul %v", lastRate(act, DL), core.NoLimit(DL), core.NoLimit(UL))
+	}
+	c.publishStatus()
+	if st := boardStatus(c); !st.Download.NoLimit || st.Upload.NoLimit {
+		t.Errorf("status: dl nolimit %v, ul nolimit %v", st.Download.NoLimit, st.Upload.NoLimit)
+	}
+
+	if err := c.SetUnshaped(true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if core.NoLimit(DL) {
+		t.Error("while the shaping is off, the direction is not in the no-limit state")
+	}
+	if err := c.SetUnshaped(false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !core.NoLimit(DL) || lastRate(act, DL) != unshapedKbps {
+		t.Errorf("after shape: dl nolimit %v, rate %d; want the no-limit state again", core.NoLimit(DL), lastRate(act, DL))
+	}
+	if core.Paused(UL) || lastRate(act, UL) != c.link.Upload.BaseRateKbps {
+		t.Errorf("after shape: ul paused %v, rate %d", core.Paused(UL), lastRate(act, UL))
+	}
+
+	if err := c.SetPaused([]Direction{DL}, false); err != nil {
+		t.Fatal(err)
+	}
+	if core.NoLimit(DL) || core.Paused(DL) || lastRate(act, DL) != c.link.Download.BaseRateKbps {
+		t.Errorf("after resume: nolimit %v, paused %v, rate %d", core.NoLimit(DL), core.Paused(DL), lastRate(act, DL))
+	}
+
+	// While the shaping is off, "nolimit" is refused.
+	if err := c.SetUnshaped(true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetNoLimit([]Direction{UL}); err == nil {
+		t.Error("nolimit while the shaping is off: no error")
+	}
+}
+
+// A direction without rate control (adjust false) refuses "nolimit".
+func TestSetNoLimitNeedsAdjust(t *testing.T) {
+	c, _ := testUnshapeController(t)
+	c.link.Upload.Adjust = false
+	if err := c.SetNoLimit([]Direction{UL}); err == nil {
+		t.Error("nolimit without rate control: no error")
+	}
+}

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 //
-// rpcd plugin of luci-app-cake-autorate-go. It sends the commands "pause"
-// and "resume" to the control socket of cake-autorate-go. The ACL of the
+// rpcd plugin of luci-app-cake-autorate-go. It sends the commands "pause",
+// "resume" and "nolimit" to the control socket of cake-autorate-go. The ACL of the
 // app gives these methods only to the users that can write the
 // configuration. The method "history" gives the samples of the last 15
 // minutes, for the graphs. The methods "calibrate_start",
@@ -277,6 +277,12 @@ return {
 			args: { link: 'link', dir: 'dir' },
 			call: function(req) {
 				return pause_resume('resume', req.args);
+			}
+		},
+		nolimit: {
+			args: { link: 'link', dir: 'dir' },
+			call: function(req) {
+				return pause_resume('nolimit', req.args);
 			}
 		}
 	}

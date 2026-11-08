@@ -17,11 +17,13 @@ function rate(kbps) {
 }
 
 // Returns the nodes for a direction: the shaper rate, the delay delta and
-// the label "Paused" if a user paused the rate control.
+// the label "Paused" or "No limit" if a user paused the rate control.
 function direction(st) {
 	st = st || {};
 	const nodes = [ text(rate(st.shaper_kbps) + ' (' + '%.1f ms'.format(+st.delta_ms || 0) + ')') ];
-	if (st.paused)
+	if (st.nolimit)
+		nodes.push(' ', E('span', { 'class': 'label notice', 'data-control': 'nolimit' }, _('No limit')));
+	else if (st.paused)
 		nodes.push(' ', common.controlLabel(true));
 	return nodes;
 }

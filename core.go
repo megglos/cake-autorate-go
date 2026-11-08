@@ -279,6 +279,13 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 // Paused reports whether the rate control of a direction is paused.
 func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }
 
+// NoLimit reports whether a direction is paused without a limit (the
+// command "nolimit"): paused at unshapedKbps, outside the unshaped mode.
+func (c *Core) NoLimit(dir Direction) bool {
+	ds := c.getDirState(dir)
+	return ds.paused && !c.unshaped && ds.shaperRateKbps >= unshapedKbps
+}
+
 // State returns the current operating state.
 func (c *Core) State() State { return c.state }
 
@@ -561,10 +568,10 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 	ul := &c.ul
 	// Without shaping, the load of the upload is against 10 Gbit/s: a
 	// saturated upload has a low load, and its queue is not cross delay.
-	// Without a limit (the command "unshape" or the option unshaped), the
-	// upload load against 10 Gbit/s is always low, also on a full link:
-	// the delay can be a queue, thus do not learn it.
-	if !c.unshaped && !c.link.Upload.Unshaped && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+	// Without a limit (the commands "unshape" and "nolimit", the option
+	// unshaped), the upload load against 10 Gbit/s is always low, also on
+	// a full link: the delay can be a queue, thus do not learn it.
+	if !c.unshaped && ul.shaperRateKbps < unshapedKbps && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
 		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
 	}

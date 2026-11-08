@@ -27,7 +27,9 @@ import (
 // line and reads one line as the answer: "ok" or "error: MESSAGE".
 //
 //	pause LINK [dl|ul]    pause the rate control (both directions if not set)
-//	resume LINK [dl|ul]   resume the rate control
+//	resume LINK [dl|ul]   resume the rate control (also after "nolimit")
+//	nolimit LINK [dl|ul]  no limit: shaper at 10 Gbit/s, no rate control
+//	                      (both directions if not set), until "resume"
 //	unshape LINK [SECONDS] turn the shaping of the link off (for SECONDS,
 //	                      1 to 3600; without SECONDS until "shape")
 //	shape LINK            turn the shaping of the link on again
@@ -72,6 +74,7 @@ var oneLine = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 // LinkControl is the part of a link controller that the control socket uses.
 type LinkControl interface {
 	SetPaused(dirs []Direction, paused bool) error
+	SetNoLimit(dirs []Direction) error
 	SetUnshaped(on bool, d time.Duration) error
 	SetMode(m LinkMode, d time.Duration) error
 }
@@ -127,7 +130,7 @@ func handleControlCommand(line string, h *ControlHandler) string {
 		return handleCalibrateCommand(f[1:], h)
 	case "pin", "unpin":
 		return handlePinCommand(f, h)
-	case "pause", "resume":
+	case "pause", "resume", "nolimit":
 		if len(f) < 2 || len(f) > 3 {
 			return fmt.Sprintf("error: usage: %s LINK [dl|ul]", f[0])
 		}
@@ -146,7 +149,13 @@ func handleControlCommand(line string, h *ControlHandler) string {
 				return fmt.Sprintf("error: unknown direction %q, use dl or ul", f[2])
 			}
 		}
-		if err := lc.SetPaused(dirs, f[0] == "pause"); err != nil {
+		var err error
+		if f[0] == "nolimit" {
+			err = lc.SetNoLimit(dirs)
+		} else {
+			err = lc.SetPaused(dirs, f[0] == "pause")
+		}
+		if err != nil {
 			return "error: " + oneLine.Replace(err.Error())
 		}
 		return "ok"

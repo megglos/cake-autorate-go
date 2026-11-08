@@ -20,6 +20,7 @@ type fakeLinkControl struct {
 	unshaped []bool // the arguments of SetUnshaped
 	unshapeD time.Duration
 	modes    []string // the arguments of SetMode
+	noLimit  bool     // SetNoLimit was called
 	err      error
 }
 
@@ -39,6 +40,11 @@ func (f *fakeLinkControl) SetPaused(dirs []Direction, paused bool) error {
 	return f.err
 }
 
+func (f *fakeLinkControl) SetNoLimit(dirs []Direction) error {
+	f.dirs, f.noLimit = dirs, true
+	return f.err
+}
+
 func TestHandleControlCommand(t *testing.T) {
 	a := &fakeLinkControl{}
 	links := map[string]LinkControl{"a": a}
@@ -54,6 +60,10 @@ func TestHandleControlCommand(t *testing.T) {
 		{"pause a dl\n", "ok", []Direction{DL}, true},
 		{"pause x", `error: unknown link "x"`, nil, false},
 		{"pause a sideways", "error: unknown direction", nil, false},
+		{"nolimit a dl", "ok", []Direction{DL}, false},
+		{"nolimit a", "ok", []Direction{DL, UL}, false},
+		{"nolimit a sideways", "error: unknown direction", nil, false},
+		{"nolimit", "error: usage: nolimit LINK [dl|ul]", nil, false},
 		{"pause", "error: usage", nil, false},
 		{"", "error: empty", nil, false},
 		{"stop a", "error: unknown command", nil, false},
