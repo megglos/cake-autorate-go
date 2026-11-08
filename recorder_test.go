@@ -683,8 +683,11 @@ func TestRecorder_Sync(t *testing.T) {
 	for count() < 3 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if count() < 3 {
-		t.Fatalf("%d fsyncs in the flush loop, want 3 or more", count())
+	if n := count(); n < 3 {
+		// Close first: the flush loop must stop before the cleanup
+		// restores the variables.
+		rec.Close()
+		t.Fatalf("%d fsyncs in the flush loop, want 3 or more", n)
 	}
 	// After the fsync error, the recording continues.
 	rec.Shaper("test", UL, 20000, start.Add(time.Second))
