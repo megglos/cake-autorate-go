@@ -998,8 +998,16 @@ return view.extend({
 			// selection.
 			this.selection = selection;
 			if (key) {
-				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
-					(e) => e.dataset.focus == key);
+				const find = (k) => Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
+					(e) => e.dataset.focus == k);
+				let target = find(key);
+				// After "No limit", its button is gone: the focus goes to
+				// the button "Resume" of the same direction.
+				if (!target) {
+					const k = JSON.parse(key);
+					if (k[1] == 'nolimit')
+						target = find(focusKey(k[0], 'button', k[2]));
+				}
 				if (target)
 					target.focus();
 			}

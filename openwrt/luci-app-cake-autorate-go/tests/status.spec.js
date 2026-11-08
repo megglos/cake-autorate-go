@@ -169,6 +169,17 @@ test('no limit and resume one direction', async ({ page }) => {
 	expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 20Mbit');
 });
 
+test('the keyboard focus goes from "No limit" to "Resume"', async ({ page }) => {
+	await page.goto(PAGE);
+	const dl = page.locator('tr[data-dir="dl"]');
+	await dl.locator('button[data-nolimit]').focus();
+	await page.keyboard.press('Enter');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Resume', { timeout: 10000 });
+	await expect(dl.locator('button[data-dir]')).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Pause', { timeout: 10000 });
+});
+
 test('the mode dialog sets the mode for a time, then the status shows it', async ({ page }) => {
 	await page.goto(PAGE);
 	const link = page.locator('.cbi-section[data-link="wan"]');
