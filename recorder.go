@@ -247,20 +247,30 @@ func (r *Recorder) flushLoop() {
 			return
 		case now := <-ticker.C:
 			r.mu.Lock()
-			if now.Sub(lastSync) >= recordSyncInterval {
-				lastSync = now
-				r.checkpointLocked()
-			} else {
+			if now.Sub(lastSync) < recordSyncInterval {
 				r.flushLocked()
+				r.mu.Unlock()
+				continue
 			}
+			lastSync = now
+			r.checkpointLocked()
+			stopped := r.stopped
 			r.mu.Unlock()
+			// The fsync is outside the lock: a slow USB drive must not
+			// stop the events (the rate control records them). Close
+			// waits for this loop, thus the file is still open.
+			if !stopped {
+				if err := r.file.Sync(); err != nil {
+					r.logger.Debugf("recording: fsync: %v", err)
+				}
+			}
 		}
 	}
 }
 
-// checkpointLocked writes the buffer, ends the gzip member, starts a new
-// member and writes the file to the disk (see recordSyncInterval). The
-// caller must hold r.mu.
+// checkpointLocked writes the buffer, ends the gzip member and starts a new
+// member (see recordSyncInterval). The caller must hold r.mu, and it calls
+// fsync after it releases r.mu.
 func (r *Recorder) checkpointLocked() {
 	r.flushLocked()
 	if r.stopped {
@@ -272,9 +282,6 @@ func (r *Recorder) checkpointLocked() {
 			return
 		}
 		r.gz.Reset(r.counter)
-	}
-	if err := r.file.Sync(); err != nil {
-		r.logger.Debugf("recording: fsync: %v", err)
 	}
 }
 
@@ -339,6 +346,11 @@ func (r *Recorder) Close() error {
 		if err := r.gz.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// The end of the file on the disk: after a stop of the service, a
+	// power-off loses nothing.
+	if err := r.file.Sync(); err != nil {
+		r.logger.Debugf("recording: fsync: %v", err)
 	}
 	if err := r.file.Close(); err != nil {
 		errs = append(errs, err)

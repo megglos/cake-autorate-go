@@ -618,11 +618,21 @@ func TestRecorder_CheckpointKeepsDataBeforeDamage(t *testing.T) {
 		t.Fatalf("complete file: %d lines, want 4", n)
 	}
 
-	// Damage the second member: the first member stays readable.
+	// The part before the checkpoint is a complete gzip member: it
+	// decompresses without an error.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	zr0, err := gzip.NewReader(bytes.NewReader(data[:good]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := io.ReadAll(zr0); err != nil || strings.Count(string(first), "\n") != 3 {
+		t.Fatalf("first member: %d lines, error %v; want 3 lines and no error", strings.Count(string(first), "\n"), err)
+	}
+
+	// Damage the second member: the first member stays readable.
 	for i := good + 10; i < int64(len(data)); i++ {
 		data[i] = 0
 	}
