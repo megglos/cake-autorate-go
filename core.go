@@ -798,6 +798,12 @@ func (c *Core) setRates(dlKbps, ulKbps int) {
 
 func (c *Core) applyRate(dir Direction) {
 	ds := c.getDirState(dir)
+	if c.link.DirConfig(dir).Unshaped {
+		// No limit: always send the rate, the system can have changed it
+		// (for example SQM after a restart of the interface).
+		c.act.SetRate(dir, unshapedKbps)
+		return
+	}
 	if ds.paused || !c.link.DirConfig(dir).Adjust {
 		return
 	}

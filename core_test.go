@@ -1239,6 +1239,35 @@ func TestStart_AppliesBaseRates(t *testing.T) {
 	}
 }
 
+// A direction without a limit (unshaped) gets the rate unshapedKbps at the
+// start and at each rate change (also after a bufferbloat decision of the
+// Core), and the status shows it. The other direction has rate control.
+func TestUnshapedDirection_NoLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Unshaped = true
+	cfg.Links[0].Upload.Adjust = true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	c.Start(time.Now())
+	c.dl.achievedKbps = 50000
+	c.adjustRateBufferbloat(DL, 80000, 30000)
+	for _, r := range act.rates[DL] {
+		if r != unshapedKbps {
+			t.Fatalf("dl rates %v, want only %d", act.rates[DL], unshapedKbps)
+		}
+	}
+	if len(act.rates[DL]) == 0 {
+		t.Fatal("no dl rate at the start")
+	}
+	if got := act.rates[UL]; len(got) != 1 || got[0] != cfg.Links[0].Upload.BaseRateKbps {
+		t.Errorf("ul rates %v, want [%d]", got, cfg.Links[0].Upload.BaseRateKbps)
+	}
+	st := c.Snapshot()
+	if !st.Download.Unshaped || st.Download.ShaperKbps != unshapedKbps || st.Upload.Unshaped {
+		t.Errorf("status: dl unshaped %v shaper %.0f, ul unshaped %v", st.Download.Unshaped, st.Download.ShaperKbps, st.Upload.Unshaped)
+	}
+}
+
 func TestApplyRate_SkippedWhenAdjustDisabled(t *testing.T) {
 	c, act := newTestCore(t)
 	c.dl.shaperRateKbps = 40000

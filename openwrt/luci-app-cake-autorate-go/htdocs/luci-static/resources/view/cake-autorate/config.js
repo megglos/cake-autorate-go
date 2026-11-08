@@ -662,6 +662,11 @@ function linkSection(m) {
 		o.rmempty = false;
 		o.modalonly = true;
 		o.onchange = onInterfaceChange;
+
+		o = s.taboption('interfaces', form.Flag, d + '_unshaped', _('No %s limit').format(title.toLowerCase()),
+			_('The service sets the rate of this shaper to 10 Gbit/s: no limit, no rate control. For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions.'));
+		o.depends(d + '_adjust', '0');
+		o.modalonly = true;
 	}
 
 	for (const [ d, title ] of DIRECTIONS) {

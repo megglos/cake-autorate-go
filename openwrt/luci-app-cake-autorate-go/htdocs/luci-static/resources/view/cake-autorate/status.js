@@ -727,6 +727,8 @@ return view.extend({
 	},
 
 	renderControl: function(link, dir, st, unshaped) {
+		if (st.unshaped)
+			return E('em', {}, _('Off (no limit)'));
 		if (!st.adjust)
 			return E('em', {}, _('Off (adjust)'));
 		if (unshaped)
@@ -1019,7 +1021,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. Click "Reflectors" of a link to show its reflectors. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service: the base rate stays a limit. For a direction without a limit, use "No download limit" or "No upload limit" on the configuration page. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. Click "Reflectors" of a link to show its reflectors. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

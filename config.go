@@ -33,8 +33,13 @@ func Directions() [2]Direction { return [2]Direction{DL, UL} }
 
 // DirectionConfig holds rate limits for one direction.
 type DirectionConfig struct {
-	Interface                  string  `yaml:"interface"`
-	Adjust                     bool    `yaml:"adjust"`
+	Interface string `yaml:"interface"`
+	Adjust    bool   `yaml:"adjust"`
+	// Unshaped sets the shaper of the direction to a rate without a useful
+	// limit (unshapedKbps) and turns the rate control off (Adjust false).
+	// For example for a 5G download with little bufferbloat without a
+	// shaper, while the upload needs the rate control.
+	Unshaped                   bool    `yaml:"unshaped"`
 	MinRateKbps                int     `yaml:"min_rate_kbps"`
 	BaseRateKbps               int     `yaml:"base_rate_kbps"`
 	MaxRateKbps                int     `yaml:"max_rate_kbps"`
@@ -460,6 +465,11 @@ func (c *Config) migrateLinks() {
 				c.Links[i].Name = fmt.Sprintf("link%d", i)
 			}
 			c.Links[i].setPingInterface(c.PingInterfaceName)
+			for _, dc := range []*DirectionConfig{&c.Links[i].Download, &c.Links[i].Upload} {
+				if dc.Unshaped {
+					dc.Adjust = false
+				}
+			}
 		}
 		return
 	}

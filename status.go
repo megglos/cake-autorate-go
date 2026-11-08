@@ -28,6 +28,9 @@ const statusInterval = time.Second
 type DirStatus struct {
 	Interface string `json:"interface"`
 	Adjust    bool   `json:"adjust"`
+	// Unshaped is true if the config sets the direction without a limit
+	// (unshaped): the shaper rate is unshapedKbps.
+	Unshaped bool `json:"unshaped,omitempty"`
 	// Paused is true while a user paused the rate control of the
 	// direction through the control socket.
 	Paused       bool    `json:"paused"`
@@ -107,11 +110,16 @@ func (c *Core) Snapshot() LinkStatus {
 		Mode: c.mode, ConfigMode: linkModeOf(c.cfg, c.link)}
 	for _, dir := range Directions() {
 		ds, dc := c.getDirState(dir), c.link.DirConfig(dir)
+		shaperKbps := ds.shaperRateKbps
+		if dc.Unshaped {
+			shaperKbps = unshapedKbps
+		}
 		out := DirStatus{
 			Interface:        dc.Interface,
 			Adjust:           dc.Adjust,
+			Unshaped:         dc.Unshaped,
 			Paused:           ds.paused,
-			ShaperKbps:       ds.shaperRateKbps,
+			ShaperKbps:       shaperKbps,
 			AchievedKbps:     ds.achievedKbps,
 			LoadPercent:      ds.loadPercent * 100,
 			MinKbps:          dc.MinRateKbps,
