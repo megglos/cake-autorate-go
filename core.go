@@ -697,6 +697,16 @@ func (c *Core) adjustRateBufferbloat(dir Direction, deltaUs, thresholdUs float64
 	// in the other direction also gives bufferbloat in this direction. Then
 	// the achieved rate shows only the demand, and each decrease goes lower
 	// until the rate is at the minimum.
+	// Below the minimum rate, the traffic of the direction is too small to
+	// fill the shaper at any allowed rate: the delay does not come from a
+	// queue in the shaper (for example, on 5G, the delay of the radio
+	// scheduling or of the traffic in the other direction). A decrease then
+	// only limits the next load of the direction. Thus, do not decrease.
+	// The original cake-autorate decreases also here.
+	if dir == UL && c.lastPingOWD && ds.achievedKbps < float64(dc.MinRateKbps) {
+		return
+	}
+
 	fromRate := ds.shaperRateKbps
 	if c.lastPingOWD && ds.achievedKbps > float64(dc.MinRateKbps) && ds.achievedKbps < fromRate {
 		fromRate = ds.achievedKbps

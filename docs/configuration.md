@@ -243,6 +243,8 @@ high_load_thr: 0.75    # Part of the current rate that is "high load" (0.0 to 1.
 increase_to_delay_thr: false
 ```
 
+With one-way delays (`ping_method: icmp-timestamp`), the upload rate does not decrease on bufferbloat while the achieved upload rate is below the upload `min_rate_kbps`. Then the upload is too small to fill the shaper at any allowed rate, and the delay does not come from a queue in the shaper (on 5G, for example, from the radio scheduling or from the download). A decrease would only limit the next upload. At a LAN party with two 5G links, the upload shaper of one link was below half of its base rate for 18 % of the time without this rule (replay: 2 % with it). The download and the pings with RTT/2 operate as before: there, an achieved rate below the minimum can also come from a capacity drop. The original cake-autorate decreases in all these cases.
+
 At high load, the increase for each step is between the minimum and the maximum. The delay of the last ping sets it:
 
 - `increase_to_delay_thr: false` (default): the maximum at a delay of 0, zero at `avg_owd_delta_max_adjust_up_thr_ms` and above.
