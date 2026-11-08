@@ -2270,6 +2270,27 @@ func TestUnshapedPreventsIdle(t *testing.T) {
 // Without shaping, a saturated upload has a low load against 10 Gbit/s:
 // its queue must not go into the learned cross delay, also not after
 // "shape".
+// An upload without a limit from the config (unshaped) also does not learn
+// cross delay: its load against 10 Gbit/s is always low.
+func TestUnshapedOptionDoesNotLearnCrossDelay(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Unshaped = true
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 70, 10))
+	}
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("unshaped upload: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+}
+
 func TestUnshapedDoesNotLearnCrossDelay(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.cfg.LearnCrossDelay = true

@@ -581,7 +581,10 @@ function linkSection(m) {
 		const node = sqmCheckNodes[sid];
 		if (!node)
 			return;
-		const ifname = (d) => section.formvalue(sid, d + '_adjust') == '0'
+		// A direction without rate control needs no CAKE, but a direction
+		// without a limit does: the service sets the rate of its CAKE.
+		const ifname = (d) => (section.formvalue(sid, d + '_adjust') == '0' &&
+				section.formvalue(sid, d + '_unshaped') != '1')
 			? '' : section.formvalue(sid, d + '_interface');
 		const warnings = sqmWarnings(ifname('dl'), ifname('ul'));
 		// Text nodes: the warnings contain UCI values.
@@ -667,6 +670,7 @@ function linkSection(m) {
 			_('The service sets the rate of this shaper to 10 Gbit/s: no limit, no rate control. For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions.'));
 		o.depends(d + '_adjust', '0');
 		o.modalonly = true;
+		o.onchange = onInterfaceChange;
 	}
 
 	for (const [ d, title ] of DIRECTIONS) {
