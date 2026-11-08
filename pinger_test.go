@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -101,9 +102,11 @@ func TestReplaceUnhealthy_ReplacesWhenThresholdExceeded(t *testing.T) {
 func TestReplaceUnhealthy_ConsecutiveMisbehaving(t *testing.T) {
 	// Regression test: when two consecutive active reflectors are both
 	// misbehaving, the second one should not be skipped after the first
-	// is replaced (forward iteration with slice mutation).
+	// is replaced (forward iteration with slice mutation). Two of four
+	// active reflectors: not more than half, thus not a loss on the link.
 	cfg := testConfig()
-	cfg.PingerCount = 2
+	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
+	cfg.PingerCount = 4
 	cfg.ReflectorMisbehavingDetectionThr = 2
 	cfg.ReflectorMisbehavingDetectionWindow = 4
 	logger := testLogger(t)
@@ -226,5 +229,41 @@ func TestGetState_UnknownReflector(t *testing.T) {
 	state := pm.GetState("192.168.1.1") // not in reflector list
 	if state != nil {
 		t.Error("expected nil for unknown reflector")
+	}
+}
+
+// If more than half of the active reflectors miss replies at the same time,
+// the loss is on the link: no reflector is replaced. When the loss stops
+// and only one reflector misses replies, it is replaced again.
+func TestReplaceUnhealthy_LinkLossReplacesNothing(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Reflectors = []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
+	cfg.PingerCount = 4
+	cfg.ReflectorMisbehavingDetectionThr = 2
+	cfg.ReflectorMisbehavingDetectionWindow = 4
+	pm := NewPingerManager(&cfg.Links[0], cfg, testLogger(t))
+	for addr := range pm.states {
+		pm.states[addr] = &ReflectorState{MissedWindow: make([]bool, 4)}
+	}
+	before := append([]string(nil), pm.reflectors...)
+	for _, r := range pm.reflectors[:3] {
+		pm.states[r].MissedWindow[0] = true
+		pm.states[r].MissedWindow[1] = true
+	}
+	if p := pm.ReplaceUnhealthy(); len(p) != 0 || !slices.Equal(pm.reflectors, before) {
+		t.Fatalf("3 of 4 reflectors miss replies: promoted %v, order %v; want no change", p, pm.reflectors)
+	}
+	if !pm.linkLoss {
+		t.Error("the link loss is not marked")
+	}
+
+	for _, r := range pm.reflectors[1:3] {
+		pm.states[r].MissedWindow = make([]bool, 4)
+	}
+	if p := pm.ReplaceUnhealthy(); len(p) != 1 {
+		t.Errorf("1 of 4 reflectors misses replies: promoted %v, want 1", p)
+	}
+	if pm.linkLoss {
+		t.Error("the link loss is still marked")
 	}
 }

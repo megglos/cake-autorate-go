@@ -169,7 +169,7 @@ pinger_count: 6          # Number of reflectors that the program pings at the sa
 ping_interval_ms: 300    # Time between two pings to one reflector (ms)
 ```
 
-The program counts the missed replies of each active reflector. A reflector misses too many replies when it misses `reflector_misbehaving_detection_thr` of the last `reflector_misbehaving_detection_window` pings. Then the program replaces it with a spare reflector: a reflector from the list that is not active. The list must thus have more reflectors than `pinger_count`. Else, the reflector stays active. The program does not examine the delay of a reflector: a reflector with a high or unstable delay stays active.
+The program counts the missed replies of each active reflector. A reflector misses too many replies when it misses `reflector_misbehaving_detection_thr` of the last `reflector_misbehaving_detection_window` pings. Then the program replaces it with a spare reflector: a reflector from the list that is not active. The list must thus have more reflectors than `pinger_count`. Else, the reflector stays active. If more than half of the active reflectors miss too many replies at the same time, the loss is on the link (for example under high load on a 5G link), not in the reflectors: then the program replaces no reflector. A spare reflector that replied in the last 10 minutes keeps its delay baseline when it becomes active again; else it gets a new baseline. The program does not examine the delay of a reflector: a reflector with a high or unstable delay stays active.
 
 ## Ping method
 

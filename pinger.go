@@ -51,6 +51,10 @@ type PingerManager struct {
 	reflectors []string
 	states     map[string]*ReflectorState
 	mu         sync.RWMutex
+	// linkLoss is true while more than half of the active reflectors miss
+	// replies (see ReplaceUnhealthy). It prevents a log message at each
+	// health check.
+	linkLoss bool
 	// onSend, if set, gets each request that a pinger sent.
 	// The calibration probe counts them: a request without a result
 	// at the end of the probe is lost. It must be safe for parallel calls.
@@ -194,20 +198,48 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 		activeCount = len(pm.reflectors)
 	}
 
+	missedOf := func(r string) (missed, window int) {
+		state := pm.states[r]
+		if state == nil {
+			return 0, 0
+		}
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		for _, m := range state.MissedWindow {
+			if m {
+				missed++
+			}
+		}
+		return missed, len(state.MissedWindow)
+	}
+
+	// If more than half of the active reflectors miss replies at the same
+	// time, the loss is on the link (for example, under high load), not in
+	// the reflectors. A replacement then removes good reflectors, and the
+	// new reflectors get their baselines while the link has a queue.
+	bad := 0
+	for _, r := range pm.reflectors[:activeCount] {
+		if m, _ := missedOf(r); m >= pm.cfg.ReflectorMisbehavingDetectionThr {
+			bad++
+		}
+	}
+	if bad > 0 && 2*bad > activeCount {
+		if !pm.linkLoss {
+			pm.logger.Infof("[%s] %d of %d reflectors miss replies at the same time: loss on the link, no reflector is replaced",
+				pm.link.Name, bad, activeCount)
+		}
+		pm.linkLoss = true
+		return nil
+	}
+	pm.linkLoss = false
+
 	var promoted []string
 	for i := 0; i < activeCount; i++ {
 		state := pm.states[pm.reflectors[i]]
 		if state == nil {
 			continue
 		}
-		state.mu.Lock()
-		missed := 0
-		for _, m := range state.MissedWindow {
-			if m {
-				missed++
-			}
-		}
-		state.mu.Unlock()
+		missed, _ := missedOf(pm.reflectors[i])
 
 		if missed >= pm.cfg.ReflectorMisbehavingDetectionThr && len(pm.reflectors) > activeCount {
 			pm.logger.Infof("[%s] replacing misbehaving reflector %s (missed %d/%d)",

@@ -1192,11 +1192,31 @@ func TestResetReflector_ReinitializesBaseline(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.updateBaseline("1.1.1.1", 5000)
 
-	c.ResetReflector("1.1.1.1")
+	c.ResetReflector("1.1.1.1", time.Now())
 	rd := c.updateBaseline("1.1.1.1", 20000)
 
 	if rd.baselineUs != 20000 {
 		t.Errorf("expected baseline re-initialized to 20000, got %f", rd.baselineUs)
+	}
+}
+
+// A reflector that replied a short time ago keeps its baseline: else the
+// new baseline comes from pings under load and is too high. After
+// reflectorBaselineKeep, the baseline goes away.
+func TestResetReflector_KeepsRecentBaseline(t *testing.T) {
+	c, _ := newTestCore(t)
+	t0 := time.Unix(1000, 0)
+	c.Start(t0)
+	c.HandlePing(PingResult{Reflector: "1.1.1.1", RTT: 5 * time.Millisecond, Timestamp: t0})
+
+	c.ResetReflector("1.1.1.1", t0.Add(time.Minute))
+	if rd := c.updateBaseline("1.1.1.1", 35000); rd.baselineUs > 6000 {
+		t.Errorf("baseline after a reset 1 min after the last reply: %.0f us, want the old 5000 us", rd.baselineUs)
+	}
+
+	c.ResetReflector("1.1.1.1", t0.Add(reflectorBaselineKeep+time.Second))
+	if rd := c.updateBaseline("1.1.1.1", 35000); rd.baselineUs != 35000 {
+		t.Errorf("baseline after a reset with old data: %.0f us, want a new baseline (35000 us)", rd.baselineUs)
 	}
 }
 
