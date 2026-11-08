@@ -10,7 +10,7 @@ With the `--record` option, cake-autorate-go writes all controller events to a f
 
 | Option | Description |
 |---|---|
-| `--record FILE` | Write all controller events to `FILE` (JSONL). If `FILE` ends with `.gz`, the program writes gzip. |
+| `--record FILE` | Write all controller events to `FILE` (JSONL). If `FILE` ends with `.gz`, the program writes gzip: one gzip member for each minute (gzip tools read all members). Each minute, the program also writes the file to the disk (fsync). |
 | `--record-max-mb N` | Stop the recording when the file gets to `N` MB. The controller continues. `0` (default) is no limit. |
 | `--no-adjust` | Do not change the shaper rates. This option overrides `adjust` in the config. Use it with `--record` to measure a link without autorate. |
 

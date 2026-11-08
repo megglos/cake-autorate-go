@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -584,5 +585,54 @@ func TestRecordFile(t *testing.T) {
 	}
 	if _, err := recordFile(want, now); err == nil {
 		t.Error("expected an error for a file in place of a directory")
+	}
+}
+
+// After a checkpoint, the file has a complete gzip member on the disk. If
+// the end of the file is damaged later (for example by a power-off), the
+// events before the checkpoint can still be read.
+func TestRecorder_CheckpointKeepsDataBeforeDamage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rec.jsonl.gz")
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rec, err := newRecorderAt(path, 0, testConfig(), start, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Start("test", start)
+	rec.Shaper("test", UL, 20000, start.Add(time.Second))
+	rec.mu.Lock()
+	rec.checkpointLocked()
+	rec.mu.Unlock()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := fi.Size()
+	rec.Shaper("test", UL, 30000, start.Add(2*time.Second))
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The complete file: two members, all events.
+	if n := len(readRecording(t, path)); n != 4 {
+		t.Fatalf("complete file: %d lines, want 4", n)
+	}
+
+	// Damage the second member: the first member stays readable.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := good + 10; i < int64(len(data)); i++ {
+		data[i] = 0
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(zr) // the error at the damaged member is expected
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 3 || !strings.Contains(lines[2], `"rate_kbps":20000`) {
+		t.Errorf("after the damage: %d lines %q, want the header and the 2 events before the checkpoint", len(lines), lines)
 	}
 }
