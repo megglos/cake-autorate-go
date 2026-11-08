@@ -75,6 +75,7 @@
 		"interface": "string",
 		"max_rate_kbps": "int",
 		"min_rate_kbps": "int",
-		"owd_delta_delay_thr_ms": "float"
+		"owd_delta_delay_thr_ms": "float",
+		"unshaped": "bool"
 	}
 }

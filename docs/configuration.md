@@ -426,6 +426,7 @@ The defaults are the values of `--defaults`. In a `links` entry, set the interfa
 | `links[].download.interface` | `ifb-wan` | Download interface name |
 | `links[].upload.interface` | `wan` | Upload interface name |
 | `links[].*.adjust` | `true` (`false` in a `links` entry that does not set it) | Change the rate of this direction |
+| `links[].*.unshaped` | `false` | No limit for this direction: the program sets the shaper rate to 10 Gbit/s and does not change it (`adjust` is then `false`). For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions. LuCI: **No download limit**, **No upload limit**. A pause (`pause`) is different: it keeps the base rate as a limit. |
 | `links[].*.min_rate_kbps` | `5000` | Minimum bandwidth (kbit/s) |
 | `links[].*.base_rate_kbps` | `20000` | Usual bandwidth (kbit/s) |
 | `links[].*.max_rate_kbps` | `80000`/`35000` | Maximum bandwidth (DL/UL, kbit/s) |

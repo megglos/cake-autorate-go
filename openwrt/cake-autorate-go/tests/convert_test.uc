@@ -124,4 +124,7 @@ check('unknown option with an empty value', r.errors, [ 'link a: unknown option 
 r = convert({ g: sec('global', 'g', 0, { dl_owd_delta_delay_thr_ms: '' }), a: sec('link', 'a', 1, {}) }, schema, null);
 check('empty direction option writes no direction', r.config.download, null);
 
+r = convert({ a: sec('link', 'a', 0, { dl_adjust: '0', dl_unshaped: '1' }) }, schema, null);
+check('download without a limit', [ r.errors, r.config.links[0].download.unshaped, r.config.links[0].upload?.unshaped ], [ [], true, null ]);
+
 exit(failed > 0 ? 1 : 0);

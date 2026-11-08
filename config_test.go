@@ -780,3 +780,47 @@ func TestLoadConfig_PingInterfaceDefault(t *testing.T) {
 		}
 	}
 }
+
+// unshaped turns the rate control of the direction off.
+func TestLoadConfig_UnshapedTurnsAdjustOff(t *testing.T) {
+	path := t.TempDir() + "/c.yaml"
+	y := "links:\n  - name: a\n" +
+		"    download: {interface: ifb4lan1, adjust: true, unshaped: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n" +
+		"    upload: {interface: lan1, adjust: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n"
+	if err := os.WriteFile(path, []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := cfg.Links[0]
+	if !l.Download.Unshaped || l.Download.Adjust || !l.Upload.Adjust {
+		t.Errorf("download unshaped %v adjust %v, upload adjust %v", l.Download.Unshaped, l.Download.Adjust, l.Upload.Adjust)
+	}
+}
+
+// The legacy format (no links list) also turns the rate control of an
+// unshaped direction off. --no-adjust also turns unshaped off: the program
+// then does not change the shapers.
+func TestLoadConfig_UnshapedLegacyAndNoAdjust(t *testing.T) {
+	path := t.TempDir() + "/c.yaml"
+	y := "download: {interface: ifb4wan, adjust: true, unshaped: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n" +
+		"upload: {interface: wan, adjust: true, min_rate_kbps: 1000, base_rate_kbps: 2000, max_rate_kbps: 3000}\n"
+	if err := os.WriteFile(path, []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := cfg.Links[0].Download; !d.Unshaped || d.Adjust {
+		t.Errorf("legacy: download unshaped %v adjust %v, want true false", d.Unshaped, d.Adjust)
+	}
+	cfg.NoAdjust()
+	for _, l := range cfg.Links {
+		if l.Download.Adjust || l.Download.Unshaped || l.Upload.Adjust || l.Upload.Unshaped {
+			t.Errorf("--no-adjust: %+v %+v", l.Download, l.Upload)
+		}
+	}
+}

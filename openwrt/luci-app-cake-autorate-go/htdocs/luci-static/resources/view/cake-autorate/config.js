@@ -581,7 +581,10 @@ function linkSection(m) {
 		const node = sqmCheckNodes[sid];
 		if (!node)
 			return;
-		const ifname = (d) => section.formvalue(sid, d + '_adjust') == '0'
+		// A direction without rate control needs no CAKE, but a direction
+		// without a limit does: the service sets the rate of its CAKE.
+		const ifname = (d) => (section.formvalue(sid, d + '_adjust') == '0' &&
+				section.formvalue(sid, d + '_unshaped') != '1')
 			? '' : section.formvalue(sid, d + '_interface');
 		const warnings = sqmWarnings(ifname('dl'), ifname('ul'));
 		// Text nodes: the warnings contain UCI values.
@@ -660,6 +663,24 @@ function linkSection(m) {
 			_('Off: the service measures, but does not change the rate of this shaper.'));
 		o.default = '1';
 		o.rmempty = false;
+		o.modalonly = true;
+		o.onchange = onInterfaceChange;
+		// The service turns the rate control off for a direction without
+		// a limit (also with dl_adjust 1): show it so, else the hidden
+		// option "No … limit" goes away at the next save.
+		o.cfgvalue = function(sid) {
+			if (uci.get('cake-autorate', sid, this.option.replace('_adjust', '_unshaped')) == '1')
+				return '0';
+			return form.Flag.prototype.cfgvalue.call(this, sid);
+		};
+		// Write the shown value also when it did not change: with
+		// dl_adjust 1 and dl_unshaped 1, the page shows 0. If the user
+		// clears "No … limit", dl_adjust must be 0, not the stored 1.
+		o.forcewrite = true;
+
+		o = s.taboption('interfaces', form.Flag, d + '_unshaped', _('No %s limit').format(title.toLowerCase()),
+			_('The service sets the rate of this shaper to 10 Gbit/s: no limit, no rate control. For example for a 5G download with little bufferbloat without a shaper, while the upload needs the rate control. The calibration needs the rate control in both directions.'));
+		o.depends(d + '_adjust', '0');
 		o.modalonly = true;
 		o.onchange = onInterfaceChange;
 	}

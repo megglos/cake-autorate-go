@@ -1239,6 +1239,50 @@ func TestStart_AppliesBaseRates(t *testing.T) {
 	}
 }
 
+// A direction without a limit (unshaped) gets the rate unshapedKbps at the
+// start and at each rate change (also after a bufferbloat decision of the
+// Core), and the status shows it. The other direction has rate control.
+func TestUnshapedDirection_NoLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Unshaped = true
+	cfg.Links[0].Upload.Adjust = true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	c.Start(time.Now())
+	c.dl.achievedKbps = 50000
+	c.adjustRateBufferbloat(DL, 80000, 30000)
+	for _, r := range act.rates[DL] {
+		if r != unshapedKbps {
+			t.Fatalf("dl rates %v, want only %d", act.rates[DL], unshapedKbps)
+		}
+	}
+	if len(act.rates[DL]) == 0 {
+		t.Fatal("no dl rate at the start")
+	}
+	if got := act.rates[UL]; len(got) != 1 || got[0] != cfg.Links[0].Upload.BaseRateKbps {
+		t.Errorf("ul rates %v, want [%d]", got, cfg.Links[0].Upload.BaseRateKbps)
+	}
+	if c.ShaperRateKbps(DL) != unshapedKbps {
+		t.Errorf("internal dl rate %.0f, want %d", c.ShaperRateKbps(DL), unshapedKbps)
+	}
+
+	// Each unshapedReapply, the rate is applied again with a new shaper
+	// cache: else a qdisc that SQM set up again keeps the SQM rate.
+	n, inv := len(act.rates[DL]), act.invalidates
+	t0 := time.Now()
+	c.HandleRate(RateStats{Timestamp: t0})
+	c.HandleRate(RateStats{Timestamp: t0.Add(time.Second)})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second)})
+	if got := len(act.rates[DL]) - n; got != 2 || act.invalidates-inv != 2 {
+		t.Errorf("reapplications: %d rates, %d invalidations; want 2 and 2", got, act.invalidates-inv)
+	}
+
+	st := c.Snapshot()
+	if !st.Download.Unshaped || st.Download.ShaperKbps != unshapedKbps || st.Upload.Unshaped {
+		t.Errorf("status: dl unshaped %v shaper %.0f, ul unshaped %v", st.Download.Unshaped, st.Download.ShaperKbps, st.Upload.Unshaped)
+	}
+}
+
 func TestApplyRate_SkippedWhenAdjustDisabled(t *testing.T) {
 	c, act := newTestCore(t)
 	c.dl.shaperRateKbps = 40000
@@ -2265,6 +2309,27 @@ func TestUnshapedPreventsIdle(t *testing.T) {
 // Without shaping, a saturated upload has a low load against 10 Gbit/s:
 // its queue must not go into the learned cross delay, also not after
 // "shape".
+// An upload without a limit from the config (unshaped) also does not learn
+// cross delay: its load against 10 Gbit/s is always low.
+func TestUnshapedOptionDoesNotLearnCrossDelay(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust = true
+	cfg.Links[0].Upload.Unshaped = true
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 70, 10))
+	}
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("unshaped upload: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+}
+
 func TestUnshapedDoesNotLearnCrossDelay(t *testing.T) {
 	c, _ := newTestCore(t)
 	c.cfg.LearnCrossDelay = true

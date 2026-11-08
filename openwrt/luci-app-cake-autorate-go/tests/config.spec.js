@@ -644,3 +644,25 @@ test('a hidden option of the modes keeps its value', async ({ page }) => {
 		resetConfig();
 	}
 });
+
+test('no download limit: the adjust flag shows off, and clearing the limit keeps adjust off', async ({ page }) => {
+	vm(`uci set cake-autorate.wan.dl_adjust=1 &&
+		uci set cake-autorate.wan.dl_unshaped=1 &&
+		uci commit cake-autorate`);
+	await page.reload();
+	await page.locator('.cbi-section-table-row[data-sid="wan"] .cbi-button-edit').click();
+	const modal = page.locator('.modal');
+	await openTab(modal, 'interfaces');
+	const adjust = page.locator('input[data-widget-id="widget.cbid.cake-autorate.wan.dl_adjust"]');
+	const unshaped = page.locator('input[data-widget-id="widget.cbid.cake-autorate.wan.dl_unshaped"]');
+	await expect(adjust).not.toBeChecked();
+	await expect(unshaped).toBeChecked();
+
+	await unshaped.uncheck();
+	await modal.locator('.cbi-button-positive').click();
+	await saveApply(page);
+	await expect.poll(() => vm('uci -q get cake-autorate.wan.dl_adjust || true').trim(), { timeout: 30000 })
+		.toBe('0');
+	expect(vm('uci -q get cake-autorate.wan.dl_unshaped || true').trim()).not.toBe('1');
+	resetConfig();
+});
