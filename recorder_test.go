@@ -244,7 +244,7 @@ func replayRecording(t *testing.T, path string) (recorded, replayed []recDecisio
 		case recRate:
 			core.HandleRate(RateStats{DlRateKbps: ev.DlKbps, UlRateKbps: ev.UlKbps, Timestamp: ts})
 		case recReflectorReset:
-			core.ResetReflector(ev.Reflector)
+			core.ResetReflector(ev.Reflector, ts)
 		case recPause:
 			core.SetPaused(ev.Dir, ev.Paused)
 		case recCalibrating:

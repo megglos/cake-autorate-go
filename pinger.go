@@ -51,6 +51,10 @@ type PingerManager struct {
 	reflectors []string
 	states     map[string]*ReflectorState
 	mu         sync.RWMutex
+	// linkLoss is true while more than half of the active reflectors miss
+	// replies (see ReplaceUnhealthy). It prevents a log message at each
+	// health check.
+	linkLoss bool
 	// onSend, if set, gets each request that a pinger sent.
 	// The calibration probe counts them: a request without a result
 	// at the end of the probe is lost. It must be safe for parallel calls.
@@ -194,22 +198,68 @@ func (pm *PingerManager) ReplaceUnhealthy() []string {
 		activeCount = len(pm.reflectors)
 	}
 
+	missedOf := func(r string) (missed, window int) {
+		state := pm.states[r]
+		if state == nil {
+			return 0, 0
+		}
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		for _, m := range state.MissedWindow {
+			if m {
+				missed++
+			}
+		}
+		return missed, len(state.MissedWindow)
+	}
+
+	// If more than half of the active reflectors miss replies at the same
+	// time, the loss is on the link (for example, under high load), not in
+	// the reflectors. A replacement then removes good reflectors, and the
+	// new reflectors get their baselines while the link has a queue. One
+	// reflector alone does not show a loss on the link: with pinger_count
+	// 1, a reflector that misses replies is replaced.
+	//
+	// A loss on the link is small and affects all reflectors. If some
+	// reflectors miss half or more of their pings and other active
+	// reflectors are healthy, those reflectors do not operate (for example,
+	// they stopped replying). They are replaced also in a loss on the link.
+	thr := pm.cfg.ReflectorMisbehavingDetectionThr
+	bad, healthy := 0, 0
+	for _, r := range pm.reflectors[:activeCount] {
+		switch m, _ := missedOf(r); {
+		case m >= thr:
+			bad++
+		case m < thr:
+			healthy++
+		}
+	}
+	linkLoss := bad >= 2 && 2*bad > activeCount
+	if linkLoss && !pm.linkLoss {
+		pm.logger.Infof("[%s] %d of %d reflectors miss replies at the same time: loss on the link, only reflectors that do not operate are replaced",
+			pm.link.Name, bad, activeCount)
+	}
+	pm.linkLoss = linkLoss
+	// replace tells if a reflector with the missed replies must go.
+	replace := func(missed, window int) bool {
+		if missed < thr {
+			return false
+		}
+		if !linkLoss {
+			return true
+		}
+		return healthy > 0 && 2*missed >= window
+	}
+
 	var promoted []string
 	for i := 0; i < activeCount; i++ {
 		state := pm.states[pm.reflectors[i]]
 		if state == nil {
 			continue
 		}
-		state.mu.Lock()
-		missed := 0
-		for _, m := range state.MissedWindow {
-			if m {
-				missed++
-			}
-		}
-		state.mu.Unlock()
+		missed, window := missedOf(pm.reflectors[i])
 
-		if missed >= pm.cfg.ReflectorMisbehavingDetectionThr && len(pm.reflectors) > activeCount {
+		if replace(missed, window) && len(pm.reflectors) > activeCount {
 			pm.logger.Infof("[%s] replacing misbehaving reflector %s (missed %d/%d)",
 				pm.link.Name, pm.reflectors[i], missed, len(state.MissedWindow))
 

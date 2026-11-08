@@ -537,7 +537,7 @@ func (rc *RecordingCore) HandlePing(p PingResult) {
 // ResetReflector records a reflector reset and sends it to the Core.
 func (rc *RecordingCore) ResetReflector(reflector string, ts time.Time) {
 	rc.record(func(r *Recorder) { r.ReflectorReset(rc.name, reflector, ts) })
-	rc.process(ts, func() { rc.core.ResetReflector(reflector) })
+	rc.process(ts, func() { rc.core.ResetReflector(reflector, ts) })
 }
 
 // SetPaused records a pause or a resume and sends it to the Core.

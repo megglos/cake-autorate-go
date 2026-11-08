@@ -44,7 +44,7 @@ All other lines have these fields:
 | `start` | — | The controller started for the link. |
 | `ping` | `reflector`, `rtt_us`, `timeout`, `dl_owd_us`, `ul_owd_us`, `reflector_us` | A ping reply or a ping timeout. `dl_owd_us` and `ul_owd_us` are the one-way delays (only with `ping_method: icmp-timestamp`). They contain the clock offset between the hosts. `reflector_us` is the time in the reflector (from the receive to the transmit time). The RTT contains it, the one-way delays do not. |
 | `rate` | `dl_kbps`, `ul_kbps` | A sample of the measured throughput. |
-| `reflector_reset` | `reflector` | The controller removed the delay data of a reflector (a spare reflector became active). |
+| `reflector_reset` | `reflector` | A spare reflector became active. The controller removes its delay data, except when the reflector replied in the last 10 minutes. |
 | `pause` | `dir`, `paused` | A user paused or resumed the rate control of a direction (control socket). |
 | `calibrating` | `on` | A calibration session started (`true`) or ended (`false`) the calibration mode: the controller does not go to `IDLE`. |
 | `unshaped` | `on` | The command `unshape` started (`true`) or `shape` ended (`false`) the unshaped mode: the controller does not go to `IDLE`. |

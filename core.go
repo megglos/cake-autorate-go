@@ -99,7 +99,17 @@ type reflectorDelay struct {
 	// pathBaselineUs is the baseline of the RTT without the time in the
 	// reflector.
 	pathBaselineUs float64
+	// lastReply is the time of the last reply of the reflector.
+	lastReply time.Time
 }
+
+// reflectorBaselineKeep is the maximum time since the last reply of a
+// reflector for which ResetReflector keeps its baselines. The pool has few
+// spares: a replaced reflector often becomes active again after some
+// seconds or minutes. A new baseline then comes from pings under load
+// (the replacements occur mostly under load) and is too high. In a short
+// time, the path of the reflector usually does not change.
+const reflectorBaselineKeep = 10 * time.Minute
 
 // Core is the cake-autorate control algorithm for one WAN link.
 //
@@ -279,8 +289,12 @@ func (c *Core) ReflectorBaselinesUs() map[string]float64 {
 }
 
 // ResetReflector removes the delay data for a reflector. Use it when a spare
-// reflector becomes active, because its old baseline is not correct.
-func (c *Core) ResetReflector(reflector string) {
+// reflector becomes active, because an old baseline can be incorrect. If the
+// reflector replied in the last reflectorBaselineKeep, it keeps the data.
+func (c *Core) ResetReflector(reflector string, now time.Time) {
+	if rd, ok := c.reflectors[reflector]; ok && !rd.lastReply.IsZero() && now.Sub(rd.lastReply) <= reflectorBaselineKeep {
+		return
+	}
 	delete(c.reflectors, reflector)
 }
 
@@ -382,6 +396,7 @@ func (c *Core) HandlePing(result PingResult) {
 
 	// Update baseline RTT
 	rd := c.updateBaseline(result.Reflector, rttUs)
+	rd.lastReply = result.Timestamp
 
 	// The OWD delta is the delay increase above the baseline.
 	// Without one-way delays, RTT/2 is an approximate OWD (the same as fping
