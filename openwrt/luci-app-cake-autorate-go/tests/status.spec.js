@@ -138,19 +138,46 @@ test('pause and resume one direction', async ({ page }) => {
 	await page.goto(PAGE);
 	const dl = page.locator('tr[data-dir="dl"]');
 	const ul = page.locator('tr[data-dir="ul"]');
-	await dl.locator('button').click();
+	await dl.locator('button[data-dir]').click();
 	await expect(dl.locator('.label')).toHaveText('Paused', { timeout: 10000 });
-	await expect(dl.locator('button')).toHaveText('Resume');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Resume');
 	await expect(ul.locator('.label')).toHaveText('Active');
 	expect(pausedInFile('download')).toBe('true');
 	expect(pausedInFile('upload')).toBe('false');
 	// A pause sets the base rate.
 	expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 20Mbit');
 
-	await dl.locator('button').click();
+	await dl.locator('button[data-dir]').click();
 	await expect(dl.locator('.label')).toHaveText('Active', { timeout: 10000 });
-	await expect(dl.locator('button')).toHaveText('Pause');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Pause');
 	expect(pausedInFile('download')).toBe('false');
+});
+
+test('no limit and resume one direction', async ({ page }) => {
+	await page.goto(PAGE);
+	const dl = page.locator('tr[data-dir="dl"]');
+	await dl.locator('button[data-nolimit]').click();
+	await expect(dl.locator('.label')).toHaveText('No limit', { timeout: 10000 });
+	await expect(dl.locator('button[data-dir]')).toHaveText('Resume');
+	await expect(dl.locator('button[data-nolimit]')).toHaveCount(0);
+	expect(pausedInFile('download')).toBe('true');
+	expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 10Gbit');
+
+	await dl.locator('button[data-dir]').click();
+	await expect(dl.locator('.label')).toHaveText('Active', { timeout: 10000 });
+	expect(pausedInFile('download')).toBe('false');
+	expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 20Mbit');
+});
+
+test('the keyboard focus goes from "No limit" to "Resume"', async ({ page }) => {
+	await page.goto(PAGE);
+	const dl = page.locator('tr[data-dir="dl"]');
+	await dl.locator('button[data-nolimit]').focus();
+	await page.keyboard.press('Enter');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Resume', { timeout: 10000 });
+	await expect(dl.locator('button[data-dir]')).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(dl.locator('button[data-dir]')).toHaveText('Pause', { timeout: 10000 });
 });
 
 test('the mode dialog sets the mode for a time, then the status shows it', async ({ page }) => {
@@ -181,7 +208,7 @@ test('the mode dialog sets the mode for a time, then the status shows it', async
 
 test('a refresh keeps the keyboard focus on the button', async ({ page }) => {
 	await page.goto(PAGE);
-	const ul = page.locator('tr[data-dir="ul"] button');
+	const ul = page.locator('tr[data-dir="ul"] button[data-dir]');
 	await ul.focus();
 	await expect(ul).toBeFocused();
 	// Wait for more than one refresh (each 2 seconds).
@@ -198,7 +225,7 @@ test('a direction with adjust off has no button', async ({ page }) => {
 		const ul = page.locator('tr[data-dir="ul"]');
 		await expect(ul).toContainText('Off (adjust)', { timeout: 10000 });
 		await expect(ul.locator('button')).toHaveCount(0);
-		await expect(page.locator('tr[data-dir="dl"] button')).toHaveText('Pause');
+		await expect(page.locator('tr[data-dir="dl"] button[data-dir]')).toHaveText('Pause');
 	}
 	finally {
 		resetConfig();
@@ -208,7 +235,7 @@ test('a direction with adjust off has no button', async ({ page }) => {
 
 test('a failed command shows the error', async ({ page }) => {
 	await page.goto(PAGE);
-	const button = page.locator('tr[data-dir="dl"] button');
+	const button = page.locator('tr[data-dir="dl"] button[data-dir]');
 	await expect(button).toHaveText('Pause');
 	// Stop the polls, so that the button stays while the service stops.
 	await page.evaluate(() => L.require('poll').then((poll) => poll.stop()));
@@ -988,6 +1015,8 @@ test('turn the shaping of a link off and on', async ({ page }) => {
 		await expect(link.locator('h3 [data-state]')).toHaveText('Shaping off', { timeout: 10000 });
 		await expect(link.locator('h3 [data-state]')).toHaveClass('label warning');
 		await expect(button).toHaveText('Turn shaping on');
+		// After the command, the button has the focus again.
+		await expect(button).toBeFocused();
 		expect(unshapedInFile()).toBe('true');
 		expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 10Gbit');
 		// No rate control: no pause buttons, and no calibration.
@@ -1010,7 +1039,7 @@ test('turn the shaping of a link off and on', async ({ page }) => {
 		await expect(button).toHaveText('Turn shaping off');
 		expect(unshapedInFile()).toBe('false');
 		expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 20Mbit');
-		await expect(link.locator('tr[data-dir="dl"] button')).toHaveText('Pause');
+		await expect(link.locator('tr[data-dir="dl"] button[data-dir]')).toHaveText('Pause');
 		await expect(link.locator('.cake-autorate-calibrate')).toBeEnabled();
 	}
 	finally {
@@ -1022,7 +1051,8 @@ test('turn the shaping of a link off and on', async ({ page }) => {
 test('a shaper rate above 10 Gbit/s is a rate, not "No limit"', async ({ page }) => {
 	await mockStatus(page, (s) => { s.links[0].download.shaper_kbps = 12000000; });
 	await page.goto(PAGE);
-	const dl = page.locator('.cbi-section[data-link="wan"] tr[data-dir="dl"]');
+	// The rate cell: the row has also the button "No limit".
+	const dl = page.locator('.cbi-section[data-link="wan"] tr[data-dir="dl"] td[data-title="Shaper rate"]');
 	await expect(dl).toContainText('12000.0 Mbit/s');
 	await expect(dl).not.toContainText('No limit');
 });

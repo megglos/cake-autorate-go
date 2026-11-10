@@ -202,6 +202,9 @@ func (c *Core) Start(now time.Time) {
 // rate change, and Core keeps no state that the recording does not contain.
 func (c *Core) SetPaused(dir Direction, paused bool) {
 	ds := c.getDirState(dir)
+	// The low load before the change was against another shaper rate: the
+	// cross-delay learning needs a new low-load time.
+	ds.lowLoadSince = time.Time{}
 	ds.paused = false
 	ds.shaperRateKbps = float64(c.link.DirConfig(dir).BaseRateKbps)
 	ds.autoMaxBreak()
@@ -269,6 +272,7 @@ func (c *Core) Calibrating() bool { return c.calibrating }
 // limit. SetPaused ends it (with the base rate).
 func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 	ds := c.getDirState(dir)
+	ds.lowLoadSince = time.Time{}
 	ds.paused = false
 	ds.shaperRateKbps = float64(rateKbps)
 	ds.autoMaxBreak()
@@ -278,6 +282,14 @@ func (c *Core) SetFixedRate(dir Direction, rateKbps int) {
 
 // Paused reports whether the rate control of a direction is paused.
 func (c *Core) Paused(dir Direction) bool { return c.getDirState(dir).paused }
+
+// NoLimit reports whether a direction is paused without a limit (the
+// command "nolimit"): paused at exactly unshapedKbps, outside the unshaped
+// mode. A pause at a configured base rate above 10 Gbit/s is a pause.
+func (c *Core) NoLimit(dir Direction) bool {
+	ds := c.getDirState(dir)
+	return ds.paused && !c.unshaped && ds.shaperRateKbps == unshapedKbps
+}
 
 // State returns the current operating state.
 func (c *Core) State() State { return c.state }
@@ -308,7 +320,7 @@ func (c *Core) ResetReflector(reflector string, now time.Time) {
 }
 
 // unshapedReapply is the time between two applications of the rate of a
-// direction without a limit. The shaper does not send a rate that it sent
+// direction without a limit (the option unshaped, or a pause at 10 Gbit/s). The shaper does not send a rate that it sent
 // before (cache). If SQM sets up the qdisc again (for example after a
 // restart of the interface), CAKE has the SQM rate again: the next
 // application sets 10 Gbit/s again.
@@ -317,7 +329,13 @@ const unshapedReapply = 10 * time.Second
 // reapplyUnshaped applies the rate of the directions without a limit again,
 // at most each unshapedReapply.
 func (c *Core) reapplyUnshaped(now time.Time) {
-	if !c.link.Download.Unshaped && !c.link.Upload.Unshaped {
+	// A direction without a limit: the option unshaped, or a pause at
+	// 10 Gbit/s (the commands "nolimit" and "unshape").
+	noLimit := func(dir Direction) bool {
+		ds := c.getDirState(dir)
+		return c.link.DirConfig(dir).Unshaped || (ds.paused && ds.shaperRateKbps == unshapedKbps)
+	}
+	if !noLimit(DL) && !noLimit(UL) {
 		return
 	}
 	if !c.lastUnshapedApply.IsZero() && now.Sub(c.lastUnshapedApply) < unshapedReapply {
@@ -326,8 +344,14 @@ func (c *Core) reapplyUnshaped(now time.Time) {
 	c.lastUnshapedApply = now
 	c.act.InvalidateShaper()
 	for _, dir := range Directions() {
+		if !noLimit(dir) {
+			continue
+		}
 		if c.link.DirConfig(dir).Unshaped {
 			c.applyRate(dir)
+		} else {
+			// A pause: the rate control stays off.
+			c.act.SetRate(dir, unshapedKbps)
 		}
 	}
 }
@@ -561,10 +585,10 @@ func (c *Core) removeCrossDelay(ulDeltaUs float64, now time.Time) float64 {
 	ul := &c.ul
 	// Without shaping, the load of the upload is against 10 Gbit/s: a
 	// saturated upload has a low load, and its queue is not cross delay.
-	// Without a limit (the command "unshape" or the option unshaped), the
-	// upload load against 10 Gbit/s is always low, also on a full link:
-	// the delay can be a queue, thus do not learn it.
-	if !c.unshaped && !c.link.Upload.Unshaped && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
+	// Without a limit (the commands "unshape" and "nolimit", the option
+	// unshaped), the upload load against 10 Gbit/s is always low, also on
+	// a full link: the delay can be a queue, thus do not learn it.
+	if !c.unshaped && !c.link.Upload.Unshaped && !c.NoLimit(UL) && !ul.lowLoadSince.IsZero() && now.Sub(ul.lowLoadSince) >= crossDelayMinLowLoad {
 		ul.crossDelayUs += crossDelayAlpha * (ulDeltaUs - ul.crossDelayUs)
 		ul.crossDelayUs = math.Min(ul.crossDelayUs, c.link.Upload.OWDDeltaDelayThrMs*1000)
 	}

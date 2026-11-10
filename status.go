@@ -31,6 +31,9 @@ type DirStatus struct {
 	// Unshaped is true if the config sets the direction without a limit
 	// (unshaped): the shaper rate is unshapedKbps.
 	Unshaped bool `json:"unshaped,omitempty"`
+	// NoLimit is true while the direction is paused without a limit (the
+	// command "nolimit").
+	NoLimit bool `json:"nolimit,omitempty"`
 	// Paused is true while a user paused the rate control of the
 	// direction through the control socket.
 	Paused       bool    `json:"paused"`
@@ -118,6 +121,7 @@ func (c *Core) Snapshot() LinkStatus {
 			Interface:        dc.Interface,
 			Adjust:           dc.Adjust,
 			Unshaped:         dc.Unshaped,
+			NoLimit:          c.NoLimit(dir),
 			Paused:           ds.paused,
 			ShaperKbps:       shaperKbps,
 			AchievedKbps:     ds.achievedKbps,

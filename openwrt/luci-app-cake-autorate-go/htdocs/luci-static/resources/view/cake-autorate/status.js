@@ -107,6 +107,12 @@ const callResume = rpc.declare({
 	params: [ 'link', 'dir' ]
 });
 
+const callNoLimit = rpc.declare({
+	object: 'cake-autorate',
+	method: 'nolimit',
+	params: [ 'link', 'dir' ]
+});
+
 // Returns a text node. The status file contains UCI values, and E() reads a
 // string as HTML.
 const text = common.text;
@@ -638,15 +644,22 @@ return view.extend({
 		}, this));
 	},
 
-	// Runs pause or resume and shows the answer of the program.
+	// Runs pause, resume or nolimit and shows the answer of the program.
 	handleControl: function(verb, link, dir) {
-		const call = (verb == 'pause') ? callPause : callResume;
+		const call = { pause: callPause, resume: callResume, nolimit: callNoLimit }[verb];
 		return call(link, dir).then(function(res) {
 			if (res && res.error)
 				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
 		}).catch(function(err) {
 			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
-		}).then(L.bind(this.refresh, this));
+		}).then(L.bind(function() {
+			// LuCI disables the button while the command runs, thus it has
+			// no focus at the refresh. The focus goes to the button
+			// "Pause"/"Resume" of the direction (after "No limit", its own
+			// button is gone).
+			this.focusAfter = focusKey(link, 'button', dir);
+			return this.refresh();
+		}, this));
 	},
 
 	renderNotRunning: function(error) {
@@ -672,7 +685,12 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
 		}).catch(function(err) {
 			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
-		}).then(L.bind(this.refresh, this));
+		}).then(L.bind(function() {
+			// LuCI disables the button while the command runs, thus it has
+			// no focus at the refresh. The focus goes back to it.
+			this.focusAfter = focusKey(link, 'shaping', '');
+			return this.refresh();
+		}, this));
 	},
 
 	// Returns the label of the mode of a link: the mode, and the time until
@@ -735,9 +753,11 @@ return view.extend({
 			return E('span', { 'class': 'label', 'data-control': 'unshaped' }, _('Off (shaping off)'));
 		const verb = st.paused ? 'resume' : 'pause';
 		const nodes = [
-			common.controlLabel(st.paused)
+			st.nolimit
+				? E('span', { 'class': 'label notice', 'data-control': 'nolimit' }, _('No limit'))
+				: common.controlLabel(st.paused)
 		];
-		if (this.canControl)
+		if (this.canControl) {
 			nodes.push(' ', E('button', {
 				'class': 'cbi-button ' + (st.paused ? 'cbi-button-apply' : 'cbi-button-neutral'),
 				'data-link': link,
@@ -745,6 +765,16 @@ return view.extend({
 				'data-focus': focusKey(link, 'button', dir),
 				'click': ui.createHandlerFn(this, 'handleControl', verb, link, dir)
 			}, st.paused ? _('Resume') : _('Pause')));
+			// "No limit" sets 10 Gbit/s until "Resume", as a pause.
+			if (!st.paused)
+				nodes.push(' ', E('button', {
+					'class': 'cbi-button cbi-button-neutral',
+					'data-link': link,
+					'data-nolimit': dir,
+					'data-focus': focusKey(link, 'nolimit', dir),
+					'click': ui.createHandlerFn(this, 'handleControl', 'nolimit', link, dir)
+				}, _('No limit')));
+		}
 		return E('span', {}, nodes);
 	},
 
@@ -971,7 +1001,11 @@ return view.extend({
 			// keyboard focus on the element with the same focus key, and
 			// keep the cursor.
 			const focused = document.activeElement;
-			const key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
+			let key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
+			if (this.focusAfter) {
+				key = this.focusAfter;
+				this.focusAfter = null;
+			}
 			const selection = this.selection;
 			this.addSamples(data.status);
 			this.lastData = data;
@@ -980,8 +1014,9 @@ return view.extend({
 			// selection.
 			this.selection = selection;
 			if (key) {
-				const target = Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
-					(e) => e.dataset.focus == key);
+				const find = (k) => Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
+					(e) => e.dataset.focus == k);
+				const target = find(key);
 				if (target)
 					target.focus();
 			}
@@ -1023,7 +1058,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('CAKE Autorate (Go)')),
-			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service: the base rate stays a limit. For a direction without a limit, use "No download limit" or "No upload limit" on the configuration page. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. Click "Reflectors" of a link to show its reflectors. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
+			E('div', { 'class': 'cbi-map-descr' }, _('The state of each link and the rates of its shapers. "Pause" sets the shaper of a direction to the base rate and stops the rate changes until "Resume" or a restart of the service: the base rate stays a limit. "No limit" sets the shaper of a direction to 10 Gbit/s and stops the rate changes until "Resume" or a restart of the service. For a permanent direction without a limit, use "No download limit" or "No upload limit" on the configuration page. "Turn shaping off" removes the limit of the shapers of a link until "Turn shaping on" or a restart of the service. "Mode…" changes the trade-off between delay and throughput of a link, for some time or until a restart of the service. Click "Reflectors" of a link to show its reflectors. With "Graph history" on the configuration page, the graphs show the last 15 minutes (the service keeps them in memory until a restart). Else they show the time since you opened this page.')),
 			E('p', {}, [ E('label', { 'for': 'cake-autorate-period' }, _('Graph period')), ' ', period ]),
 			this.container
 		]);

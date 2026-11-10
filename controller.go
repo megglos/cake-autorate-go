@@ -36,13 +36,13 @@ type LinkController struct {
 	rateErr error
 	// calPaused are the pause states of the directions before a
 	// calibration session. Only the goroutine of Run uses it.
-	calPaused map[Direction]bool
+	calPaused map[Direction]hold
 	// calMode is the mode of the link at the start of a calibration (a
 	// live mode can be different from the mode of the config).
 	calMode LinkMode
 	// unshapePaused are the pause states of the directions before the
 	// command "unshape". Only the goroutine of Run uses it.
-	unshapePaused map[Direction]bool
+	unshapePaused map[Direction]hold
 	// unshapeUntil is the end of the time of "unshape LINK SECONDS", or
 	// zero (no time limit). unshapeTimer fires at this time. Only the
 	// goroutine of Run uses them.
@@ -269,6 +269,67 @@ func (c *LinkController) SetPaused(dirs []Direction, paused bool) error {
 	})
 }
 
+// SetNoLimit sets the shaper of the directions to unshapedKbps (no useful
+// limit) and stops their rate control, as a pause at 10 Gbit/s. "resume"
+// ends it. The state is not kept: the program starts with the rate
+// control. For a permanent state, use the option unshaped.
+func (c *LinkController) SetNoLimit(dirs []Direction) error {
+	return c.call(func(now time.Time) error {
+		if c.core.Core().Calibrating() {
+			return fmt.Errorf("link %q: a calibration runs, stop it first", c.name)
+		}
+		if c.core.Core().Unshaped() {
+			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
+		}
+		for _, dir := range dirs {
+			if !c.link.DirConfig(dir).Adjust {
+				return fmt.Errorf("link %q: %s has no rate control (adjust)", c.name, dir)
+			}
+		}
+		var err error
+		for _, dir := range dirs {
+			c.rateErr = nil
+			c.core.SetFixedRate(dir, unshapedKbps, now)
+			if c.rateErr != nil {
+				err = c.rateErr
+			}
+		}
+		c.logger.Infof("[%s] no limit: %v", c.name, dirs)
+		return err
+	})
+}
+
+// hold is the state of the rate control of a direction: running, paused at
+// the base rate, or paused without a limit (SetNoLimit).
+type hold int
+
+const (
+	holdRunning hold = iota
+	holdPaused
+	holdNoLimit
+)
+
+// holdOf returns the hold state of a direction of the Core.
+func holdOf(core *Core, dir Direction) hold {
+	switch {
+	case core.NoLimit(dir):
+		return holdNoLimit
+	case core.Paused(dir):
+		return holdPaused
+	}
+	return holdRunning
+}
+
+// restoreHold sets a hold state from before (after "shape" or a
+// calibration). Only the goroutine of Run calls it.
+func (c *LinkController) restoreHold(dir Direction, h hold, now time.Time) {
+	if h == holdNoLimit {
+		c.core.SetFixedRate(dir, unshapedKbps, now)
+		return
+	}
+	c.core.SetPaused(dir, h == holdPaused, now)
+}
+
 // SetUnshaped turns the shaping of the link off (on is true) or on again.
 // With a duration d > 0, the shaping comes back after d (also when the
 // program that sent the command stops); a new "unshape" sets a new time.
@@ -298,7 +359,7 @@ func (c *LinkController) SetUnshaped(on bool, d time.Duration) error {
 		// pause states from before the first "unshape".
 		core := c.core.Core()
 		if !core.Unshaped() {
-			c.unshapePaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+			c.unshapePaused = map[Direction]hold{DL: holdOf(core, DL), UL: holdOf(core, UL)}
 		}
 		// Set the mode before the rates: after a failed rate change, the
 		// user can turn the shaping on again. The mode also wakes an idle
@@ -324,7 +385,7 @@ func (c *LinkController) shapeAgain(now time.Time) error {
 	c.rateErr = nil
 	for _, dir := range Directions() {
 		if c.link.DirConfig(dir).Adjust {
-			c.core.SetPaused(dir, c.unshapePaused[dir], now)
+			c.restoreHold(dir, c.unshapePaused[dir], now)
 		}
 	}
 	if c.rateErr != nil {
@@ -572,7 +633,7 @@ func (c *LinkController) CalStart() error {
 			return fmt.Errorf("link %q: the shaping is off, turn it on first", c.name)
 		}
 		core := c.core.Core()
-		c.calPaused = map[Direction]bool{DL: core.Paused(DL), UL: core.Paused(UL)}
+		c.calPaused = map[Direction]hold{DL: holdOf(core, DL), UL: holdOf(core, UL)}
 		c.calMode = core.Mode()
 		c.core.SetCalibrating(true, now)
 		return nil
@@ -613,7 +674,7 @@ func (c *LinkController) CalFinish() error {
 		c.core.SetCalibrating(false, now)
 		c.rateErr = nil
 		for _, dir := range Directions() {
-			c.core.SetPaused(dir, c.calPaused[dir], now)
+			c.restoreHold(dir, c.calPaused[dir], now)
 		}
 		return c.rateErr
 	}, calDispatchTimeout)

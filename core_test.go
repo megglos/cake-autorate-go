@@ -2713,3 +2713,102 @@ func TestProcessDelay_StallRecoveryExpiresDuringBloat(t *testing.T) {
 		t.Errorf("recovery after 650 ms of bufferbloat (rate %.0f, cut %.0f), want none", c.dl.shaperRateKbps, cut)
 	}
 }
+
+// A pause at 10 Gbit/s ("nolimit") gets its rate again each
+// unshapedReapply with an empty shaper cache (SQM can set up the qdisc
+// again), and the rate control stays off. A resume clears the low-load time
+// of the cross-delay learning.
+func TestNoLimitPause_ReapplyAndResume(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	t0 := time.Now()
+	c.Start(t0)
+	c.SetFixedRate(UL, unshapedKbps)
+	n, inv := len(act.rates[UL]), act.invalidates
+	c.HandleRate(RateStats{Timestamp: t0, UlRateKbps: 5000})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second), UlRateKbps: 5000})
+	if got := len(act.rates[UL]) - n; got != 2 || act.invalidates-inv != 2 || lastRate(act, UL) != unshapedKbps {
+		t.Errorf("reapplications: %d rates (last %d), %d invalidations; want 2, %d, 2", got, lastRate(act, UL), act.invalidates-inv, unshapedKbps)
+	}
+	if !c.Paused(UL) || !c.NoLimit(UL) {
+		t.Error("the direction must stay paused without a limit")
+	}
+	if c.ul.lowLoadSince.IsZero() {
+		t.Fatal("test setup: no low-load time against 10 Gbit/s")
+	}
+	c.SetPaused(UL, false)
+	if !c.ul.lowLoadSince.IsZero() {
+		t.Error("after resume, the low-load time from 10 Gbit/s stays")
+	}
+}
+
+// A pause at a configured base rate above 10 Gbit/s is an ordinary pause:
+// not "no limit", and the reapplication does not send 10 Gbit/s.
+func TestPauseAboveUnshapedRateIsNotNoLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	cfg.Links[0].Download.BaseRateKbps = 12_000_000
+	cfg.Links[0].Download.MaxRateKbps = 12_000_000
+	act := &fakeActuator{}
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, act, testLogger(t))
+	t0 := time.Now()
+	c.Start(t0)
+	c.SetPaused(DL, true)
+	if c.NoLimit(DL) {
+		t.Error("a pause at 12 Gbit/s is not a no-limit pause")
+	}
+	n := len(act.rates[DL])
+	c.HandleRate(RateStats{Timestamp: t0})
+	c.HandleRate(RateStats{Timestamp: t0.Add(unshapedReapply + time.Second)})
+	if len(act.rates[DL]) != n {
+		t.Errorf("rates after the pause: %v, want none (no reapplication)", act.rates[DL][n:])
+	}
+}
+
+// An upload with rate control at 10 Gbit/s or more (a fast line) still
+// learns cross delay: only the no-limit states do not.
+func TestCrossDelayLearnedAtHighConfiguredRate(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	cfg.Links[0].Upload.BaseRateKbps = 12_000_000
+	cfg.Links[0].Upload.MaxRateKbps = 12_000_000
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 1000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 25, 10))
+	}
+	if c.ul.crossDelayUs == 0 {
+		t.Error("an upload at 12 Gbit/s with rate control learned no cross delay")
+	}
+}
+
+// An upload without a limit from "nolimit" (a pause at 10 Gbit/s) does not
+// learn cross delay: its load against 10 Gbit/s is always low.
+func TestNoLimitDoesNotLearnCrossDelay(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.SetFixedRate(UL, unshapedKbps)
+	if !c.NoLimit(UL) || c.Unshaped() || c.link.Upload.Unshaped {
+		t.Fatal("test setup: only the runtime no-limit state must be on")
+	}
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 70, 10))
+	}
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("nolimit upload: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+}
