@@ -130,6 +130,32 @@ jobs:
           name: ci-emulation
           path: ci-emu/
 
+  # The unit tests on MIPS64 big-endian (for example the EdgeRouter 4,
+  # target octeon) with qemu-user: the program reads and writes netlink
+  # messages and ICMP packets, thus the byte order must be correct.
+  test-mips64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Vet for mips64
+        run: GOARCH=mips64 GOMIPS64=softfloat go vet ./...
+
+      - name: Install qemu-user
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+
+      # The tests that need raw sockets or root skip, as in the job test.
+      - name: Run the tests with qemu
+        run: |
+          GOOS=linux GOARCH=mips64 GOMIPS64=softfloat CGO_ENABLED=0 go test -c -o cav-mips64.test .
+          qemu-mips64-static ./cav-mips64.test -test.count=1
+
   build:
     needs: test
     runs-on: ubuntu-latest

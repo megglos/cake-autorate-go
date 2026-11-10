@@ -76,6 +76,18 @@ jobs:
       sdk: aarch64_cortex-a53-25.12.5
       goarch: arm64
 
+  # MIPS64 big-endian, for example the Ubiquiti EdgeRouter 4 (target
+  # octeon). Not for pull requests, as package-arm: the CI workflow tests
+  # the program on mips64 (job test-mips64).
+  package-mips64:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/package.yml
+    with:
+      arch: mips64_octeonplus-openwrt-25.12
+      sdk: mips64_octeonplus-25.12.5
+      goarch: mips64
+      gomips64: softfloat
+
   # Install the x86_64 packages in an OpenWrt VM and test the service:
   # start, status file, control socket, reload, invalid configuration, stop.
   # Then test the LuCI page in a browser (Playwright).
@@ -241,7 +253,7 @@ jobs:
   # Attach the packages to the release, only after all tests passed.
   release:
     if: github.event_name == 'release'
-    needs: [converter, package-x86, package-arm, vm]
+    needs: [converter, package-x86, package-arm, package-mips64, vm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
