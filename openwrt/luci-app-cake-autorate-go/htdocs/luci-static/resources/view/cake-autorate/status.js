@@ -652,7 +652,14 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
 		}).catch(function(err) {
 			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
-		}).then(L.bind(this.refresh, this));
+		}).then(L.bind(function() {
+			// LuCI disables the button while the command runs, thus it has
+			// no focus at the refresh. The focus goes to the button
+			// "Pause"/"Resume" of the direction (after "No limit", its own
+			// button is gone).
+			this.focusAfter = focusKey(link, 'button', dir);
+			return this.refresh();
+		}, this));
 	},
 
 	renderNotRunning: function(error) {
@@ -678,7 +685,14 @@ return view.extend({
 				ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(res.error))), 'danger');
 		}).catch(function(err) {
 			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
-		}).then(L.bind(this.refresh, this));
+		}).then(L.bind(function() {
+			// LuCI disables the button while the command runs, thus it has
+			// no focus at the refresh. The focus goes to the button
+			// "Pause"/"Resume" of the direction (after "No limit", its own
+			// button is gone).
+			this.focusAfter = focusKey(link, 'button', dir);
+			return this.refresh();
+		}, this));
 	},
 
 	// Returns the label of the mode of a link: the mode, and the time until
@@ -989,7 +1003,11 @@ return view.extend({
 			// keyboard focus on the element with the same focus key, and
 			// keep the cursor.
 			const focused = document.activeElement;
-			const key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
+			let key = (focused && this.container.contains(focused)) ? focused.dataset.focus : null;
+			if (this.focusAfter) {
+				key = this.focusAfter;
+				this.focusAfter = null;
+			}
 			const selection = this.selection;
 			this.addSamples(data.status);
 			this.lastData = data;
@@ -1000,14 +1018,7 @@ return view.extend({
 			if (key) {
 				const find = (k) => Array.prototype.find.call(this.container.querySelectorAll('[data-focus]'),
 					(e) => e.dataset.focus == k);
-				let target = find(key);
-				// After "No limit", its button is gone: the focus goes to
-				// the button "Resume" of the same direction.
-				if (!target) {
-					const k = JSON.parse(key);
-					if (k[1] == 'nolimit')
-						target = find(focusKey(k[0], 'button', k[2]));
-				}
+				const target = find(key);
 				if (target)
 					target.focus();
 			}

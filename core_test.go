@@ -2788,3 +2788,27 @@ func TestCrossDelayLearnedAtHighConfiguredRate(t *testing.T) {
 		t.Error("an upload at 12 Gbit/s with rate control learned no cross delay")
 	}
 }
+
+// An upload without a limit from "nolimit" (a pause at 10 Gbit/s) does not
+// learn cross delay: its load against 10 Gbit/s is always low.
+func TestNoLimitDoesNotLearnCrossDelay(t *testing.T) {
+	cfg := testConfig()
+	cfg.LearnCrossDelay = true
+	cfg.Links[0].Download.Adjust, cfg.Links[0].Upload.Adjust = true, true
+	c := NewCore(&cfg.Links[0], cfg, defaultMTU, defaultMTU, &fakeActuator{}, testLogger(t))
+	c.state = StateRunning
+	ts := time.Now()
+	c.HandlePing(owdPing("1.1.1.1", ts, 10, 10))
+	c.SetFixedRate(UL, unshapedKbps)
+	if !c.NoLimit(UL) || c.Unshaped() || c.link.Upload.Unshaped {
+		t.Fatal("test setup: only the runtime no-limit state must be on")
+	}
+	c.HandleRate(RateStats{Timestamp: ts, DlRateKbps: 50000, UlRateKbps: 10000})
+	for range 200 {
+		ts = ts.Add(50 * time.Millisecond)
+		c.HandlePing(owdPing("1.1.1.1", ts, 70, 10))
+	}
+	if c.ul.crossDelayUs != 0 {
+		t.Errorf("nolimit upload: learned %.0f us of cross delay", c.ul.crossDelayUs)
+	}
+}
