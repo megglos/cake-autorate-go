@@ -134,7 +134,9 @@ jobs:
   # target octeon) with qemu-user: the program reads and writes netlink
   # messages and ICMP packets, thus the byte order must be correct.
   test-mips64:
-    runs-on: ubuntu-latest
+    # On Ubuntu 26.04 (ubuntu-latest), qemu-user-static is a virtual
+    # package with more than one provider, and apt does not select one.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
