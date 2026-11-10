@@ -1015,6 +1015,8 @@ test('turn the shaping of a link off and on', async ({ page }) => {
 		await expect(link.locator('h3 [data-state]')).toHaveText('Shaping off', { timeout: 10000 });
 		await expect(link.locator('h3 [data-state]')).toHaveClass('label warning');
 		await expect(button).toHaveText('Turn shaping on');
+		// After the command, the button has the focus again.
+		await expect(button).toBeFocused();
 		expect(unshapedInFile()).toBe('true');
 		expect(vm('tc qdisc show dev br-lan')).toContain('bandwidth 10Gbit');
 		// No rate control: no pause buttons, and no calibration.

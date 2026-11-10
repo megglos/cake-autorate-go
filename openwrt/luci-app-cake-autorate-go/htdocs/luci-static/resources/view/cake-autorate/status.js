@@ -687,10 +687,8 @@ return view.extend({
 			ui.addNotification(null, E('p', {}, text(_('Command failed: %s').format(err))), 'danger');
 		}).then(L.bind(function() {
 			// LuCI disables the button while the command runs, thus it has
-			// no focus at the refresh. The focus goes to the button
-			// "Pause"/"Resume" of the direction (after "No limit", its own
-			// button is gone).
-			this.focusAfter = focusKey(link, 'button', dir);
+			// no focus at the refresh. The focus goes back to it.
+			this.focusAfter = focusKey(link, 'shaping', '');
 			return this.refresh();
 		}, this));
 	},
