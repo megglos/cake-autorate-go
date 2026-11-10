@@ -2,7 +2,7 @@
 
 This page describes the OpenWrt package of cake-autorate-go and its LuCI app. It has these topics: the installation, the UCI configuration, the LuCI pages, the build and the tests, and the installation without the package (`setup.sh`).
 
-The directory [`openwrt/`](../openwrt) has the OpenWrt package `cake-autorate-go` and the LuCI app `luci-app-cake-autorate-go` (apk, OpenWrt 25.12 and later). The CI builds them for `aarch64_cortex-a53` (for example GL-MT6000) and `x86_64`. The package installs:
+The directory [`openwrt/`](../openwrt) has the OpenWrt package `cake-autorate-go` and the LuCI app `luci-app-cake-autorate-go` (apk, OpenWrt 25.12 and later). The CI builds them for `aarch64_cortex-a53` (for example GL-MT6000), `mips64_octeonplus` (for example the Ubiquiti EdgeRouter 4, MIPS64 big-endian) and `x86_64`. The CI also runs the unit tests on MIPS64 big-endian with qemu. The package installs:
 
 | File | Content |
 |---|---|

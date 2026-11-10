@@ -46,7 +46,7 @@ On a real 5G link (24 h, 14 sessions, `ping_method: icmp-timestamp`), the delay 
 
 ## Installation on OpenWrt
 
-The releases have apk packages for OpenWrt 25.12 and later: the program `cake-autorate-go` and the LuCI app `luci-app-cake-autorate-go`. Download the two files of your architecture from the [Releases](https://github.com/megglos/cake-autorate-go/releases) page (for example `aarch64_cortex-a53` for the GL-MT6000). On the router:
+The releases have apk packages for OpenWrt 25.12 and later: the program `cake-autorate-go` and the LuCI app `luci-app-cake-autorate-go`. Download the two files of your architecture from the [Releases](https://github.com/megglos/cake-autorate-go/releases) page (for example `aarch64_cortex-a53` for the GL-MT6000, `mips64_octeonplus` for the EdgeRouter 4). On the router:
 
 ```bash
 cd /tmp

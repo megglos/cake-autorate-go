@@ -24,6 +24,13 @@ on:
         description: GOARCH of the program
         required: true
         type: string
+      gomips64:
+        description: >-
+          GOMIPS64 of the program (mips64 only). The OpenWrt Go feed uses
+          softfloat for a target without the feature "fpu" (octeon).
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build:
@@ -69,6 +76,7 @@ jobs:
         env:
           GOOS: linux
           GOARCH: ${{ inputs.goarch }}
+          GOMIPS64: ${{ inputs.gomips64 }}
           CGO_ENABLED: '0'
         run: |
           desc=$(git describe --tags --always)
